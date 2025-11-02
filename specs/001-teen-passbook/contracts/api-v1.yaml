@@ -1,0 +1,866 @@
+openapi: 3.0.0
+info:
+  title: Teen Passbook API
+  description: API for teen expense tracking with parent-child account management
+  version: 1.0.0
+  
+servers:
+  - url: https://{apiId}.execute-api.{region}.amazonaws.com/v1
+    description: AWS API Gateway endpoint (no custom domain)
+    variables:
+      apiId:
+        default: xxxxxxxxxx
+        description: API Gateway ID
+      region:
+        default: us-east-1
+        description: AWS Region
+  - url: http://localhost:3000/v1
+    description: Local development server
+
+paths:
+  /auth/login:
+    post:
+      summary: Login with email and password
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  format: password
+      responses:
+        200:
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  userType:
+                    type: string
+                    enum: [parent, child]
+                  userId:
+                    type: string
+                  name:
+                    type: string
+                  theme:
+                    type: string
+                    enum: [light, dark, system]
+        401:
+          description: Invalid credentials
+
+  /auth/logout:
+    post:
+      summary: Logout current user
+      tags:
+        - Authentication
+      security:
+        - bearerAuth: []
+      responses:
+        204:
+          description: Logout successful
+
+  /parent/account:
+    post:
+      summary: Create parent account
+      tags:
+        - Parent Account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateParentAccount'
+      responses:
+        201:
+          description: Account created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParentAccount'
+        400:
+          description: Invalid request data
+
+  /parent/account/me:
+    get:
+      summary: Get current parent account details
+      tags:
+        - Parent Account
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: Parent account details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParentAccount'
+    
+    patch:
+      summary: Update parent account settings
+      tags:
+        - Parent Account
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                currency:
+                  type: string
+                accountingPeriodType:
+                  type: string
+                  enum: [monthly, biweekly, custom]
+                accountingPeriodStartDay:
+                  type: integer
+                theme:
+                  type: string
+                  enum: [light, dark, system]
+      responses:
+        200:
+          description: Account updated successfully
+
+  /parent/children:
+    get:
+      summary: Get all child accounts for parent
+      tags:
+        - Child Account
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: List of child accounts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ChildAccount'
+    
+    post:
+      summary: Create child account
+      tags:
+        - Child Account
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChildAccount'
+      responses:
+        201:
+          description: Child account created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChildAccount'
+
+  /parent/children/{childId}:
+    get:
+      summary: Get specific child account details
+      tags:
+        - Child Account
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Child account details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChildAccount'
+    
+    patch:
+      summary: Update child account
+      tags:
+        - Child Account
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: childId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                defaultMonthlyAllowance:
+                  type: number
+                isActive:
+                  type: boolean
+      responses:
+        200:
+          description: Child account updated
+
+  /child/account/me:
+    get:
+      summary: Get current child account details
+      tags:
+        - Child Account
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: Child account details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChildAccount'
+
+  /expenses:
+    get:
+      summary: Get expenses for current period or specified date range
+      tags:
+        - Expenses
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: childId
+          in: query
+          description: Filter by child ID (parent only)
+          schema:
+            type: string
+        - name: periodId
+          in: query
+          description: Filter by accounting period
+          schema:
+            type: string
+        - name: startDate
+          in: query
+          description: Start date for date range
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          description: End date for date range
+          schema:
+            type: string
+            format: date
+      responses:
+        200:
+          description: List of expenses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Expense'
+    
+    post:
+      summary: Create new expense
+      tags:
+        - Expenses
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExpense'
+      responses:
+        201:
+          description: Expense created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Expense'
+                  - type: object
+                    properties:
+                      warning:
+                        type: object
+                        properties:
+                          type:
+                            type: string
+                            enum: [negative_balance]
+                          message:
+                            type: string
+                          newBalance:
+                            type: number
+
+  /expenses/{expenseId}:
+    get:
+      summary: Get specific expense
+      tags:
+        - Expenses
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: expenseId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Expense details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Expense'
+    
+    patch:
+      summary: Update expense
+      tags:
+        - Expenses
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: expenseId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount:
+                  type: number
+                category:
+                  type: string
+                description:
+                  type: string
+                date:
+                  type: string
+                  format: date
+      responses:
+        200:
+          description: Expense updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Expense'
+                  - type: object
+                    properties:
+                      warning:
+                        type: object
+                        properties:
+                          type:
+                            type: string
+                            enum: [negative_balance]
+                          message:
+                            type: string
+                          newBalance:
+                            type: number
+
+  /funds:
+    post:
+      summary: Add funds to child account
+      tags:
+        - Funds
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFundAddition'
+      responses:
+        201:
+          description: Funds added
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/FundAddition'
+                  - type: object
+                    properties:
+                      balanceNotification:
+                        type: object
+                        properties:
+                          previousBalance:
+                            type: number
+                          newBalance:
+                            type: number
+                          wasNegative:
+                            type: boolean
+
+  /analytics/spending:
+    get:
+      summary: Get spending analytics data
+      tags:
+        - Analytics
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: childId
+          in: query
+          description: Child ID (required for parents)
+          schema:
+            type: string
+        - name: periodId
+          in: query
+          description: Accounting period ID
+          schema:
+            type: string
+        - name: granularity
+          in: query
+          description: Time granularity for trend data
+          schema:
+            type: string
+            enum: [daily, weekly, monthly]
+            default: daily
+      responses:
+        200:
+          description: Analytics data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  categoryBreakdown:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        category:
+                          type: string
+                        amount:
+                          type: number
+                        percentage:
+                          type: number
+                  trendData:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        date:
+                          type: string
+                          format: date
+                        amount:
+                          type: number
+                        dailyAmount:
+                          type: number
+                        weeklyAggregation:
+                          type: number
+
+  /reports/export:
+    post:
+      summary: Export report in Excel or PDF format
+      tags:
+        - Reports
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - format
+                - dateRange
+              properties:
+                format:
+                  type: string
+                  enum: [excel, pdf]
+                dateRange:
+                  type: object
+                  properties:
+                    startDate:
+                      type: string
+                      format: date
+                    endDate:
+                      type: string
+                      format: date
+                childId:
+                  type: string
+                  description: Required for parent accounts
+      responses:
+        200:
+          description: Report file
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+  /periods:
+    get:
+      summary: Get accounting periods
+      tags:
+        - Accounting Periods
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, closed, all]
+            default: all
+      responses:
+        200:
+          description: List of accounting periods
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AccountingPeriod'
+    
+    post:
+      summary: Start new accounting period
+      tags:
+        - Accounting Periods
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                startDate:
+                  type: string
+                  format: date
+      responses:
+        201:
+          description: New period started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountingPeriod'
+
+  /categories:
+    get:
+      summary: Get expense categories
+      tags:
+        - Categories
+      responses:
+        200:
+          description: List of categories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Category'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token with short expiration (15 minutes)
+    
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for additional security layer
+
+security:
+  - bearerAuth: []
+    apiKey: []
+
+x-amazon-apigateway-request-validators:
+  all:
+    validateRequestBody: true
+    validateRequestParameters: true
+
+x-amazon-apigateway-gateway-responses:
+  RATE_LIMIT_EXCEEDED:
+    statusCode: 429
+    responseTemplates:
+      application/json: '{"message": "Too many requests. Please retry after some time."}'
+  
+  UNAUTHORIZED:
+    statusCode: 401
+    responseTemplates:
+      application/json: '{"message": "Unauthorized access. Invalid credentials."}'
+
+x-amazon-apigateway-throttle:
+  rateLimit: 10
+  burstLimit: 20
+
+x-amazon-apigateway-api-key-source: HEADER
+
+  schemas:
+    CreateParentAccount:
+      type: object
+      required:
+        - email
+        - password
+        - name
+        - currency
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+        name:
+          type: string
+        currency:
+          type: string
+          default: CAD
+
+    ParentAccount:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        currency:
+          type: string
+        accountingPeriodType:
+          type: string
+          enum: [monthly, biweekly, custom]
+        accountingPeriodStartDay:
+          type: integer
+        theme:
+          type: string
+          enum: [light, dark, system]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateChildAccount:
+      type: object
+      required:
+        - email
+        - password
+        - name
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+        name:
+          type: string
+        defaultMonthlyAllowance:
+          type: number
+          default: 100
+
+    ChildAccount:
+      type: object
+      properties:
+        id:
+          type: string
+        parentAccountId:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        currentBalance:
+          type: number
+        defaultMonthlyAllowance:
+          type: number
+        isActive:
+          type: boolean
+        theme:
+          type: string
+          enum: [light, dark, system]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateExpense:
+      type: object
+      required:
+        - amount
+        - category
+        - description
+        - date
+      properties:
+        amount:
+          type: number
+          minimum: 0.01
+        category:
+          type: string
+        description:
+          type: string
+          maxLength: 200
+        date:
+          type: string
+          format: date
+        childAccountId:
+          type: string
+          description: Only for parent creating expense for child
+
+    Expense:
+      type: object
+      properties:
+        id:
+          type: string
+        childAccountId:
+          type: string
+        amount:
+          type: number
+        category:
+          type: string
+        description:
+          type: string
+        date:
+          type: string
+          format: date
+        accountingPeriodId:
+          type: string
+        createdBy:
+          type: string
+          enum: [teen, parent]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        updatedBy:
+          type: string
+
+    CreateFundAddition:
+      type: object
+      required:
+        - childAccountId
+        - amount
+        - reason
+      properties:
+        childAccountId:
+          type: string
+        amount:
+          type: number
+          minimum: 0.01
+        reason:
+          type: string
+          maxLength: 200
+
+    FundAddition:
+      type: object
+      properties:
+        id:
+          type: string
+        childAccountId:
+          type: string
+        amount:
+          type: number
+        reason:
+          type: string
+        date:
+          type: string
+          format: date
+        accountingPeriodId:
+          type: string
+        addedBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    AccountingPeriod:
+      type: object
+      properties:
+        id:
+          type: string
+        parentAccountId:
+          type: string
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        status:
+          type: string
+          enum: [active, closed]
+        createdAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: string
+          format: date-time
+
+    Category:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        icon:
+          type: string
+        colorHex:
+          type: string
+        sortOrder:
+          type: integer
+
+    AccountingPeriodBalance:
+      type: object
+      properties:
+        id:
+          type: string
+        childAccountId:
+          type: string
+        accountingPeriodId:
+          type: string
+        openingBalance:
+          type: number
+        totalFunds:
+          type: number
+        totalExpenses:
+          type: number
+        closingBalance:
+          type: number
+        createdAt:
+          type: string
+          format: date-time

@@ -1,0 +1,582 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Allowance Passbook - Complete AWS Infrastructure for Optional Cloud Sync'
+
+Parameters:
+  # Environment Configuration
+  Environment:
+    Type: String
+    Default: development
+    AllowedValues:
+      - development
+      - staging
+      - production
+    Description: Deployment environment
+
+  ProjectName:
+    Type: String
+    Default: allowance-passbook
+    Description: Project name for resource naming and tagging
+
+  Owner:
+    Type: String
+    Default: development-team
+    Description: Team or person responsible for this stack
+
+  CostCenter:
+    Type: String
+    Default: education-tech
+    Description: Cost center for billing allocation
+
+  # API Configuration
+  ApiStage:
+    Type: String
+    Default: v1
+    Description: API Gateway stage name
+
+  # Cost Control
+  MaxConcurrentLambdas:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 100
+    Description: Maximum concurrent Lambda executions (cost protection)
+
+  DailyRequestLimit:
+    Type: Number
+    Default: 10000
+    MinValue: 1000
+    MaxValue: 100000
+    Description: Daily request limit per API key
+
+  # Security
+  AllowedOrigins:
+    Type: String
+    Default: "*"
+    Description: CORS allowed origins (use specific domains in production)
+
+  # Monitoring
+  EnableDetailedMonitoring:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Enable detailed CloudWatch monitoring (additional costs)
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, production]
+  IsDetailedMonitoring: !Equals [!Ref EnableDetailedMonitoring, 'true']
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 30
+    MemorySize: 256
+    Environment:
+      Variables:
+        NODE_ENV: !Ref Environment
+        PROJECT_NAME: !Ref ProjectName
+    Tags:
+      Project: !Ref ProjectName
+      Environment: !Ref Environment
+      Owner: !Ref Owner
+      CostCenter: !Ref CostCenter
+      ManagedBy: CloudFormation
+      Service: allowance-passbook-backend
+
+Resources:
+  # DynamoDB Tables
+  ParentAccountsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-${Environment}-parent-accounts'
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProduction, true, false]
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: email-index
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: CostCenter
+          Value: !Ref CostCenter
+        - Key: DataClassification
+          Value: sensitive
+        - Key: BackupPolicy
+          Value: !If [IsProduction, 'daily', 'none']
+
+  ChildAccountsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-${Environment}-child-accounts'
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProduction, true, false]
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: parentAccountId
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: parent-index
+          KeySchema:
+            - AttributeName: parentAccountId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: email-index
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: CostCenter
+          Value: !Ref CostCenter
+        - Key: DataClassification
+          Value: sensitive
+
+  ExpensesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-${Environment}-expenses'
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProduction, true, false]
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: childAccountId
+          AttributeType: S
+        - AttributeName: date
+          AttributeType: N
+        - AttributeName: accountingPeriodId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: child-date-index
+          KeySchema:
+            - AttributeName: childAccountId
+              KeyType: HASH
+            - AttributeName: date
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: period-index
+          KeySchema:
+            - AttributeName: accountingPeriodId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: CostCenter
+          Value: !Ref CostCenter
+        - Key: DataClassification
+          Value: personal
+
+  FundAdditionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-${Environment}-fund-additions'
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProduction, true, false]
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: childAccountId
+          AttributeType: S
+        - AttributeName: accountingPeriodId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: child-index
+          KeySchema:
+            - AttributeName: childAccountId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: period-index
+          KeySchema:
+            - AttributeName: accountingPeriodId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: CostCenter
+          Value: !Ref CostCenter
+        - Key: DataClassification
+          Value: personal
+
+  AccountingPeriodsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-${Environment}-accounting-periods'
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProduction, true, false]
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: parentAccountId
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: parent-status-index
+          KeySchema:
+            - AttributeName: parentAccountId
+              KeyType: HASH
+            - AttributeName: status
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: CostCenter
+          Value: !Ref CostCenter
+
+  # IAM Role for Lambda Functions
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt ParentAccountsTable.Arn
+                  - !GetAtt ChildAccountsTable.Arn
+                  - !GetAtt ExpensesTable.Arn
+                  - !GetAtt FundAdditionsTable.Arn
+                  - !GetAtt AccountingPeriodsTable.Arn
+                  - !Sub '${ParentAccountsTable.Arn}/index/*'
+                  - !Sub '${ChildAccountsTable.Arn}/index/*'
+                  - !Sub '${ExpensesTable.Arn}/index/*'
+                  - !Sub '${FundAdditionsTable.Arn}/index/*'
+                  - !Sub '${AccountingPeriodsTable.Arn}/index/*'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: CostCenter
+          Value: !Ref CostCenter
+
+  # Lambda Functions (will be deployed separately via SAM/Serverless)
+  # API Gateway
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-api'
+      Description: Allowance Passbook API Gateway
+      EndpointConfiguration:
+        Types:
+          - EDGE
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: CostCenter
+          Value: !Ref CostCenter
+
+  # API Gateway Usage Plan for Cost Control
+  ApiUsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    Properties:
+      UsagePlanName: !Sub '${ProjectName}-${Environment}-usage-plan'
+      Description: Usage plan with cost controls
+      ApiStages:
+        - ApiId: !Ref ApiGateway
+          Stage: !Ref ApiStage
+      Throttle:
+        RateLimit: 10
+        BurstLimit: 20
+      Quota:
+        Limit: !Ref DailyRequestLimit
+        Period: DAY
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: CostCenter
+          Value: !Ref CostCenter
+
+  # CloudWatch Dashboard
+  MonitoringDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Condition: IsDetailedMonitoring
+    Properties:
+      DashboardName: !Sub '${ProjectName}-${Environment}-dashboard'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ApiGateway", "Count", "ApiName", "${ProjectName}-${Environment}-api" ],
+                  [ ".", "Latency", ".", "." ],
+                  [ ".", "4XXError", ".", "." ],
+                  [ ".", "5XXError", ".", "." ]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "API Gateway Metrics"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "${ParentAccountsTable}" ],
+                  [ ".", "ConsumedWriteCapacityUnits", ".", "." ],
+                  [ ".", "ThrottledRequests", ".", "." ]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "DynamoDB Metrics"
+              }
+            }
+          ]
+        }
+
+  # CloudWatch Alarms for Cost Control
+  BillingAlarm1Dollar:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-billing-1-dollar'
+      AlarmDescription: Alert when estimated charges exceed $1
+      MetricName: EstimatedCharges
+      Namespace: AWS/Billing
+      Statistic: Maximum
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Currency
+          Value: USD
+      TreatMissingData: notBreaching
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: AlertType
+          Value: cost-control
+
+  BillingAlarm5Dollars:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-billing-5-dollars'
+      AlarmDescription: Critical alert when estimated charges exceed $5
+      MetricName: EstimatedCharges
+      Namespace: AWS/Billing
+      Statistic: Maximum
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Currency
+          Value: USD
+      TreatMissingData: notBreaching
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: AlertType
+          Value: cost-control
+
+  HighErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-high-error-rate'
+      AlarmDescription: Alert when API Gateway error rate is high
+      MetricName: 4XXError
+      Namespace: AWS/ApiGateway
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ApiName
+          Value: !Sub '${ProjectName}-${Environment}-api'
+      TreatMissingData: notBreaching
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: AlertType
+          Value: error-monitoring
+
+Outputs:
+  # DynamoDB Table Names
+  ParentAccountsTableName:
+    Description: DynamoDB table name for parent accounts
+    Value: !Ref ParentAccountsTable
+    Export:
+      Name: !Sub '${AWS::StackName}-ParentAccountsTable'
+
+  ChildAccountsTableName:
+    Description: DynamoDB table name for child accounts
+    Value: !Ref ChildAccountsTable
+    Export:
+      Name: !Sub '${AWS::StackName}-ChildAccountsTable'
+
+  ExpensesTableName:
+    Description: DynamoDB table name for expenses
+    Value: !Ref ExpensesTable
+    Export:
+      Name: !Sub '${AWS::StackName}-ExpensesTable'
+
+  FundAdditionsTableName:
+    Description: DynamoDB table name for fund additions
+    Value: !Ref FundAdditionsTable
+    Export:
+      Name: !Sub '${AWS::StackName}-FundAdditionsTable'
+
+  AccountingPeriodsTableName:
+    Description: DynamoDB table name for accounting periods
+    Value: !Ref AccountingPeriodsTable
+    Export:
+      Name: !Sub '${AWS::StackName}-AccountingPeriodsTable'
+
+  # IAM
+  LambdaExecutionRoleArn:
+    Description: ARN of the Lambda execution role
+    Value: !GetAtt LambdaExecutionRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaExecutionRole'
+
+  # API Gateway
+  ApiGatewayId:
+    Description: API Gateway ID
+    Value: !Ref ApiGateway
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiGatewayId'
+
+  ApiUsagePlanId:
+    Description: API Gateway Usage Plan ID
+    Value: !Ref ApiUsagePlan
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiUsagePlan'
+
+  # Region and Environment Info
+  Region:
+    Description: AWS Region
+    Value: !Ref AWS::Region
+    Export:
+      Name: !Sub '${AWS::StackName}-Region'
+
+  Environment:
+    Description: Environment name
+    Value: !Ref Environment
+    Export:
+      Name: !Sub '${AWS::StackName}-Environment'
+
+  ProjectName:
+    Description: Project name
+    Value: !Ref ProjectName
+    Export:
+      Name: !Sub '${AWS::StackName}-ProjectName'
+
+  # Cost Control Information
+  DailyRequestLimit:
+    Description: Daily request limit per API key
+    Value: !Ref DailyRequestLimit
+
+  MaxConcurrentLambdas:
+    Description: Maximum concurrent Lambda executions
+    Value: !Ref MaxConcurrentLambdas

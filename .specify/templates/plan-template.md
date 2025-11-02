@@ -31,7 +31,12 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+- [ ] **Teen-Centered Design**: Feature addresses actual teen needs with age-appropriate UX
+- [ ] **Minimalist Interface**: UI requires ≤3 taps/clicks from home, no unnecessary elements
+- [ ] **Cost-Efficient Architecture**: Infrastructure costs justified, uses free tier where possible
+- [ ] **Mobile-First Development**: Designed for mobile first, works offline with sync
+- [ ] **Continuous Deployment**: Can be deployed via GitHub Actions with automated tests
+- [ ] **Financial Education**: Feature teaches budgeting/planning concepts through practical use
 
 ## Project Structure
 

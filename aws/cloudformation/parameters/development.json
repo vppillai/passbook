@@ -1,0 +1,38 @@
+[
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "development"
+  },
+  {
+    "ParameterKey": "ProjectName",
+    "ParameterValue": "allowance-passbook"
+  },
+  {
+    "ParameterKey": "Owner",
+    "ParameterValue": "development-team"
+  },
+  {
+    "ParameterKey": "CostCenter",
+    "ParameterValue": "education-tech-dev"
+  },
+  {
+    "ParameterKey": "ApiStage",
+    "ParameterValue": "dev"
+  },
+  {
+    "ParameterKey": "MaxConcurrentLambdas",
+    "ParameterValue": "5"
+  },
+  {
+    "ParameterKey": "DailyRequestLimit",
+    "ParameterValue": "5000"
+  },
+  {
+    "ParameterKey": "AllowedOrigins",
+    "ParameterValue": "http://localhost:5173,https://localhost:5173,https://vppillai.github.io"
+  },
+  {
+    "ParameterKey": "EnableDetailedMonitoring",
+    "ParameterValue": "false"
+  }
+]
