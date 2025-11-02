@@ -337,30 +337,8 @@ Resources:
         - Key: CostCenter
           Value: !Ref CostCenter
 
-  # API Gateway Usage Plan for Cost Control
-  ApiUsagePlan:
-    Type: AWS::ApiGateway::UsagePlan
-    Properties:
-      UsagePlanName: !Sub '${ProjectName}-${Environment}-usage-plan'
-      Description: Usage plan with cost controls
-      ApiStages:
-        - ApiId: !Ref ApiGateway
-          Stage: !Ref ApiStage
-      Throttle:
-        RateLimit: 10
-        BurstLimit: 20
-      Quota:
-        Limit: !Ref DailyRequestLimit
-        Period: DAY
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectName
-        - Key: Environment
-          Value: !Ref Environment
-        - Key: Owner
-          Value: !Ref Owner
-        - Key: CostCenter
-          Value: !Ref CostCenter
+  # API Gateway Usage Plan (will be created when Lambda functions are deployed)
+  # This is commented out for now since we need the API stage to exist first
 
   # CloudWatch Dashboard
   MonitoringDashboard:
@@ -530,11 +508,7 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-ApiGatewayId'
 
-  ApiUsagePlanId:
-    Description: API Gateway Usage Plan ID
-    Value: !Ref ApiUsagePlan
-    Export:
-      Name: !Sub '${AWS::StackName}-ApiUsagePlan'
+  # ApiUsagePlanId - will be added when Lambda functions are deployed
 
   # Region and Environment Info
   Region:
