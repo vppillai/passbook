@@ -65,23 +65,6 @@ Conditions:
   IsProduction: !Equals [!Ref Environment, production]
   IsDetailedMonitoring: !Equals [!Ref EnableDetailedMonitoring, 'true']
 
-Globals:
-  Function:
-    Runtime: nodejs20.x
-    Timeout: 30
-    MemorySize: 256
-    Environment:
-      Variables:
-        NODE_ENV: !Ref Environment
-        PROJECT_NAME: !Ref ProjectName
-    Tags:
-      Project: !Ref ProjectName
-      Environment: !Ref Environment
-      Owner: !Ref Owner
-      CostCenter: !Ref CostCenter
-      ManagedBy: CloudFormation
-      Service: allowance-passbook-backend
-
 Resources:
   # DynamoDB Tables
   ParentAccountsTable:
