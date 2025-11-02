@@ -28,7 +28,9 @@
     "react-chartjs-2": "^5.2.0",
     "xlsx": "^0.18.5",
     "jspdf": "^2.5.1",
-    "zustand": "^4.3.6"
+    "zustand": "^4.3.6",
+    "bcryptjs": "^2.4.3",
+    "uuid": "^9.0.0"
   },
   "devDependencies": {
     "@types/react": "^18.0.28",
@@ -51,7 +53,9 @@
     "@testing-library/user-event": "^14.4.3",
     "jsdom": "^21.1.0",
     "@vitest/ui": "^0.28.5",
-    "@vitest/coverage-c8": "^0.28.5"
+    "@vitest/coverage-c8": "^0.28.5",
+    "@types/bcryptjs": "^2.4.2",
+    "@types/uuid": "^9.0.1"
   },
   "browserslist": {
     "production": [
