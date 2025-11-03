@@ -17,17 +17,9 @@ async function getSmtpConfig() {
   const secretName = process.env.ZOHO_SMTP_SECRET_NAME ||
     `allowance-passbook/${process.env.ENVIRONMENT || 'production'}/zoho-smtp-password`;
 
-  console.log('Retrieving SMTP config from secret:', secretName);
-
   try {
     const secret = await secretsManager.getSecretValue({ SecretId: secretName }).promise();
     const config = JSON.parse(secret.SecretString);
-    console.log('SMTP config retrieved successfully:', {
-      host: config.host,
-      port: config.port,
-      user: config.user,
-      passwordLength: config.password ? config.password.length : 0
-    });
     return config;
   } catch (error) {
     console.error('Failed to retrieve SMTP secret:', error);
@@ -96,7 +88,7 @@ async function sendPasswordResetEmail(email, resetToken, accountType, baseUrl) {
   
   const resetUrl = `${baseUrl}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}&type=${accountType}`;
 
-  const transportConfig = {
+  const transporter = nodemailer.createTransport({
     host: config.host,
     port: parseInt(config.port),
     secure: config.secure === 'true',
@@ -104,17 +96,7 @@ async function sendPasswordResetEmail(email, resetToken, accountType, baseUrl) {
       user: config.user,
       pass: config.password,
     },
-  };
-
-  console.log('Creating transporter with config:', {
-    host: transportConfig.host,
-    port: transportConfig.port,
-    secure: transportConfig.secure,
-    authUser: transportConfig.auth.user,
-    authPassLength: transportConfig.auth.pass ? transportConfig.auth.pass.length : 0
   });
-
-  const transporter = nodemailer.createTransport(transportConfig);
 
   const html = generatePasswordResetEmailHtml(email, resetUrl, accountType);
   const text = `Allowance Passbook - Password Reset Request
@@ -167,7 +149,6 @@ async function sendGenericEmail(to, subject, html, text) {
  * Lambda handler
  */
 exports.handler = async (event) => {
-  console.log('Email service request:', JSON.stringify(event, null, 2));
 
   // CORS headers
   const corsHeaders = {

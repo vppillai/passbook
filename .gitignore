@@ -101,4 +101,4 @@ amplify/
 *.tfstate
 *.tfstate.backup
 .terraform/
-terraform.tfvars
+terraform.tfvarsaws/lambda/email-service/function.zip

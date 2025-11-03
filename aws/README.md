@@ -1,18 +1,41 @@
-# Allowance Passbook - AWS Infrastructure
+# AWS Infrastructure for Allowance Passbook
 
-This directory contains AWS CloudFormation templates and deployment scripts for the optional cloud sync backend of the Allowance Passbook application.
+This directory contains AWS CloudFormation templates and deployment scripts for the optional cloud services backend.
 
-## 🏗️ Architecture Overview
+## Architecture
 
-The Allowance Passbook follows a **pay-per-use** architecture with zero fixed costs:
+The AWS backend provides email services for password reset functionality using a serverless, pay-per-use architecture.
 
-- **Frontend**: Hosted on GitHub Pages (Free)
-- **Backend**: Optional AWS services (Pay-per-use only)
-- **Storage**: DynamoDB (On-demand billing)
-- **API**: API Gateway (Pay per request)
-- **Compute**: Lambda (Pay per invocation)
+```mermaid
+graph TB
+    subgraph "AWS Services"
+        A[API Gateway]
+        B[Lambda Function]
+        C[Secrets Manager]
+        D[CloudWatch]
+        E[SMTP Service]
+    end
 
-## 📁 Directory Structure
+    A --> B
+    B --> C
+    B --> D
+    B --> E
+
+    style A fill:#ff9800
+    style B fill:#4caf50
+    style C fill:#f44336
+    style D fill:#2196f3
+    style E fill:#9c27b0
+```
+
+## Services Used
+
+- **API Gateway**: REST API endpoint with CORS support
+- **Lambda**: Node.js 18.x runtime for email processing
+- **Secrets Manager**: Secure SMTP credential storage
+- **CloudWatch**: Logging and monitoring
+
+## Directory Structure
 
 ```
 aws/
@@ -21,116 +44,139 @@ aws/
 │   │   └── main-template.yaml      # Complete infrastructure template
 │   └── parameters/
 │       ├── development.json        # Dev environment parameters
-│       ├── staging.json            # Staging environment parameters
 │       └── production.json         # Production environment parameters
-├── scripts/
-│   ├── deploy.sh                   # Deployment script
-│   └── teardown.sh                 # Safe teardown script
-└── README.md                       # This file
+├── lambda/
+│   └── email-service/
+│       ├── index.js               # Lambda function code
+│       ├── package.json          # Dependencies
+│       └── package-lambda.sh     # Build script
+└── scripts/
+    ├── deploy.sh                 # Deployment script
+    ├── deploy-lambda.sh         # Lambda deployment
+    ├── update-smtp-secret.sh    # SMTP credential management
+    └── teardown.sh             # Safe teardown script
 ```
 
-## 🚀 Quick Start
-
-### Prerequisites
+## Prerequisites
 
 1. **AWS CLI** installed and configured
    ```bash
    aws configure
    ```
 
-2. **Proper AWS permissions** for:
+2. **AWS Permissions** for:
    - CloudFormation (full access)
-   - DynamoDB (create/manage tables)
-   - IAM (create roles/policies)
-   - API Gateway (create/manage APIs)
    - Lambda (create/manage functions)
-   - CloudWatch (create alarms/dashboards)
+   - API Gateway (create/manage APIs)
+   - Secrets Manager (create/manage secrets)
+   - IAM (create roles/policies)
+   - CloudWatch (create alarms)
 
-### Deploy Infrastructure
+## Deployment
+
+### Initial Infrastructure Setup
 
 ```bash
-# Navigate to scripts directory
 cd aws/scripts
-
-# Deploy development environment
-./deploy.sh -e development -r us-east-1
-
-# Deploy staging environment
-./deploy.sh -e staging -r us-west-2
-
-# Deploy production (with confirmation prompts)
-./deploy.sh -e production -r us-east-1
+./deploy.sh -e production -r us-west-2
 ```
 
-### Teardown Infrastructure
+### SMTP Configuration
+
+Update SMTP credentials in Secrets Manager:
 
 ```bash
-# Teardown development (safe)
-./teardown.sh -e development
-
-# Teardown staging with dry run first
-./teardown.sh -e staging --dry-run
-./teardown.sh -e staging
-
-# Teardown production (requires explicit confirmation)
-./teardown.sh -e production
+./update-smtp-secret.sh production YOUR_SMTP_PASSWORD
 ```
 
-## 🏷️ Comprehensive Tagging Strategy
+### Lambda Function Deployment
 
-All AWS resources are tagged with:
+Deploy or update the Lambda function code:
 
-### Standard Tags
-- **Project**: `allowance-passbook`
-- **Environment**: `development|staging|production`
-- **ManagedBy**: `CloudFormation`
-- **Owner**: Team/person responsible
-- **CostCenter**: Billing allocation
-- **Service**: `allowance-passbook-backend`
+```bash
+./deploy-lambda.sh production us-west-2
+```
 
-### Additional Tags
-- **DeployedBy**: User who ran the deployment
-- **DeploymentDate**: ISO timestamp of deployment
-- **DataClassification**: `sensitive|personal|public`
-- **BackupPolicy**: `daily|weekly|none`
-- **AlertType**: `cost-control|error-monitoring`
+## Environment Configuration
 
-### Resource-Specific Tags
-- **DynamoDB Tables**: Include `DataClassification` and `BackupPolicy`
-- **CloudWatch Alarms**: Include `AlertType`
-- **API Gateway**: Include CORS and rate limiting info
+### Development Environment
+- Conservative limits (5K requests/day)
+- Basic monitoring
+- No data protection
 
-## 💰 Cost Management
+### Production Environment
+- Higher limits (50K requests/day)
+- Full monitoring with dashboard
+- Termination protection enabled
+
+## SMTP Secret Format
+
+The SMTP credentials are stored as JSON in AWS Secrets Manager:
+
+```json
+{
+  "password": "your-smtp-password",
+  "host": "smtp.zoho.in",
+  "port": "587",
+  "secure": "false",
+  "user": "your-smtp-username@domain.com",
+  "from": "your-from-email@domain.com"
+}
+```
+
+## Cost Management
 
 ### Built-in Cost Controls
-
-1. **Hard Limits**
-   - API Gateway: Configurable daily request limits per API key
-   - Lambda: Concurrent execution limits
-   - DynamoDB: On-demand billing with predictable costs
-
-2. **Monitoring & Alerts**
-   - Billing alarm at $1 (warning)
-   - Billing alarm at $5 (critical)
-   - High error rate alarm
-   - Throttling alerts
-
-3. **Resource Optimization**
-   - DynamoDB: On-demand billing (no provisioned capacity)
-   - Lambda: Right-sized memory allocation
-   - API Gateway: Built-in caching and throttling
+- API Gateway request limits per environment
+- Lambda concurrent execution limits
+- CloudWatch billing alarms at $1 and $5
 
 ### Expected Costs
+- Small family (1-5 users): $0 (free tier)
+- Medium family (5-20 users): $0-1/month
+- Large family (20+ users): $1-5/month
 
-| Usage Level | Monthly Requests | Expected Cost |
-|-------------|------------------|---------------|
-| Personal/Family (1-5 users) | 1K - 10K | $0 (Free Tier) |
-| Small Group (10-50 users) | 50K - 100K | $0 - $0.50 |
-| Medium Group (100-500 users) | 500K - 1M | $2 - $10 |
+## Monitoring
 
-### Cost Protection
+### CloudWatch Dashboards
+Created automatically with metrics for:
+- API Gateway (requests, latency, errors)
+- Lambda (invocations, duration, errors)
+- Cost tracking and billing alerts
+
+### Key Metrics
+- **API Gateway**: Request count, 4XX/5XX errors, latency
+- **Lambda**: Invocations, errors, duration, throttles
+- **Billing**: Estimated charges with alerts
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Email not sending**
+   - Check CloudWatch logs for Lambda function
+   - Verify SMTP credentials in Secrets Manager
+   - Confirm API Gateway CORS configuration
+
+2. **High costs**
+   - Check CloudWatch billing dashboard
+   - Review API Gateway usage patterns
+   - Verify request limits are properly configured
+
+3. **Deployment failures**
+   - Validate CloudFormation template syntax
+   - Check IAM permissions
+   - Review parameter file format
+
+### Debugging
 
 ```bash
+# Check recent Lambda logs
+aws logs describe-log-streams --log-group-name "/aws/lambda/allowance-passbook-production-email-service" --order-by LastEventTime --descending --limit 1
+
+# Get specific log events
+aws logs get-log-events --log-group-name "/aws/lambda/allowance-passbook-production-email-service" --log-stream-name "STREAM_NAME"
+
 # Check current billing
 aws cloudwatch get-metric-statistics \
   --namespace AWS/Billing \
@@ -142,281 +188,28 @@ aws cloudwatch get-metric-statistics \
   --dimensions Name=Currency,Value=USD
 ```
 
-## 🔧 Environment Configuration
+## Security Features
 
-### Development Environment
-- **Purpose**: Local development and testing
-- **Limits**: Conservative (5 concurrent Lambdas, 5K requests/day)
-- **Monitoring**: Basic (no detailed dashboard)
-- **Data Protection**: No backup, no termination protection
+- API keys for request authentication
+- CORS restricted to specific origins
+- Request validation at API Gateway
+- Encrypted secrets storage
+- IAM least-privilege access
 
-### Staging Environment
-- **Purpose**: Pre-production testing
-- **Limits**: Moderate (8 concurrent Lambdas, 8K requests/day)
-- **Monitoring**: Full monitoring with dashboard
-- **Data Protection**: No backup, basic termination protection
+## Teardown
 
-### Production Environment
-- **Purpose**: Live application
-- **Limits**: Higher (20 concurrent Lambdas, 50K requests/day)
-- **Monitoring**: Full monitoring with detailed dashboard
-- **Data Protection**: Point-in-time recovery, termination protection
-
-## 🔐 Secrets Management
-
-### Zoho SMTP Password
-
-The Zoho SMTP password for sending password reset emails is stored securely in AWS Secrets Manager.
-
-**Secret Name Format**: `{ProjectName}/{Environment}/zoho-smtp-password`
-
-**Example**: `allowance-passbook/production/zoho-smtp-password`
-
-#### Accessing the Secret in Lambda
-
-```javascript
-const AWS = require('aws-sdk');
-const secretsManager = new AWS.SecretsManager();
-
-async function getSmtpConfig() {
-  const secretName = process.env.ZOHO_SMTP_SECRET_NAME || 'allowance-passbook/production/zoho-smtp-password';
-  const secret = await secretsManager.getSecretValue({ SecretId: secretName }).promise();
-  return JSON.parse(secret.SecretString);
-}
-
-// Usage
-const config = await getSmtpConfig();
-// config.password, config.host, config.port, config.user
-```
-
-#### Updating the Secret
+To remove all AWS resources:
 
 ```bash
-# Update secret manually
-cd aws/scripts
-./update-smtp-secret.sh <environment> [password]
-
-# Examples:
-./update-smtp-secret.sh development pcP3p67YeZgu
-./update-smtp-secret.sh production pcP3p67YeZgu
+./teardown.sh -e production
 ```
 
-The secret is automatically created by CloudFormation during deployment, but you can update it manually using the script.
+**Warning**: This will delete all data and cannot be undone. Use with caution in production.
 
-## 🔐 Security Features
+## Support
 
-### Built-in Security (No Extra Cost)
-
-1. **API Gateway**
-   - Rate limiting and throttling
-   - API key management
-   - Request/response validation
-   - CORS configuration
-
-2. **IAM**
-   - Least-privilege Lambda execution roles
-   - Resource-specific permissions
-   - No cross-environment access
-
-3. **DynamoDB**
-   - Encryption at rest (default)
-   - VPC endpoints support
-   - Fine-grained access control
-
-### Security Best Practices
-
-- **Environment Isolation**: Separate stacks per environment
-- **Resource Naming**: Consistent naming with environment prefix
-- **Access Control**: Environment-specific IAM roles
-- **Monitoring**: CloudWatch alarms for unusual activity
-
-## 📋 Deployment Scripts
-
-### deploy.sh
-
-**Features:**
-- Environment validation
-- Template validation
-- Cost estimation
-- Dry-run mode
-- Production safety checks
-- Automatic rollback on failure
-
-**Usage:**
-```bash
-# Basic deployment
-./deploy.sh -e development
-
-# Advanced deployment with options
-./deploy.sh -e production -r us-east-1 --dry-run
-
-# Force deployment without waiting
-./deploy.sh -e staging --no-wait
-```
-
-### teardown.sh
-
-**Features:**
-- Data protection checks
-- Termination protection handling
-- Multi-confirmation for production
-- Dry-run mode
-- Safe resource cleanup
-
-**Usage:**
-```bash
-# Safe teardown with data check
-./teardown.sh -e development
-
-# Dry run first
-./teardown.sh -e staging --dry-run
-
-# Force teardown (skip confirmations)
-./teardown.sh -e development --force --no-backup
-```
-
-## 🔍 Monitoring & Troubleshooting
-
-### CloudWatch Dashboards
-
-The deployment creates monitoring dashboards with:
-- API Gateway metrics (requests, latency, errors)
-- DynamoDB metrics (read/write capacity, throttling)
-- Lambda metrics (invocations, duration, errors)
-- Cost tracking and billing alerts
-
-### Key Metrics to Monitor
-
-1. **API Gateway**
-   - `Count`: Total requests
-   - `4XXError`: Client errors
-   - `5XXError`: Server errors
-   - `Latency`: Response time
-
-2. **DynamoDB**
-   - `ConsumedReadCapacityUnits`
-   - `ConsumedWriteCapacityUnits`
-   - `ThrottledRequests`
-
-3. **Lambda**
-   - `Invocations`
-   - `Errors`
-   - `Duration`
-   - `Throttles`
-
-### Troubleshooting Common Issues
-
-#### High Costs
-1. Check CloudWatch billing alarms
-2. Review API Gateway usage patterns
-3. Verify DynamoDB read/write patterns
-4. Check for Lambda timeout issues
-
-#### Performance Issues
-1. Monitor API Gateway latency
-2. Check Lambda cold starts
-3. Review DynamoDB throttling
-4. Verify regional deployment
-
-#### Deployment Failures
-1. Validate CloudFormation template
-2. Check IAM permissions
-3. Verify parameter file format
-4. Review CloudFormation events
-
-## 🌍 Multi-Region Deployment
-
-### Region Selection
-
-Choose regions based on:
-- **User Location**: Minimize latency
-- **Cost**: Some regions cost more
-- **Compliance**: Data residency requirements
-- **Availability**: All services available
-
-### Recommended Regions
-
-- **US East (N. Virginia)**: us-east-1 (cheapest, default)
-- **US West (Oregon)**: us-west-2 (good for west coast)
-- **Europe (Ireland)**: eu-west-1 (GDPR compliance)
-- **Asia Pacific (Sydney)**: ap-southeast-2 (APAC users)
-
-### Deploy to Multiple Regions
-
-```bash
-# Deploy to primary region
-./deploy.sh -e production -r us-east-1
-
-# Deploy to secondary region
-./deploy.sh -e production -r us-west-2
-```
-
-## 🔄 CI/CD Integration
-
-### GitHub Actions Integration
-
-```yaml
-# .github/workflows/aws-deploy.yml
-name: Deploy AWS Infrastructure
-on:
-  push:
-    branches: [main]
-    paths: ['aws/**']
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: Configure AWS
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-      - name: Deploy Infrastructure
-        run: |
-          cd aws/scripts
-          ./deploy.sh -e production -r us-east-1
-```
-
-## 📚 Additional Resources
-
-- [AWS CloudFormation Documentation](https://docs.aws.amazon.com/cloudformation/)
-- [DynamoDB On-Demand Pricing](https://aws.amazon.com/dynamodb/pricing/on-demand/)
-- [API Gateway Pricing](https://aws.amazon.com/api-gateway/pricing/)
-- [Lambda Pricing](https://aws.amazon.com/lambda/pricing/)
-- [AWS Free Tier](https://aws.amazon.com/free/)
-
-## 🆘 Support
-
-### Getting Help
-
-1. **AWS Documentation**: Check service-specific docs
-2. **CloudFormation Console**: View stack events and resources
-3. **CloudWatch Logs**: Check Lambda function logs
-4. **AWS Support**: Use support case for technical issues
-
-### Emergency Procedures
-
-#### High Costs Alert
-1. Check billing dashboard immediately
-2. Identify the service causing high costs
-3. Use emergency cost controls:
-   ```bash
-   # Reduce API Gateway quotas
-   aws apigateway update-usage-plan --usage-plan-id <id> --patch-ops op=replace,path=/quota/limit,value=100
-
-   # Reduce Lambda concurrency
-   aws lambda put-provisioned-concurrency-config --function-name <function> --qualifier $LATEST --provisioned-concurrency 1
-   ```
-
-#### Complete Service Shutdown
-```bash
-# Emergency teardown (use with caution)
-./teardown.sh -e production --force --no-backup
-```
-
----
-
-**Remember**: The Allowance Passbook is designed to be **cost-effective** with built-in **cost protection**. Most users will never exceed the AWS free tier!
+For AWS-specific issues:
+1. Check CloudWatch logs for detailed error messages
+2. Verify all services are deployed in the same region (us-west-2)
+3. Ensure proper IAM permissions are configured
+4. Review the CloudFormation stack events for deployment issues

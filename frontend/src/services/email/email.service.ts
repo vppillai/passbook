@@ -1,24 +1,15 @@
 /**
  * Email Service for Password Reset
- * 
- * This service handles sending emails via SMTP.
- * 
- * NOTE: In browser environment, email sending requires a backend API endpoint.
- * For local testing, you can use a simple Node.js server or test SMTP directly.
- * 
- * To test SMTP locally:
- *   1. Set ZOHO_SMTP_PASSWORD environment variable
- *   2. Run: npm run test:smtp
- * 
- * For production on AWS:
- *   - Create a Lambda function that uses this email service
- *   - Or use AWS SES directly from Lambda
+ *
+ * Handles sending password reset emails through AWS Lambda API.
+ * In browser environment, calls AWS API Gateway endpoint.
+ * In Node.js environment, can use nodemailer directly for testing.
  */
 
 interface EmailConfig {
   host: string;
   port: number;
-  secure: boolean; // true for 465, false for other ports
+  secure: boolean;
   auth: {
     user: string;
     password: string;
@@ -32,39 +23,26 @@ interface EmailOptions {
   text?: string;
 }
 
-// Zoho SMTP configuration
 const ZOHO_SMTP_CONFIG: EmailConfig = {
   host: 'smtp.zoho.in',
-  port: 587, // TLS port (use 465 for SSL)
-  secure: false, // true for 465 (SSL), false for 587 (TLS)
+  port: 587,
+  secure: false,
   auth: {
     user: 'support@embeddedinn.com',
-    password: process.env.ZOHO_SMTP_PASSWORD || '', // Should be set via environment variable
+    password: process.env.ZOHO_SMTP_PASSWORD || '',
   },
 };
 
-// Check if we're in browser or Node.js environment
 const isBrowser = typeof window !== 'undefined';
 
-// API endpoint for email service
-// Can be set via environment variable VITE_EMAIL_API_URL
-// Defaults to relative path for same-origin, or absolute URL if provided
 const getEmailApiUrl = (): string => {
   const envUrl = import.meta.env.VITE_EMAIL_API_URL;
   if (envUrl) {
     return envUrl;
   }
-  // Default to relative path (will work if API is on same domain)
-  // Or can be set to AWS API Gateway URL: https://<api-id>.execute-api.<region>.amazonaws.com/<stage>/api/email/send
   return '/api/email/send';
 };
 
-/**
- * Send email using nodemailer (Node.js) or fetch API (browser)
- * 
- * In browser environment, this will attempt to call a backend API endpoint
- * In Node.js environment, uses nodemailer directly
- */
 export class EmailService {
   private config: EmailConfig;
   private fromEmail: string;
@@ -79,7 +57,6 @@ export class EmailService {
    */
   async sendPasswordResetEmail(email: string, resetToken: string, accountType: 'parent' | 'child'): Promise<void> {
     if (isBrowser) {
-      // In browser, send password reset data to API (Lambda expects this format)
       const apiUrl = getEmailApiUrl();
       const baseUrl = window.location.origin + '/passbook';
 
@@ -101,7 +78,7 @@ export class EmailService {
         throw new Error(error.message || 'Failed to send password reset email');
       }
     } else {
-      // In Node.js environment, generate email content and use nodemailer directly
+      // Node.js environment - generate email content and use nodemailer
       const resetUrl = `https://vppillai.github.io/passbook/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}&type=${accountType}`;
 
       const subject = 'Password Reset Request - Allowance Passbook';
@@ -136,7 +113,7 @@ export class EmailService {
                 <p>Or copy and paste this link into your browser:</p>
                 <p style="word-break: break-all; color: #0ea5e9;">${resetUrl}</p>
                 <div class="warning">
-                  <strong>⚠️ Security Notice:</strong>
+                  <strong>Security Notice:</strong>
                   <ul>
                     <li>This link will expire in 1 hour</li>
                     <li>If you didn't request this, please ignore this email</li>
@@ -178,71 +155,36 @@ This is an automated email. Please do not reply.
   }
 
   /**
-   * Send email - implementation depends on environment
+   * Send email - Node.js only implementation
    */
-  async sendEmail(options: EmailOptions): Promise<void> {
-    if (isBrowser) {
-      // In browser, call backend API endpoint (for AWS Lambda or local dev server)
-      // Note: This requires a backend API endpoint to be set up
-      // For AWS: Create a Lambda function that uses this email service
-      // For local testing: Use the test-smtp.js script directly
-      
-      try {
-        const apiUrl = getEmailApiUrl();
-        const response = await fetch(apiUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            ...options,
-            from: this.fromEmail,
-          }),
-        });
+  private async sendEmail(options: EmailOptions): Promise<void> {
+    const nodemailer = await import('nodemailer');
 
-        if (!response.ok) {
-          const error = await response.json().catch(() => ({ message: 'Failed to send email' }));
-          throw new Error(error.message || 'Failed to send email. Please ensure backend API is configured.');
-        }
-      } catch (error) {
-        // If API endpoint doesn't exist, provide helpful error
-        if (error instanceof TypeError && error.message.includes('fetch')) {
-          throw new Error('Email service requires a backend API endpoint. For local testing, use: npm run test:smtp');
-        }
-        throw error;
-      }
-    } else {
-      // In Node.js environment, use nodemailer directly
-      const nodemailer = await import('nodemailer');
-      
-      if (!this.config.auth.password) {
-        throw new Error('ZOHO_SMTP_PASSWORD environment variable is not set');
-      }
-
-      const transporter = nodemailer.createTransport({
-        host: this.config.host,
-        port: this.config.port,
-        secure: this.config.secure,
-        auth: this.config.auth,
-      });
-
-      await transporter.sendMail({
-        from: this.fromEmail,
-        to: options.to,
-        subject: options.subject,
-        html: options.html,
-        text: options.text,
-      });
+    if (!this.config.auth.password) {
+      throw new Error('ZOHO_SMTP_PASSWORD environment variable is not set');
     }
+
+    const transporter = nodemailer.createTransport({
+      host: this.config.host,
+      port: this.config.port,
+      secure: this.config.secure,
+      auth: this.config.auth,
+    });
+
+    await transporter.sendMail({
+      from: this.fromEmail,
+      to: options.to,
+      subject: options.subject,
+      html: options.html,
+      text: options.text,
+    });
   }
 
   /**
-   * Test SMTP connection
-   * For local testing before deploying to AWS
+   * Test SMTP connection (Node.js only)
    */
   async testConnection(): Promise<boolean> {
     if (isBrowser) {
-      // In browser, test via API
       try {
         const response = await fetch('/api/email/test', {
           method: 'POST',
@@ -252,10 +194,9 @@ This is an automated email. Please do not reply.
         return false;
       }
     } else {
-      // In Node.js, test directly
       try {
         const nodemailer = await import('nodemailer');
-        
+
         if (!this.config.auth.password) {
           console.error('ZOHO_SMTP_PASSWORD environment variable is not set');
           return false;
@@ -269,10 +210,10 @@ This is an automated email. Please do not reply.
         });
 
         await transporter.verify();
-        console.log('✅ SMTP connection verified successfully');
+        console.log('SMTP connection verified successfully');
         return true;
       } catch (error) {
-        console.error('❌ SMTP connection failed:', error);
+        console.error('SMTP connection failed:', error);
         return false;
       }
     }
@@ -280,4 +221,3 @@ This is an automated email. Please do not reply.
 }
 
 export const emailService = new EmailService();
-
