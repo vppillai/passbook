@@ -15,6 +15,8 @@ function getGitVersion() {
 }
 
 // https://vite.dev/config/
+const basePath = process.env.VITE_BASE_PATH || '/passbook/';
+
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(getGitVersion()),
@@ -28,20 +30,23 @@ export default defineConfig({
         name: 'Allowance Passbook',
         short_name: 'Passbook',
         description: 'A Progressive Web App for managing family allowances and tracking expenses',
+        start_url: basePath,
         theme_color: '#0ea5e9',
         background_color: '#ffffff',
         display: 'standalone',
         orientation: 'portrait',
         icons: [
           {
-            src: 'icon-192.png',
+            src: `${basePath}icon-192.png`,
             sizes: '192x192',
             type: 'image/png',
+            purpose: 'any maskable',
           },
           {
-            src: 'icon-512.png',
+            src: `${basePath}icon-512.png`,
             sizes: '512x512',
             type: 'image/png',
+            purpose: 'any maskable',
           },
         ],
       },
@@ -66,5 +71,5 @@ export default defineConfig({
       },
     }),
   ],
-  base: process.env.VITE_BASE_PATH || '/passbook/',
+  base: basePath,
 });

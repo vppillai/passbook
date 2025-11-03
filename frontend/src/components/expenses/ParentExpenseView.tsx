@@ -7,14 +7,12 @@ import type { Expense, ChildAccount } from '../../types/models';
 
 interface ParentExpenseViewProps {
   child: ChildAccount;
-  expenses: Expense[];
   currency: string;
   onAddExpense: (expense: Partial<Expense>) => Promise<void>;
 }
 
 export const ParentExpenseView: React.FC<ParentExpenseViewProps> = ({
   child,
-  expenses,
   currency,
   onAddExpense,
 }) => {
@@ -26,21 +24,20 @@ export const ParentExpenseView: React.FC<ParentExpenseViewProps> = ({
     setIsModalOpen(true);
   };
 
-  const handleSubmit = async (expenseData: Partial<Expense>) => {
-    await onAddExpense(expenseData);
-    setEditingExpense(undefined);
-  };
-
   return (
     <div>
       <BalanceDisplay balance={child.currentBalance} currency={currency} />
       
-      <ExpenseList expenses={expenses} currency={currency} onEdit={handleEditClick} />
+      <ExpenseList childAccountId={child.id} currency={currency} onEdit={handleEditClick} />
 
       <FAB onClick={() => {
         setEditingExpense(undefined);
         setIsModalOpen(true);
-      }} />
+      }}>
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+        </svg>
+      </FAB>
 
       <ExpenseFormModal
         isOpen={isModalOpen}
@@ -48,9 +45,12 @@ export const ParentExpenseView: React.FC<ParentExpenseViewProps> = ({
           setIsModalOpen(false);
           setEditingExpense(undefined);
         }}
-        onSubmit={handleSubmit}
-        initialExpense={editingExpense}
-        currency={currency}
+        childAccountId={child.id}
+        expense={editingExpense || null}
+        onSuccess={() => {
+          setEditingExpense(undefined);
+          setIsModalOpen(false);
+        }}
       />
     </div>
   );

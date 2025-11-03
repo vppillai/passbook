@@ -4,6 +4,7 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'danger' | 'outline';
   size?: 'sm' | 'md' | 'lg';
   children: ReactNode;
+  isLoading?: boolean;
 }
 
 export const Button = ({
@@ -11,6 +12,8 @@ export const Button = ({
   size = 'md',
   className = '',
   children,
+  isLoading = false,
+  disabled,
   ...props
 }: ButtonProps) => {
   const baseStyles =
@@ -34,9 +37,10 @@ export const Button = ({
     <button
       className={`${baseStyles} ${variantStyles[variant]} ${sizeStyles[size]} ${className}`}
       {...props}
+      disabled={disabled || isLoading}
       aria-label={typeof children === 'string' ? children : undefined}
     >
-      {children}
+      {isLoading ? 'Loading...' : children}
     </button>
   );
 };

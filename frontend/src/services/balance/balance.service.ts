@@ -73,6 +73,36 @@ class BalanceService {
     const newBalance = child.currentBalance - difference;
     await this.updateBalance(childAccountId, newBalance);
   }
+
+  async getBalanceInfo(
+    childAccountId: string,
+    accountingPeriodId: string
+  ): Promise<{
+    openingBalance: number;
+    totalFunds: number;
+    totalExpenses: number;
+    currentBalance: number;
+  }> {
+    const child = await childStorage.getById(childAccountId);
+    if (!child) {
+      throw new Error('Child account not found');
+    }
+
+    const expenses = await expenseStorage.getByChildAndPeriod(childAccountId, accountingPeriodId);
+    const funds = await fundStorage.getByChildAndPeriod(childAccountId, accountingPeriodId);
+
+    const openingBalance = child.defaultMonthlyAllowance;
+    const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0);
+    const totalFunds = funds.reduce((sum, fund) => sum + fund.amount, 0);
+    const currentBalance = openingBalance + totalFunds - totalExpenses;
+
+    return {
+      openingBalance,
+      totalFunds,
+      totalExpenses,
+      currentBalance,
+    };
+  }
 }
 
 export const balanceService = new BalanceService();

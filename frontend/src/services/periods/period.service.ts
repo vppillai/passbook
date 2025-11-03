@@ -61,6 +61,31 @@ export class PeriodService {
       .equals(parentAccountId)
       .sortBy('startDate');
   }
+
+  async createNewPeriod(
+    parentAccountId: string,
+    startTimestamp: number,
+    endTimestamp: number
+  ): Promise<AccountingPeriod> {
+    // Close current active period
+    const activePeriod = await this.getActivePeriod(parentAccountId);
+    if (activePeriod) {
+      await this.closePeriod(activePeriod.id);
+    }
+
+    const period: AccountingPeriod = {
+      id: uuidv4(),
+      parentAccountId,
+      startDate: formatDate(new Date(startTimestamp)),
+      endDate: formatDate(new Date(endTimestamp)),
+      status: 'active',
+      createdAt: Date.now(),
+      closedAt: null,
+    };
+
+    await db.accountingPeriods.add(period);
+    return period;
+  }
 }
 
 export const periodService = new PeriodService();
