@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/auth.context';
 import { Button } from '../../components/common/Button';
 import { Input } from '../../components/common/Input';
+import { getVersionDisplay } from '../../utils/version';
 
 export const Login = () => {
   const navigate = useNavigate();
@@ -101,6 +102,12 @@ export const Login = () => {
           >
             Don't have an account? Sign up
           </button>
+        </div>
+
+        <div className="mt-6 text-center">
+          <span className="text-xs text-gray-400 dark:text-gray-500">
+            {getVersionDisplay()}
+          </span>
         </div>
       </div>
     </div>
