@@ -25,7 +25,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
+      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg', 'icon.svg', 'icon-192.png', 'icon-512.png'],
       manifestFilename: 'manifest.json',
       manifest: {
         name: 'Allowance Passbook',

@@ -4,6 +4,8 @@ import { AuthProvider, useAuth } from './contexts/auth.context';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { Login } from './pages/auth/Login';
 import { ParentSignup } from './pages/auth/ParentSignup';
+import { ForgotPassword } from './pages/auth/ForgotPassword';
+import { ResetPassword } from './pages/auth/ResetPassword';
 import { ParentDashboard } from './pages/parent/ParentDashboard';
 import { ChildDetailView } from './pages/parent/ChildDetailView';
 import { TeenDashboard } from './pages/teen/TeenDashboard';
@@ -39,6 +41,8 @@ const AppRoutes = () => {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<ParentSignup />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route
         path="/parent/dashboard"
         element={

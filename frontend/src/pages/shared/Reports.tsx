@@ -156,6 +156,7 @@ export const Reports = () => {
           expenses={expenses}
           fundAdditions={fundAdditions}
           periodLabel={getPeriodLabel()}
+          currency={currency}
         />
       )}
     </Layout>

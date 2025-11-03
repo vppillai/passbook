@@ -1,6 +1,6 @@
 // Currency formatting utilities
 
-const CURRENCY_SYMBOLS: Record<string, string> = {
+export const CURRENCY_SYMBOLS: Record<string, string> = {
   CAD: 'C$',
   USD: '$',
   EUR: '€',

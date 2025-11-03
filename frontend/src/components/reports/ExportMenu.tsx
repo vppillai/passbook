@@ -14,6 +14,7 @@ interface ExportMenuProps {
   expenses: Expense[];
   fundAdditions: FundAddition[];
   periodLabel?: string;
+  currency?: string;
 }
 
 export const ExportMenu = ({
@@ -23,6 +24,7 @@ export const ExportMenu = ({
   expenses,
   fundAdditions,
   periodLabel,
+  currency = 'CAD',
 }: ExportMenuProps) => {
   const [dateRange, setDateRange] = useState({
     startDate: '',
@@ -70,6 +72,7 @@ export const ExportMenu = ({
           fundAdditions: exportFunds,
           childName,
           periodLabel: exportPeriodLabel,
+          currency,
         });
       }
 

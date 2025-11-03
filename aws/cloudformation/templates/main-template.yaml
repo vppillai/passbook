@@ -269,6 +269,10 @@ Resources:
         - Key: CostCenter
           Value: !Ref CostCenter
 
+  # Secrets Manager - Zoho SMTP Password Reference
+  # Note: Secret already exists from manual creation
+  # We reference it by name in the Lambda environment variable
+
   # IAM Role for Lambda Functions
   LambdaExecutionRole:
     Type: AWS::IAM::Role
@@ -307,6 +311,24 @@ Resources:
                   - !Sub '${ExpensesTable.Arn}/index/*'
                   - !Sub '${FundAdditionsTable.Arn}/index/*'
                   - !Sub '${AccountingPeriodsTable.Arn}/index/*'
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ProjectName}/${Environment}/zoho-smtp-password*'
+        - PolicyName: ApiGatewayAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - apigateway:GET
+                  - apigateway:POST
+                Resource: '*'
       Tags:
         - Key: Project
           Value: !Ref ProjectName
@@ -317,7 +339,51 @@ Resources:
         - Key: CostCenter
           Value: !Ref CostCenter
 
-  # Lambda Functions (will be deployed separately via SAM/Serverless)
+  # Lambda Function - Email Service
+  # Note: The function code must be deployed separately using the package in aws/lambda/email-service/
+  # After CloudFormation creates the function, update it with: aws lambda update-function-code
+  EmailServiceFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-email-service'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          // Placeholder - actual code deployed separately
+          // See aws/lambda/email-service/ for the full implementation
+          exports.handler = async (event) => {
+            return {
+              statusCode: 500,
+              body: JSON.stringify({ error: 'Lambda function code not deployed. Run deployment script first.' }),
+            };
+          };
+      Environment:
+        Variables:
+          ZOHO_SMTP_SECRET_NAME: 'allowance-passbook/development/zoho-smtp-password'
+          ENVIRONMENT: !Ref Environment
+      Timeout: 30
+      MemorySize: 256
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: CostCenter
+          Value: !Ref CostCenter
+
+  # Lambda Permission for API Gateway
+  EmailServiceApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref EmailServiceFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*'
+
   # API Gateway
   ApiGateway:
     Type: AWS::ApiGateway::RestApi
@@ -326,7 +392,14 @@ Resources:
       Description: Allowance Passbook API Gateway
       EndpointConfiguration:
         Types:
-          - EDGE
+          - REGIONAL
+      Policy:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: execute-api:Invoke
+            Resource: '*'
       Tags:
         - Key: Project
           Value: !Ref ProjectName
@@ -337,8 +410,9 @@ Resources:
         - Key: CostCenter
           Value: !Ref CostCenter
 
-  # API Gateway Usage Plan (will be created when Lambda functions are deployed)
-  # This is commented out for now since we need the API stage to exist first
+  # API Gateway Resources will be created manually via script
+  # Run: aws/scripts/create-api-gateway.sh <environment>
+  # This avoids CloudFormation issues with RootResourceId reference
 
   # CloudWatch Dashboard
   MonitoringDashboard:
@@ -508,7 +582,28 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-ApiGatewayId'
 
+  # API Gateway Invoke URL
+  ApiGatewayUrl:
+    Description: API Gateway invoke URL
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${ApiStage}/api/email/send'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiGatewayUrl'
+
+  # Email Service Endpoint
+  EmailServiceEndpoint:
+    Description: Email service API endpoint
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${ApiStage}/api/email/send'
+    Export:
+      Name: !Sub '${AWS::StackName}-EmailServiceEndpoint'
+
   # ApiUsagePlanId - will be added when Lambda functions are deployed
+
+  # Secrets Manager (created manually)
+  ZohoSmtpPasswordSecretName:
+    Description: Name of the Zoho SMTP password secret
+    Value: !Sub '${ProjectName}/${Environment}/zoho-smtp-password'
+    Export:
+      Name: !Sub '${AWS::StackName}-ZohoSmtpPasswordSecretName'
 
   # Region and Environment Info
   Region:

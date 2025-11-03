@@ -88,10 +88,16 @@ export const Login = () => {
           </Button>
         </form>
 
-        <div className="mt-4 text-center">
+        <div className="mt-4 text-center space-y-2">
+          <button
+            onClick={() => navigate('/forgot-password')}
+            className="block w-full text-sm text-primary-600 dark:text-primary-400 hover:underline"
+          >
+            Forgot password?
+          </button>
           <button
             onClick={() => navigate('/signup')}
-            className="text-sm text-primary-600 dark:text-primary-400 hover:underline"
+            className="block w-full text-sm text-primary-600 dark:text-primary-400 hover:underline"
           >
             Don't have an account? Sign up
           </button>

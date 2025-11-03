@@ -108,3 +108,13 @@ export interface SignupData {
   currency?: string;
 }
 
+export interface PasswordResetToken {
+  id: string;
+  email: string;
+  accountType: 'parent' | 'child';
+  token: string;
+  expiresAt: number; // timestamp
+  used: boolean;
+  createdAt: number; // timestamp
+}
+

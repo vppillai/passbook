@@ -162,6 +162,47 @@ aws cloudwatch get-metric-statistics \
 - **Monitoring**: Full monitoring with detailed dashboard
 - **Data Protection**: Point-in-time recovery, termination protection
 
+## 🔐 Secrets Management
+
+### Zoho SMTP Password
+
+The Zoho SMTP password for sending password reset emails is stored securely in AWS Secrets Manager.
+
+**Secret Name Format**: `{ProjectName}/{Environment}/zoho-smtp-password`
+
+**Example**: `allowance-passbook/production/zoho-smtp-password`
+
+#### Accessing the Secret in Lambda
+
+```javascript
+const AWS = require('aws-sdk');
+const secretsManager = new AWS.SecretsManager();
+
+async function getSmtpConfig() {
+  const secretName = process.env.ZOHO_SMTP_SECRET_NAME || 'allowance-passbook/production/zoho-smtp-password';
+  const secret = await secretsManager.getSecretValue({ SecretId: secretName }).promise();
+  return JSON.parse(secret.SecretString);
+}
+
+// Usage
+const config = await getSmtpConfig();
+// config.password, config.host, config.port, config.user
+```
+
+#### Updating the Secret
+
+```bash
+# Update secret manually
+cd aws/scripts
+./update-smtp-secret.sh <environment> [password]
+
+# Examples:
+./update-smtp-secret.sh development pcP3p67YeZgu
+./update-smtp-secret.sh production pcP3p67YeZgu
+```
+
+The secret is automatically created by CloudFormation during deployment, but you can update it manually using the script.
+
 ## 🔐 Security Features
 
 ### Built-in Security (No Extra Cost)

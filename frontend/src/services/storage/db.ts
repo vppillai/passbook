@@ -7,6 +7,7 @@ import type {
   FundAddition,
   AccountingPeriod,
   AccountingPeriodBalance,
+  PasswordResetToken,
 } from '../../types/models';
 
 export class PassbookDatabase extends Dexie {
@@ -16,18 +17,20 @@ export class PassbookDatabase extends Dexie {
   fundAdditions!: Table<FundAddition, string>;
   accountingPeriods!: Table<AccountingPeriod, string>;
   accountingPeriodBalances!: Table<AccountingPeriodBalance, string>;
+  passwordResetTokens!: Table<PasswordResetToken, string>;
 
   constructor() {
     super('PassbookDB');
 
-    // Define schema - incremented version due to adding compound indexes
-    this.version(2).stores({
+    // Define schema - version 3 adds password reset tokens
+    this.version(3).stores({
       parentAccounts: 'id, email',
       childAccounts: 'id, parentAccountId, email',
       expenses: 'id, childAccountId, accountingPeriodId, date, [childAccountId+date], [childAccountId+accountingPeriodId]',
       fundAdditions: 'id, childAccountId, accountingPeriodId, date, [childAccountId+date], [childAccountId+accountingPeriodId]',
       accountingPeriods: 'id, parentAccountId, status, [parentAccountId+status], startDate, endDate',
       accountingPeriodBalances: 'id, childAccountId, accountingPeriodId',
+      passwordResetTokens: 'id, token, email, expiresAt, [token+used]',
     });
   }
 }

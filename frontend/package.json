@@ -17,6 +17,7 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
+    "test:smtp": "node src/services/email/test-smtp.js",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
@@ -55,7 +56,9 @@
     "@vitest/ui": "^0.28.5",
     "@vitest/coverage-c8": "^0.28.5",
     "@types/bcryptjs": "^2.4.2",
-    "@types/uuid": "^9.0.1"
+    "@types/uuid": "^9.0.1",
+    "nodemailer": "^6.9.8",
+    "dotenv": "^16.3.1"
   },
   "browserslist": {
     "production": [
