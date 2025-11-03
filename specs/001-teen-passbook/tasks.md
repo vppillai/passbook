@@ -1,6 +1,6 @@
-# Tasks: Teen Passbook
+# Tasks: Allowance Passbook
 
-**Input**: Design documents from `/specs/001-teen-passbook/`
+**Input**: Design documents from `/specs/001-allowance-passbook/`
 **Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
 
 **Tests**: The specification does not explicitly request tests. Tests are OPTIONAL - only include if explicitly requested.
@@ -86,18 +86,18 @@
 
 ---
 
-## Phase 4: User Story 2 - Teen Expense Tracking (Priority: P1) 🎯 MVP
+## Phase 4: User Story 2 - Child Expense Tracking (Priority: P1) 🎯 MVP
 
-**Goal**: Enable teens to track expenses with visual analytics
+**Goal**: Enable children to track expenses with visual analytics
 
-**Independent Test**: Teen can login, add/edit expenses, view balance, and see analytics
+**Independent Test**: Child can login, add/edit expenses, view balance, and see analytics
 
 ### Implementation for User Story 2
 
 - [ ] T038 [P] [US2] Create Expense model interface in frontend/src/types/models.ts
 - [ ] T039 [P] [US2] Create Category model and predefined data in frontend/src/data/categories.ts
 - [ ] T040 [US2] Implement expense service in frontend/src/services/expenses/expense.service.ts
-- [ ] T041 [P] [US2] Create teen dashboard page in frontend/src/pages/teen/TeenDashboard.tsx
+- [ ] T041 [P] [US2] Create child dashboard page in frontend/src/pages/child/ChildDashboard.tsx
 - [ ] T042 [P] [US2] Create floating action button (FAB) component in frontend/src/components/common/FAB.tsx
 - [ ] T043 [P] [US2] Create expense form modal in frontend/src/components/expenses/ExpenseFormModal.tsx
 - [ ] T044 [P] [US2] Create category picker component in frontend/src/components/expenses/CategoryPicker.tsx
@@ -176,7 +176,7 @@
 ### Implementation for User Story 5
 
 - [ ] T080 [P] [US5] Create settings page for parents in frontend/src/pages/parent/Settings.tsx
-- [ ] T081 [P] [US5] Create settings page for teens in frontend/src/pages/teen/Settings.tsx
+- [ ] T081 [P] [US5] Create settings page for children in frontend/src/pages/child/Settings.tsx
 - [ ] T082 [P] [US5] Create theme toggle component in frontend/src/components/settings/ThemeToggle.tsx
 - [ ] T083 [P] [US5] Create accounting period editor in frontend/src/components/settings/AccountingPeriodEditor.tsx
 - [ ] T084 [US5] Implement custom accounting period logic in frontend/src/services/periods/custom-period.service.ts
@@ -288,7 +288,7 @@ Task: "Create Expense model interface in frontend/src/types/models.ts"
 Task: "Create Category model and predefined data in frontend/src/data/categories.ts"
 
 # Launch all UI components together:
-Task: "Create teen dashboard page in frontend/src/pages/teen/TeenDashboard.tsx"
+Task: "Create child dashboard page in frontend/src/pages/child/ChildDashboard.tsx"
 Task: "Create floating action button (FAB) component in frontend/src/components/common/FAB.tsx"
 Task: "Create expense form modal in frontend/src/components/expenses/ExpenseFormModal.tsx"
 Task: "Create category picker component in frontend/src/components/expenses/CategoryPicker.tsx"
@@ -304,7 +304,7 @@ Task: "Create balance display component with sticky positioning in frontend/src/
 1. Complete Phase 1: Setup
 2. Complete Phase 2: Foundational (CRITICAL - blocks all stories)
 3. Complete Phase 3: User Story 1 (Parent setup)
-4. Complete Phase 4: User Story 2 (Teen tracking)
+4. Complete Phase 4: User Story 2 (Child tracking)
 5. **STOP and VALIDATE**: Test core functionality
 6. Deploy/demo if ready
 
@@ -324,7 +324,7 @@ With multiple developers:
 1. Team completes Setup + Foundational together
 2. Once Foundational is done:
    - Developer A: User Story 1 (Parent setup)
-   - Developer B: User Story 2 (Teen tracking)
+   - Developer B: User Story 2 (Child tracking)
    - Developer C: User Story 3 (Fund management)
 3. Stories complete and integrate independently
 

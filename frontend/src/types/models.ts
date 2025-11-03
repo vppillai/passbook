@@ -1,9 +1,9 @@
-// Type definitions for Teen Passbook entities
+// Type definitions for Allowance Passbook entities
 
 export type Theme = 'light' | 'dark' | 'system';
 export type AccountingPeriodType = 'monthly' | 'biweekly' | 'custom';
 export type AccountingPeriodStatus = 'active' | 'closed';
-export type ExpenseCreator = 'teen' | 'parent';
+export type ExpenseCreator = 'child' | 'parent';
 export type CurrencyCode = string; // ISO 4217 currency code (e.g., 'CAD', 'USD')
 
 export interface ParentAccount {

@@ -1,7 +1,7 @@
-# Data Model: Teen Passbook
+# Data Model: Allowance Passbook
 
 **Date**: 2025-11-02  
-**Feature**: Teen expense tracking with parent-child account management
+**Feature**: Allowance expense tracking with parent-child account management
 
 ## Entity Definitions
 
@@ -33,14 +33,14 @@ Primary account holder who manages the family's financial tracking.
 
 ### ChildAccount
 
-Individual teen account linked to a parent account.
+Individual child account linked to a parent account.
 
 **Fields**:
 - `id`: string (UUID) - Unique identifier
 - `parentAccountId`: string (UUID) - Link to parent account
 - `email`: string - Login email (unique)
 - `passwordHash`: string - Encrypted password
-- `name`: string - Teen's display name
+- `name`: string - Child's display name
 - `currentBalance`: number - Current available balance
 - `defaultMonthlyAllowance`: number - Default allowance (default: 100.00)
 - `isActive`: boolean - Account active status
@@ -65,13 +65,13 @@ Transaction record for money spent.
 
 **Fields**:
 - `id`: string (UUID) - Unique identifier
-- `childAccountId`: string (UUID) - Which teen's expense
+- `childAccountId`: string (UUID) - Which child's expense
 - `amount`: number - Amount spent (positive number)
 - `category`: string - Expense category
 - `description`: string - Item/service description
 - `date`: date - Date of expense
 - `accountingPeriodId`: string (UUID) - Which period this belongs to
-- `createdBy`: enum ["teen", "parent"] - Who created the entry
+- `createdBy`: enum ["child", "parent"] - Who created the entry
 - `createdAt`: timestamp - Entry creation time
 - `updatedAt`: timestamp - Last edit time
 - `updatedBy`: string (UUID) - ID of user who last edited
@@ -88,11 +88,11 @@ Transaction record for money spent.
 
 ### FundAddition
 
-Record of money added to a teen's account.
+Record of money added to a child's account.
 
 **Fields**:
 - `id`: string (UUID) - Unique identifier
-- `childAccountId`: string (UUID) - Recipient teen account
+- `childAccountId`: string (UUID) - Recipient child account
 - `amount`: number - Amount added (positive number)
 - `reason`: string - Reason for addition
 - `date`: date - Date of addition
@@ -136,11 +136,11 @@ Configurable time frame for tracking expenses.
 
 ### AccountingPeriodBalance
 
-Snapshot of a teen's balance for a specific period.
+Snapshot of a child's balance for a specific period.
 
 **Fields**:
 - `id`: string (UUID) - Unique identifier
-- `childAccountId`: string (UUID) - Which teen
+- `childAccountId`: string (UUID) - Which child
 - `accountingPeriodId`: string (UUID) - Which period
 - `openingBalance`: number - Balance at period start
 - `totalFunds`: number - Sum of fund additions
@@ -258,7 +258,7 @@ Predefined expense categories.
 ### Access Control
 
 - Parents: Full access to family data
-- Teens: Own account data only
+- Children: Own account data only
 - No cross-family data access
 
 ### Audit Trail

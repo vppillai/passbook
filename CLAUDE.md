@@ -4,7 +4,7 @@ Auto-generated from all feature plans. Last updated: 2025-11-02
 
 ## Active Technologies
 
-- JavaScript/TypeScript with Node.js 20.x + React 18, Vite, IndexedDB, Workbox (PWA), React Router, Zustand (state management) (001-teen-passbook)
+- JavaScript/TypeScript with Node.js 20.x + React 18, Vite, IndexedDB, Workbox (PWA), React Router, Zustand (state management) (001-allowance-passbook)
 
 ## Project Structure
 
@@ -34,7 +34,7 @@ JavaScript/TypeScript with Node.js 20.x: Follow standard conventions
 
 ## Recent Changes
 
-- 001-teen-passbook: Added JavaScript/TypeScript with Node.js 20.x + React 18, Vite, IndexedDB, Workbox (PWA), React Router, Zustand (state management)
+- 001-allowance-passbook: Added JavaScript/TypeScript with Node.js 20.x + React 18, Vite, IndexedDB, Workbox (PWA), React Router, Zustand (state management)
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->

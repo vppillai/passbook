@@ -1,9 +1,9 @@
 {
-  "name": "teen-passbook",
+  "name": "allowance-passbook",
   "version": "1.0.0",
   "type": "module",
-  "description": "Teen expense tracking PWA with parent-child account management",
-  "keywords": ["teen", "expense-tracking", "pwa", "budgeting", "financial-education"],
+  "description": "Allowance expense tracking PWA with parent-child account management",
+  "keywords": ["allowance", "expense-tracking", "pwa", "budgeting", "financial-education"],
   "repository": {
     "type": "git",
     "url": "https://github.com/username/passbook.git"

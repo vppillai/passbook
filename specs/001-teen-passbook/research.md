@@ -1,7 +1,7 @@
-# Research: Teen Passbook
+# Research: Allowance Passbook
 
 **Date**: 2025-11-02  
-**Feature**: Teen expense tracking PWA with parent-child account management
+**Feature**: Allowance expense tracking PWA with parent-child account management
 
 ## Technical Decisions
 
@@ -18,7 +18,7 @@
 
 **Alternatives considered**:
 - Vue.js: Smaller learning curve but less mature PWA tooling
-- Angular: Too heavy for a mobile-first teen app
+- Angular: Too heavy for a mobile-first child app
 - Vanilla JS: Would require building too much infrastructure
 
 ### 2. Build Tool: Vite
@@ -59,7 +59,7 @@
 
 **Rationale**:
 - Tiny bundle size (8KB) vs Redux (60KB+)
-- Simple API perfect for teen app complexity level
+- Simple API perfect for child app complexity level
 - Built-in persistence middleware for offline state
 - TypeScript first-class support
 - No boilerplate unlike Redux
@@ -92,11 +92,11 @@
 - Full control over minimalist design requirements
 - Tailwind's utility classes perfect for rapid development
 - Smaller bundle than Material-UI or Ant Design
-- Better performance on low-end teen devices
+- Better performance on low-end devices
 - Dark mode support built into Tailwind
 
 **Alternatives considered**:
-- Material-UI: Too heavy (300KB+), not teen-aesthetic
+- Material-UI: Too heavy (300KB+), not child-aesthetic
 - Ant Design: Desktop-focused, large bundle
 - Chakra UI: Good but adds unnecessary weight
 
@@ -201,7 +201,7 @@ components/
 
 ### Bundle Splitting
 
-- Route-based splitting (parent vs teen dashboards)
+- Route-based splitting (parent vs child dashboards)
 - Lazy load export libraries (300KB saved from initial)
 - Separate vendor bundle for caching
 

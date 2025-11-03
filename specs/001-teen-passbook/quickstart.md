@@ -1,12 +1,12 @@
-# Teen Passbook - Quick Start Guide
+# Allowance Passbook - Quick Start Guide
 
-**Feature**: Teen expense tracking PWA with parent-child account management  
-**Branch**: `001-teen-passbook`  
+**Feature**: Allowance expense tracking PWA with parent-child account management  
+**Branch**: `001-allowance-passbook`  
 **Last Updated**: 2025-11-02
 
 ## 🚀 Project Overview
 
-Teen Passbook is a Progressive Web App (PWA) that helps teenagers track their expenses and learn budgeting through practical money management. Parents create family accounts, add their children, and manage allowances while teens track their spending with visual insights.
+Allowance Passbook is a Progressive Web App (PWA) that helps children track their expenses and learn budgeting through practical money management. Parents create family accounts, add their children, and manage allowances while children track their spending with visual insights.
 
 ### Key Features
 - 👪 Parent-child account hierarchy
@@ -44,7 +44,7 @@ aws-cli >= 2.x
 ```bash
 git clone <repository-url>
 cd passbook
-git checkout 001-teen-passbook
+git checkout 001-allowance-passbook
 ```
 
 2. **Install dependencies**:
@@ -128,7 +128,7 @@ frontend/
 │   ├── pages/              # Route pages
 │   │   ├── auth/          # Login, Signup
 │   │   ├── parent/        # Parent dashboard views
-│   │   ├── teen/          # Teen dashboard views
+│   │   ├── child/          # Child dashboard views
 │   │   └── shared/        # Analytics, Settings
 │   ├── services/          # Business logic
 │   │   ├── auth/          # Authentication

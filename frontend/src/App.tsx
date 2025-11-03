@@ -8,7 +8,7 @@ import { ForgotPassword } from './pages/auth/ForgotPassword';
 import { ResetPassword } from './pages/auth/ResetPassword';
 import { ParentDashboard } from './pages/parent/ParentDashboard';
 import { ChildDetailView } from './pages/parent/ChildDetailView';
-import { TeenDashboard } from './pages/teen/TeenDashboard';
+import { ChildDashboard } from './pages/child/ChildDashboard';
 import { Analytics } from './pages/shared/Analytics';
 import { Settings } from './pages/shared/Settings';
 import { Reports } from './pages/shared/Reports';
@@ -30,7 +30,7 @@ const ProtectedRoute = ({ children, requiredType }: { children: React.ReactEleme
   }
 
   if (requiredType && user?.type !== requiredType) {
-    return <Navigate to={user?.type === 'parent' ? '/parent/dashboard' : '/teen/dashboard'} replace />;
+    return <Navigate to={user?.type === 'parent' ? '/parent/dashboard' : '/child/dashboard'} replace />;
   }
 
   return children;
@@ -60,10 +60,10 @@ const AppRoutes = () => {
         }
       />
       <Route
-        path="/teen/dashboard"
+        path="/child/dashboard"
         element={
           <ProtectedRoute requiredType="child">
-            <TeenDashboard />
+            <ChildDashboard />
           </ProtectedRoute>
         }
       />

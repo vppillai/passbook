@@ -1,6 +1,6 @@
-# Deployment Guide: Teen Passbook
+# Deployment Guide: Allowance Passbook
 
-This guide covers deploying the Teen Passbook PWA to GitHub Pages.
+This guide covers deploying the Allowance Passbook PWA to GitHub Pages.
 
 ## Prerequisites
 

@@ -1,11 +1,11 @@
-# Pay-Per-Use Architecture: Teen Passbook
+# Pay-Per-Use Architecture: Allowance Passbook
 
 **Date**: 2025-11-02  
 **Principle**: NO fixed monthly costs - pay only for what you use
 
 ## Overview
 
-Teen Passbook is designed to have ZERO fixed costs. The app runs on GitHub Pages (free) and only incurs costs when optional cloud sync is used. Even then, all AWS services are strictly pay-per-use.
+Allowance Passbook is designed to have ZERO fixed costs. The app runs on GitHub Pages (free) and only incurs costs when optional cloud sync is used. Even then, all AWS services are strictly pay-per-use.
 
 ## Cost Breakdown
 
@@ -153,7 +153,7 @@ If costs ever spike:
 
 ## Conclusion
 
-The Teen Passbook architecture ensures:
+The Allowance Passbook architecture ensures:
 - **$0 fixed costs** - no monthly commitments
 - **Pay only for usage** - fair and transparent
 - **Free for most families** - AWS free tier covers typical usage

@@ -1,7 +1,7 @@
 openapi: 3.0.0
 info:
-  title: Teen Passbook API
-  description: API for teen expense tracking with parent-child account management
+  title: Allowance Passbook API
+  description: API for allowance expense tracking with parent-child account management
   version: 1.0.0
   
 servers:
@@ -759,7 +759,7 @@ x-amazon-apigateway-api-key-source: HEADER
           type: string
         createdBy:
           type: string
-          enum: [teen, parent]
+          enum: [child, parent]
         createdAt:
           type: string
           format: date-time

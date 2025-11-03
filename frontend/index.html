@@ -20,13 +20,6 @@
           return s.replace(/~and~/g, '&')
         }).join('?');
 
-        console.log('SPA Redirect Debug:', {
-          original: l.href,
-          search: l.search,
-          encoded: encoded,
-          decoded: decoded
-        });
-
         window.history.replaceState(null, null,
           l.pathname.slice(0, -1) + decoded + l.hash
         );

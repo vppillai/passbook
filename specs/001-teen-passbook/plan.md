@@ -1,11 +1,11 @@
-# Implementation Plan: Teen Passbook
+# Implementation Plan: Allowance Passbook
 
-**Branch**: `001-teen-passbook` | **Date**: 2025-11-02 | **Spec**: [spec.md](spec.md)
-**Input**: Feature specification from `/specs/001-teen-passbook/spec.md`
+**Branch**: `001-allowance-passbook` | **Date**: 2025-11-02 | **Spec**: [spec.md](spec.md)
+**Input**: Feature specification from `/specs/001-allowance-passbook/spec.md`
 
 ## Summary
 
-A multi-user financial tracking Progressive Web App (PWA) where parents create family accounts and manage their children's digital passbooks. Teens track expenses by category, view balances, and learn budgeting through practical use. The app prioritizes offline-first functionality with optional cloud sync, supports multiple currencies (CAD default), and provides export capabilities for financial records.
+A multi-user financial tracking Progressive Web App (PWA) where parents create family accounts and manage their children's digital passbooks. Children track expenses by category, view balances, and learn budgeting through practical use. The app prioritizes offline-first functionality with optional cloud sync, supports multiple currencies (CAD default), and provides export capabilities for financial records.
 
 ## Technical Context
 
@@ -24,7 +24,7 @@ A multi-user financial tracking Progressive Web App (PWA) where parents create f
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
 **Initial Check (Pre-Research)**:
-- [x] **Teen-Centered Design**: Feature addresses actual teen needs with age-appropriate UX
+- [x] **Child-Centered Design**: Feature addresses actual child needs with age-appropriate UX
 - [x] **Minimalist Interface**: UI requires ≤3 taps/clicks from home, no unnecessary elements
 - [x] **Cost-Efficient Architecture**: Infrastructure costs justified, uses free tier where possible
 - [x] **Mobile-First Development**: Designed for mobile first, works offline with sync
@@ -32,7 +32,7 @@ A multi-user financial tracking Progressive Web App (PWA) where parents create f
 - [x] **Financial Education**: Feature teaches budgeting/planning concepts through practical use
 
 **Post-Design Validation (Phase 1 Complete)**:
-- [x] **Teen-Centered Design**: ✓ FAB button, visual analytics, negative balance warnings all teen-friendly
+- [x] **Child-Centered Design**: ✓ FAB button, visual analytics, negative balance warnings all child-friendly
 - [x] **Minimalist Interface**: ✓ Analytics hidden in menu, FAB for quick access, ≤3 taps maintained
 - [x] **Cost-Efficient Architecture**: ✓ IndexedDB-first, optional AWS backend, GitHub Pages free hosting
 - [x] **Mobile-First Development**: ✓ PWA with offline-first, touch interactions, mobile breakpoints
@@ -44,7 +44,7 @@ A multi-user financial tracking Progressive Web App (PWA) where parents create f
 ### Documentation (this feature)
 
 ```text
-specs/001-teen-passbook/
+specs/001-allowance-passbook/
 ├── plan.md              # This file (/speckit.plan command output)
 ├── research.md          # Phase 0 output (/speckit.plan command)
 ├── data-model.md        # Phase 1 output (/speckit.plan command)
@@ -66,7 +66,7 @@ frontend/
 │   ├── pages/           # Route-based pages
 │   │   ├── auth/        # Login, ParentSignup
 │   │   ├── parent/      # ParentDashboard, ChildManagement, Settings
-│   │   ├── teen/        # TeenDashboard, ExpenseHistory
+│   │   ├── child/        # ChildDashboard, ExpenseHistory
 │   │   └── shared/      # Reports, PeriodSelector
 │   ├── services/        # Business logic
 │   │   ├── auth/        # Authentication service

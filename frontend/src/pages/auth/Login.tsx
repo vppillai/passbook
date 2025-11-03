@@ -25,7 +25,7 @@ export const Login = () => {
         navigate('/parent/dashboard');
       } else {
         await loginChild(email, password);
-        navigate('/teen/dashboard');
+        navigate('/child/dashboard');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed. Please try again.');

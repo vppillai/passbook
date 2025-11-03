@@ -76,7 +76,7 @@ export const ExpenseFormModal = ({
         category: formData.category,
         description: formData.description,
         date: formData.date,
-        createdBy: user?.type === 'parent' ? 'parent' : 'teen',
+        createdBy: user?.type === 'parent' ? 'parent' : 'child',
       };
 
       if (expense) {

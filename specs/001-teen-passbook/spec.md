@@ -1,6 +1,6 @@
-# Feature Specification: Teen Passbook
+# Feature Specification: Allowance Passbook
 
-**Feature Branch**: `001-teen-passbook`  
+**Feature Branch**: `001-allowance-passbook`  
 **Created**: 2025-11-02  
 **Status**: Draft  
 **Input**: User description: "Currency is CAD, but selectable when the parent sets up the account. a parent creates the account and adds kids account into it. the kids get a seperate login after the parent sets it up. parents can add funds and expenses. kids can add expenses. when entering expenses, the type must be selectable from a dropdown. examples are snacks, toys, crafts, games. default fund is $100 and is for a month. current month is the primary visible in the interface. But, previous months should be selectable from the menu to see past months. once an entry is made, it should also be possible to edit it to fix errors etc. parents view should include mechanism to select child and then view details of current and previous months. dark and lite modes should be supported. for the time being, we will use an email based login . there is no need for email validation since we dont want to setup an email backend to send codes. there should be a mechanism to export reports between dates, current month, etc as an excel sheet or pdf . this can be part of a menu since we dont want to clutter the minimalist frontend. the default frontend should show a current balance at the page in bigger font and it should stay sticky  as they scroll through the list of expenses. the expense entries should include date, item, amount and sorted by date. previous months should be selectable from the menu to see, but default is current period. the accounting period can be changed by the parent but default is from start of the month to end of the month . parents should be able to go add additional funds to the kids account any time. parents should be able to start a new account period any time."
@@ -20,7 +20,7 @@
 
 ### User Story 1 - Parent Account Setup & Child Management (Priority: P1)
 
-A parent discovers the Teen Passbook app and wants to set up an account for their family. They create their parent account, select their preferred currency (defaulting to CAD), and add one or more child accounts. Each child receives their own login credentials to access their individual passbook.
+A parent discovers the Allowance Passbook app and wants to set up an account for their family. They create their parent account, select their preferred currency (defaulting to CAD), and add one or more child accounts. Each child receives their own login credentials to access their individual passbook.
 
 **Why this priority**: This is the foundational functionality - without parent account creation and child account setup, no other features can be used. This establishes the hierarchical account structure essential to the app.
 
@@ -34,23 +34,23 @@ A parent discovers the Teen Passbook app and wants to set up an account for thei
 
 ---
 
-### User Story 2 - Teen Expense Tracking (Priority: P1)
+### User Story 2 - Child Expense Tracking (Priority: P1)
 
-A teenager logs into their account and records their daily expenses using a prominent add button. They select a category from a dropdown (like snacks, toys, crafts, or games), enter the amount spent, and add a description. They can see their current balance prominently displayed, scroll through their expense history for the current month, and access spending insights through a "View Analytics" menu option that shows a pie chart with category breakdown and a line graph with spending trends over time.
+A child logs into their account and records their daily expenses using a prominent add button. They select a category from a dropdown (like snacks, toys, crafts, or games), enter the amount spent, and add a description. They can see their current balance prominently displayed, scroll through their expense history for the current month, and access spending insights through a "View Analytics" menu option that shows a pie chart with category breakdown and a line graph with spending trends over time.
 
-**Why this priority**: This is the core functionality that delivers the primary value - helping teens track their spending and learn budgeting. Without this, the app doesn't fulfill its main purpose.
+**Why this priority**: This is the core functionality that delivers the primary value - helping children track their spending and learn budgeting. Without this, the app doesn't fulfill its main purpose.
 
 **Independent Test**: Can be tested by logging in as a child, adding multiple expenses with different categories, and verifying the balance updates correctly and expenses appear in the sorted list.
 
 **Acceptance Scenarios**:
 
-1. **Given** a logged-in teen with a $100 monthly allowance, **When** they add a $10 expense for snacks, **Then** their balance shows $90 and the expense appears in their list
-2. **Given** a teen viewing their expenses, **When** they realize they entered an amount incorrectly, **Then** they can edit the expense and see their balance update
-3. **Given** a teen adding an expense, **When** they select the category dropdown, **Then** they see predefined categories including snacks, toys, crafts, and games
-4. **Given** a teen on their dashboard, **When** they look for the add expense button, **Then** they see a floating action button at the bottom right corner of the screen
-5. **Given** a teen with multiple expenses across categories, **When** they access "View Analytics" from the menu and view the pie chart, **Then** they see their spending breakdown by category for the current period
-6. **Given** a teen wanting to analyze spending trends, **When** they access "View Analytics" from the menu and view the line graph, **Then** they see spending patterns with selectable time granularity (daily/weekly/monthly), defaulting to daily with weekly aggregation
-7. **Given** a teen with $5 balance attempting to add a $10 expense, **When** they submit the expense, **Then** they see a warning that their balance will go negative but the expense is still recorded
+1. **Given** a logged-in child with a $100 monthly allowance, **When** they add a $10 expense for snacks, **Then** their balance shows $90 and the expense appears in their list
+2. **Given** a child viewing their expenses, **When** they realize they entered an amount incorrectly, **Then** they can edit the expense and see their balance update
+3. **Given** a child adding an expense, **When** they select the category dropdown, **Then** they see predefined categories including snacks, toys, crafts, and games
+4. **Given** a child on their dashboard, **When** they look for the add expense button, **Then** they see a floating action button at the bottom right corner of the screen
+5. **Given** a child with multiple expenses across categories, **When** they access "View Analytics" from the menu and view the pie chart, **Then** they see their spending breakdown by category for the current period
+6. **Given** a child wanting to analyze spending trends, **When** they access "View Analytics" from the menu and view the line graph, **Then** they see spending patterns with selectable time granularity (daily/weekly/monthly), defaulting to daily with weekly aggregation
+7. **Given** a child with $5 balance attempting to add a $10 expense, **When** they submit the expense, **Then** they see a warning that their balance will go negative but the expense is still recorded
 
 ---
 
@@ -73,7 +73,7 @@ A parent logs in to add funds to their child's account, view their child's spend
 
 ### User Story 4 - Historical Data & Reporting (Priority: P3)
 
-Users can view previous months' data, export reports for specific date ranges, and analyze spending patterns over time. Parents can generate reports for tax purposes or allowance planning, while teens can review their spending habits.
+Users can view previous months' data, export reports for specific date ranges, and analyze spending patterns over time. Parents can generate reports for tax purposes or allowance planning, while children can review their spending habits.
 
 **Why this priority**: This provides valuable insights and record-keeping but isn't essential for basic functionality. The app can operate effectively with just current month viewing.
 
@@ -105,7 +105,7 @@ Users can customize their experience with dark/light mode themes. Parents can mo
 
 ### Edge Cases
 
-- What happens when a child's balance goes negative? → Expense is allowed with warning notification shown to teen
+- What happens when a child's balance goes negative? → Expense is allowed with warning notification shown to child
 - How does the system handle concurrent edits to the same expense?
 - What occurs if a parent deletes a child account with existing data?
 - How are timezone differences handled for families across time zones?
@@ -119,7 +119,7 @@ Users can customize their experience with dark/light mode themes. Parents can mo
 - **FR-002**: System MUST authenticate users via email and password without email verification
 - **FR-003**: Parents MUST be able to create, edit, and manage child accounts
 - **FR-004**: System MUST support multiple currencies with CAD as default
-- **FR-005**: Teens MUST be able to add and edit their own expenses
+- **FR-005**: Children MUST be able to add and edit their own expenses
 - **FR-006**: Parents MUST be able to add both funds and expenses to child accounts
 - **FR-007**: Expenses MUST include date, amount, category (from predefined list), and description
 - **FR-008**: System MUST display current balance prominently with sticky positioning during scroll
@@ -134,14 +134,14 @@ Users can customize their experience with dark/light mode themes. Parents can mo
 - **FR-017**: System MUST provide a "View Analytics" option in the menu that displays a pie chart showing expense breakdown by category for the current accounting period
 - **FR-018**: System MUST display a line graph in the analytics view showing spending trends with user-selectable time granularity (daily/weekly/monthly), defaulting to daily with weekly aggregation option
 - **FR-019**: System MUST provide a floating action button (FAB) positioned at bottom right to add new expenses
-- **FR-020**: System MUST allow expenses that result in negative balance but display a warning notification to the teen
+- **FR-020**: System MUST allow expenses that result in negative balance but display a warning notification to the child
 - **FR-021**: System MUST notify parents of current balance (positive or negative) when they add funds to a child account
 - **FR-022**: System MUST be deployable as a static site on GitHub Pages with support for custom domain configuration
 
 ### Key Entities *(include if feature involves data)*
 
 - **Parent Account**: Primary account holder who manages family finances, can have multiple children
-- **Child Account**: Individual teen account linked to a parent, has own login and expense tracking
+- **Child Account**: Individual child account linked to a parent, has own login and expense tracking
 - **Expense**: Transaction record with date, amount, category, description, and account association
 - **Fund Addition**: Parent-initiated balance increase for a child account
 - **Accounting Period**: Configurable time frame for tracking expenses (default: calendar month)
@@ -152,11 +152,11 @@ Users can customize their experience with dark/light mode themes. Parents can mo
 ### Measurable Outcomes
 
 - **SC-001**: Parents can complete family account setup (parent + 1 child) in under 5 minutes
-- **SC-002**: Teens can record an expense in under 30 seconds from login
+- **SC-002**: Children can record an expense in under 30 seconds from login
 - **SC-003**: 95% of expense entries require no corrections or edits after initial entry
 - **SC-004**: Current balance remains visible 100% of the time while scrolling expense list
 - **SC-005**: Report generation completes in under 3 seconds for up to 12 months of data
-- **SC-006**: 90% of teen users can independently navigate and use core features without parent help
+- **SC-006**: 90% of child users can independently navigate and use core features without parent help
 - **SC-007**: Theme switching occurs instantly without page reload or data loss
 - **SC-008**: Parents can switch between children's accounts in under 2 seconds
 - **SC-009**: System maintains 99.9% accuracy in balance calculations across all operations
@@ -166,7 +166,7 @@ Users can customize their experience with dark/light mode themes. Parents can mo
 - Email addresses are unique and valid (though not verified programmatically)
 - Parents are trusted to create appropriate child accounts
 - All monetary amounts are in the currency selected during parent account setup
-- Expense categories are sufficient for typical teen spending patterns
+- Expense categories are sufficient for typical child spending patterns
 - Local device storage is acceptable for offline functionality
 - Export functionality doesn't require complex formatting or charts
 - Static hosting on GitHub Pages is sufficient (no server-side processing required)

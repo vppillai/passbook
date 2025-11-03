@@ -1,11 +1,11 @@
-# Security Architecture: Teen Passbook
+# Security Architecture: Allowance Passbook
 
 **Date**: 2025-11-02  
 **Feature**: API Security for Optional Backend Services
 
 ## Overview
 
-The Teen Passbook app runs entirely on GitHub Pages with client-side storage. However, if cloud sync is requested, we implement multiple security layers to prevent bot attacks and abuse while using AWS-provided URLs (no custom domains) and **only pay-per-use services** (no fixed monthly costs).
+The Allowance Passbook app runs entirely on GitHub Pages with client-side storage. However, if cloud sync is requested, we implement multiple security layers to prevent bot attacks and abuse while using AWS-provided URLs (no custom domains) and **only pay-per-use services** (no fixed monthly costs).
 
 ## API Security Measures
 
@@ -148,7 +148,7 @@ process.env.TABLE_NAME // Specific table access only
 ```javascript
 // Always filter by authenticated user
 const params = {
-  TableName: 'TeenPassbook',
+  TableName: 'AllowancePassbook',
   KeyConditionExpression: 'userId = :uid',
   ExpressionAttributeValues: {
     ':uid': authenticatedUserId
