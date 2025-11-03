@@ -22,9 +22,9 @@ export const Layout = ({ children, title, showBack, onBack, showMenu = true }: L
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
       <OfflineIndicator />
       <header className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center space-x-4">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-14 sm:h-16">
+            <div className="flex items-center space-x-2 sm:space-x-4 min-w-0 flex-1">
               {showBack && onBack && (
                 <button
                   onClick={onBack}
@@ -41,16 +41,16 @@ export const Layout = ({ children, title, showBack, onBack, showMenu = true }: L
                   </svg>
                 </button>
               )}
-              <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100" id="page-title">
+              <h1 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-gray-100 truncate" id="page-title">
                 {title || 'Allowance Passbook'}
               </h1>
             </div>
             {user && (
-              <div className="flex items-center space-x-4">
+              <div className="flex items-center space-x-2 sm:space-x-4">
                 {showMenu && (
                   <button
                     onClick={() => setMenuOpen(true)}
-                    className="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white p-2"
+                    className="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white p-2 -mr-1 sm:mr-0"
                     aria-label="Menu"
                   >
                     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -63,8 +63,10 @@ export const Layout = ({ children, title, showBack, onBack, showMenu = true }: L
                     </svg>
                   </button>
                 )}
-                <span className="text-sm text-gray-600 dark:text-gray-400">{user.name}</span>
-                <Button variant="outline" size="sm" onClick={logout}>
+                <span className="text-sm text-gray-600 dark:text-gray-400 hidden sm:inline">
+                  {user.name}
+                </span>
+                <Button variant="outline" size="sm" onClick={logout} className="text-xs sm:text-sm">
                   Logout
                 </Button>
               </div>
@@ -72,7 +74,7 @@ export const Layout = ({ children, title, showBack, onBack, showMenu = true }: L
           </div>
         </div>
       </header>
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">{children}</main>
+      <main className="flex-1 max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6">{children}</main>
       <footer className="mt-auto py-4">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <AppVersion className="text-xs text-gray-400" />

@@ -4,6 +4,7 @@ export type Theme = 'light' | 'dark' | 'system';
 export type AccountingPeriodType = 'monthly' | 'biweekly' | 'custom';
 export type AccountingPeriodStatus = 'active' | 'closed';
 export type ExpenseCreator = 'teen' | 'parent';
+export type CurrencyCode = string; // ISO 4217 currency code (e.g., 'CAD', 'USD')
 
 export interface ParentAccount {
   id: string;

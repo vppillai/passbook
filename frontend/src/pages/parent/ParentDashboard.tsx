@@ -55,12 +55,17 @@ export const ParentDashboard = () => {
 
   return (
     <Layout title="Parent Dashboard">
-      <div className="space-y-6">
-        <div className="flex justify-between items-center">
-          <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">
+      <div className="space-y-4 sm:space-y-6">
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-0">
+          <h2 className="text-xl sm:text-2xl font-semibold text-gray-900 dark:text-gray-100">
             Children's Accounts
           </h2>
-          <Button onClick={() => setShowAddChildModal(true)}>Add Child</Button>
+          <Button 
+            onClick={() => setShowAddChildModal(true)}
+            className="w-full sm:w-auto"
+          >
+            Add Child
+          </Button>
         </div>
 
         {children.length === 0 ? (
@@ -69,21 +74,25 @@ export const ParentDashboard = () => {
             <Button onClick={() => setShowAddChildModal(true)}>Add Your First Child</Button>
           </div>
         ) : (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3">
             {children.map((child) => (
               <div
                 key={child.id}
-                className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 hover:shadow-lg transition-shadow"
+                className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 sm:p-6 hover:shadow-lg transition-shadow"
               >
-                <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
+                <h3 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-gray-100 mb-1 sm:mb-2">
                   {child.name}
                 </h3>
-                <p className="text-gray-600 dark:text-gray-400 mb-4">{child.email}</p>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Balance</p>
+                <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400 mb-3 sm:mb-4">
+                  {child.email}
+                </p>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-0">
+                  <div className="flex-1">
+                    <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mb-1">
+                      Balance
+                    </p>
                     <p
-                      className={`text-2xl font-bold ${
+                      className={`text-xl sm:text-2xl font-bold ${
                         child.currentBalance < 0
                           ? 'text-red-600 dark:text-red-400'
                           : 'text-gray-900 dark:text-gray-100'
@@ -95,9 +104,9 @@ export const ParentDashboard = () => {
                   <Button
                     size="sm"
                     onClick={() => {
-                      // Navigate to child detail view (to be implemented)
                       navigate(`/parent/child/${child.id}`);
                     }}
+                    className="w-full sm:w-auto"
                   >
                     View
                   </Button>

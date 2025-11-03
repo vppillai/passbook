@@ -1,6 +1,7 @@
 import { db } from '../storage/db';
 import type { ParentAccount } from '../../types/models';
-import { hashPassword, validateEmail, validatePassword } from '../../utils/validation';
+import { validateEmail, validatePassword } from '../../utils/validation';
+import { hashPassword } from '../../utils/crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { periodService } from '../periods/period.service';
 
@@ -22,7 +23,7 @@ export class ParentAccountService {
 
     const passwordValidation = validatePassword(data.password);
     if (!passwordValidation.valid) {
-      throw new Error(passwordValidation.error || 'Invalid password');
+      throw new Error(passwordValidation.message || 'Invalid password');
     }
 
     // Check if email already exists
@@ -60,7 +61,7 @@ export class ParentAccountService {
     // Create initial accounting period and add default allowance
     const activePeriod = await periodService.getActivePeriod(parentAccountId);
     if (!activePeriod) {
-      await periodService.createInitialPeriod(parentAccountId);
+      await periodService.createDefaultPeriod(parentAccountId);
       const newPeriod = await periodService.getActivePeriod(parentAccountId);
       if (newPeriod && childAccount.defaultMonthlyAllowance > 0) {
         await this.addFunds(
@@ -125,7 +126,7 @@ export class ParentAccountService {
       childAccountId,
       amount,
       reason: reason.substring(0, 200),
-      date: Date.now(),
+      date: new Date().toISOString().split('T')[0], // ISO date string
       accountingPeriodId: activePeriod.id,
       addedBy: parentAccountId,
       createdAt: Date.now()

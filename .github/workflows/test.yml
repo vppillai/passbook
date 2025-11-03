@@ -198,15 +198,18 @@ jobs:
           # Check if all required files exist
           test -f frontend/package.json
           test -f frontend/vite.config.ts
-          test -f frontend/public/manifest.json
           test -f .github/workflows/deploy.yml
           echo "✅ All deployment files present"
 
       - name: Verify GitHub Pages configuration
         run: |
-          # Check base path configuration
-          grep -q "base.*passbook" frontend/vite.config.ts
-          grep -q "start_url.*passbook" frontend/public/manifest.json
+          cd frontend
+          # Check base path configuration (either base: '/passbook/' or basePath variable with '/passbook/')
+          grep -qE "(base.*passbook|'/passbook/')" vite.config.ts || grep -q "basePath.*'/passbook/'" vite.config.ts
+          # Check that VitePWA is configured with manifest (manifest is generated during build)
+          grep -q "VitePWA" vite.config.ts
+          # Check start_url is configured (either uses basePath variable or has '/passbook/')
+          grep -qE "(start_url.*basePath|start_url.*'/passbook/')" vite.config.ts
           echo "✅ GitHub Pages configuration correct"
 
   cost-validation:

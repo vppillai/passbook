@@ -1,3 +1,4 @@
+import { useMemo, useRef } from 'react';
 import { Pie } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -18,6 +19,43 @@ interface PieChartProps {
 }
 
 export const PieChart = ({ data, currency = 'CAD' }: PieChartProps) => {
+  // Use a ref to store a stable plugin ID for this component instance
+  const pluginIdRef = useRef(`percentageLabels-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
+  
+  // Create plugin to display percentages on pie chart slices
+  const percentagePlugin = useMemo(() => ({
+    id: pluginIdRef.current,
+    afterDatasetsDraw(chart: any) {
+      const { ctx } = chart;
+      ctx.save();
+
+      const meta = chart.getDatasetMeta(0);
+      meta.data.forEach((segment: any, index: number) => {
+        // Use percentage from data if available, otherwise calculate
+        const percentage = data[index]?.percentage?.toFixed(1) || '0.0';
+
+        // Only show label if slice is large enough (more than 5%)
+        if (parseFloat(percentage) < 5) return;
+
+        const xPos = segment.x;
+        const yPos = segment.y;
+
+        // Use white text with shadow for better visibility on colored backgrounds
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+        ctx.shadowBlur = 2;
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 13px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`${percentage}%`, xPos, yPos);
+        
+        ctx.shadowBlur = 0;
+      });
+
+      ctx.restore();
+    },
+  }), [data]);
+
   const chartData: ChartData<'pie'> = {
     labels: data.map((item) => item.categoryName),
     datasets: [
@@ -42,6 +80,27 @@ export const PieChart = ({ data, currency = 'CAD' }: PieChartProps) => {
             size: 12,
           },
           usePointStyle: true,
+          generateLabels: (chart: any) => {
+            const data = chart.data;
+            if (data.labels.length && data.datasets.length) {
+              const dataset = data.datasets[0];
+              const total = dataset.data.reduce((a: number, b: number) => a + b, 0);
+              
+              return data.labels.map((label: string, i: number) => {
+                const value = dataset.data[i];
+                const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
+                return {
+                  text: `${label} (${percentage}%)`,
+                  fillStyle: dataset.backgroundColor[i],
+                  strokeStyle: dataset.borderColor,
+                  lineWidth: dataset.borderWidth,
+                  hidden: false,
+                  index: i,
+                };
+              });
+            }
+            return [];
+          },
         },
       },
       tooltip: {
@@ -59,7 +118,7 @@ export const PieChart = ({ data, currency = 'CAD' }: PieChartProps) => {
 
   return (
     <div className="h-64 md:h-80">
-      <Pie data={chartData} options={options} />
+      <Pie data={chartData} options={options} plugins={[percentagePlugin]} />
     </div>
   );
 };

@@ -14,12 +14,12 @@ function getGitVersion() {
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __APP_VERSION__: JSON.stringify(getGitVersion()),
+  },
   test: {
     globals: true,
     environment: 'jsdom',
-  },
-  define: {
-    __APP_VERSION__: JSON.stringify(getGitVersion()),
   },
 });
 

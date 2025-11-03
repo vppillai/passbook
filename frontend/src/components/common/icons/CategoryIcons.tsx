@@ -7,11 +7,12 @@ interface IconProps {
 
 export const SnacksIcon: React.FC<IconProps> = ({ className = "w-5 h-5", size }) => (
   <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M4 8h16v12H4V8z"/>
-    <path d="M4 8l2-4h12l2 4"/>
-    <path d="M8 14h8"/>
-    <circle cx="10" cy="18" r="1" fill="currentColor"/>
-    <circle cx="14" cy="18" r="1" fill="currentColor"/>
+    <path d="M12 2c-5.5 0-10 4.5-10 10s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2z" fill="currentColor" opacity="0.15"/>
+    <path d="M12 2C6.5 2 2 6.5 2 12c0 5.5 4.5 10 10 10"/>
+    <circle cx="9" cy="10" r="1" fill="currentColor"/>
+    <circle cx="15" cy="10" r="1" fill="currentColor"/>
+    <circle cx="10" cy="14" r="0.8" fill="currentColor"/>
+    <circle cx="14" cy="14" r="0.8" fill="currentColor"/>
   </svg>
 );
 
@@ -28,18 +29,24 @@ export const ToysIcon: React.FC<IconProps> = ({ className = "w-5 h-5", size }) =
 
 export const CraftsIcon: React.FC<IconProps> = ({ className = "w-5 h-5", size }) => (
   <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-    <path d="M12 19l-2-2"/>
+    <circle cx="8" cy="16" r="3" fill="currentColor" opacity="0.3"/>
+    <path d="M8 16v6"/>
+    <path d="M8 16c0-2 1-4 4-4s4 2 4 4"/>
+    <line x1="16" y1="4" x2="21" y2="1" strokeWidth="2"/>
+    <line x1="18" y1="6" x2="22" y2="3" strokeWidth="2"/>
+    <circle cx="16" cy="4" r="1.5" fill="currentColor"/>
+    <circle cx="21" cy="1" r="1" fill="currentColor"/>
   </svg>
 );
 
 export const GamesIcon: React.FC<IconProps> = ({ className = "w-5 h-5", size }) => (
   <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="6" y="4" width="12" height="16" rx="2"/>
-    <circle cx="12" cy="8" r="1.5" fill="currentColor"/>
-    <path d="M8 12h8"/>
-    <path d="M10 15h4"/>
-    <circle cx="12" cy="18" r="1"/>
+    <rect x="2" y="6" width="20" height="12" rx="2"/>
+    <path d="M6 12h4"/>
+    <path d="M8 10v4"/>
+    <circle cx="16" cy="11" r="1.5" fill="currentColor"/>
+    <circle cx="19" cy="13" r="1.5" fill="currentColor"/>
+    <path d="M9 18h6"/>
   </svg>
 );
 
@@ -68,8 +75,11 @@ export const EntertainmentIcon: React.FC<IconProps> = ({ className = "w-5 h-5", 
 
 export const SportsIcon: React.FC<IconProps> = ({ className = "w-5 h-5", size }) => (
   <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-    <path d="M12 3v18"/>
+    <ellipse cx="12" cy="12" rx="10" ry="7"/>
+    <path d="M12 5v14"/>
+    <path d="M2 12c0 3.86 4.48 7 10 7s10-3.14 10-7"/>
+    <path d="M12 5C7.03 5 3 7.24 3 10"/>
+    <path d="M12 19c4.97 0 9-2.24 9-5"/>
   </svg>
 );
 
