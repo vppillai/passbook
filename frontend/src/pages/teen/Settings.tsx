@@ -1,11 +1,38 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/auth.context';
 import { ThemeToggle } from '../../components/settings/ThemeToggle';
+import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { childStorage } from '../../services/storage/child.storage';
 import type { ChildAccount } from '../../types/models';
 
 export const TeenSettings: React.FC = () => {
   const { user } = useAuth();
-  const child = user as ChildAccount;
+  const [child, setChild] = useState<ChildAccount | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (user?.type === 'child') {
+      loadChildAccount();
+    }
+  }, [user]);
+
+  const loadChildAccount = async () => {
+    if (!user || user.type !== 'child') return;
+    try {
+      const account = await childStorage.getById(user.id);
+      if (account) {
+        setChild(account);
+      }
+    } catch (error) {
+      console.error('Failed to load child account:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return <LoadingSpinner size="lg" className="py-12" />;
+  }
 
   if (!child) return null;
 

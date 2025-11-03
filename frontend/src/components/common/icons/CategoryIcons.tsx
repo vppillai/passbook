@@ -6,13 +6,23 @@ interface IconProps {
 }
 
 export const SnacksIcon: React.FC<IconProps> = ({ className = "w-5 h-5", size }) => (
-  <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 2c-5.5 0-10 4.5-10 10s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2z" fill="currentColor" opacity="0.15"/>
-    <path d="M12 2C6.5 2 2 6.5 2 12c0 5.5 4.5 10 10 10"/>
-    <circle cx="9" cy="10" r="1" fill="currentColor"/>
-    <circle cx="15" cy="10" r="1" fill="currentColor"/>
-    <circle cx="10" cy="14" r="0.8" fill="currentColor"/>
-    <circle cx="14" cy="14" r="0.8" fill="currentColor"/>
+  <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+    {/* Cookie with bite - main circle path with jagged bite out of top-right */}
+    <path d="M12 2C6.5 2 2 6.5 2 12c0 5.5 4.5 10 10 10 5.5 0 10-4.5 10-10S17.5 2 12 2z" 
+          strokeLinejoin="miter" 
+          fill="none"/>
+    {/* Bite mark - jagged irregular cut from top-right */}
+    <path d="M18 6 L19 4.5 L19.5 5 L20 4 L20.5 5.5 L19.5 6.5 Z" 
+          fill="white" 
+          stroke="none"/>
+    {/* Chocolate chips - solid black circles of varying sizes */}
+    <circle cx="9" cy="8" r="1.2" fill="currentColor"/>
+    <circle cx="14" cy="7" r="1" fill="currentColor"/>
+    <circle cx="10" cy="11" r="0.9" fill="currentColor"/>
+    <circle cx="15" cy="12" r="1.1" fill="currentColor"/>
+    <circle cx="8" cy="14" r="0.8" fill="currentColor"/>
+    <circle cx="13" cy="16" r="1" fill="currentColor"/>
+    <circle cx="16" cy="9" r="0.9" fill="currentColor"/>
   </svg>
 );
 
@@ -29,24 +39,44 @@ export const ToysIcon: React.FC<IconProps> = ({ className = "w-5 h-5", size }) =
 
 export const CraftsIcon: React.FC<IconProps> = ({ className = "w-5 h-5", size }) => (
   <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="8" cy="16" r="3" fill="currentColor" opacity="0.3"/>
-    <path d="M8 16v6"/>
-    <path d="M8 16c0-2 1-4 4-4s4 2 4 4"/>
-    <line x1="16" y1="4" x2="21" y2="1" strokeWidth="2"/>
-    <line x1="18" y1="6" x2="22" y2="3" strokeWidth="2"/>
-    <circle cx="16" cy="4" r="1.5" fill="currentColor"/>
-    <circle cx="21" cy="1" r="1" fill="currentColor"/>
+    {/* Ball of yarn - circular shape with wrapped strands */}
+    <circle cx="12" cy="12" r="7" strokeWidth="2"/>
+    {/* Yarn wraps on the ball - parallel curved lines */}
+    <path d="M12 5 Q15 7 15 10 Q15 13 12 15 Q9 13 9 10 Q9 7 12 5" strokeWidth="2.5"/>
+    <path d="M12 7 Q14 9 14 11 Q14 13 12 14 Q10 13 10 11 Q10 9 12 7" strokeWidth="2.5"/>
+    <path d="M5 12 Q7 15 10 15 Q13 15 15 12 Q13 9 10 9 Q7 9 5 12" strokeWidth="2.5"/>
+    {/* First knitting needle - diagonal through ball */}
+    <line x1="7" y1="7" x2="17" y2="17" strokeWidth="2"/>
+    {/* Second knitting needle - diagonal crossing first */}
+    <line x1="17" y1="7" x2="7" y2="17" strokeWidth="2"/>
+    {/* Needle stoppers/caps - circles at ends */}
+    <circle cx="6.5" cy="6.5" r="1.5" fill="currentColor"/>
+    <circle cx="17.5" cy="17.5" r="1.5" fill="currentColor"/>
+    <circle cx="17.5" cy="6.5" r="1.5" fill="currentColor"/>
+    <circle cx="6.5" cy="17.5" r="1.5" fill="currentColor"/>
+    {/* Loose strand of yarn - wavy line extending from bottom right */}
+    <path d="M16 19 Q17 20 18 19 Q19 18 19.5 19.5" strokeWidth="1.5" fill="none"/>
   </svg>
 );
 
 export const GamesIcon: React.FC<IconProps> = ({ className = "w-5 h-5", size }) => (
-  <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="2" y="6" width="20" height="12" rx="2"/>
-    <path d="M6 12h4"/>
-    <path d="M8 10v4"/>
-    <circle cx="16" cy="11" r="1.5" fill="currentColor"/>
-    <circle cx="19" cy="13" r="1.5" fill="currentColor"/>
-    <path d="M9 18h6"/>
+  <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    {/* Game controller body */}
+    <rect x="4" y="8" width="16" height="10" rx="2.5" strokeWidth="2.5"/>
+    {/* Left joystick/grip area */}
+    <rect x="6" y="10" width="4" height="6" rx="1" fill="currentColor" opacity="0.3"/>
+    <circle cx="8" cy="13" r="1.5" fill="currentColor"/>
+    {/* Right buttons */}
+    <circle cx="16" cy="11" r="1.8" fill="currentColor"/>
+    <circle cx="19" cy="13.5" r="1.8" fill="currentColor"/>
+    {/* D-pad */}
+    <rect x="6.5" y="11.5" width="1.5" height="1.5" fill="currentColor"/>
+    <rect x="7.25" y="10.75" width="1.5" height="1.5" fill="currentColor"/>
+    <rect x="7.25" y="12.25" width="1.5" height="1.5" fill="currentColor"/>
+    <rect x="8" y="11.5" width="1.5" height="1.5" fill="currentColor"/>
+    {/* Bottom grips/triggers */}
+    <line x1="8" y1="18" x2="8" y2="19.5" strokeWidth="2"/>
+    <line x1="16" y1="18" x2="16" y2="19.5" strokeWidth="2"/>
   </svg>
 );
 
