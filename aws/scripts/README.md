@@ -15,7 +15,7 @@ Updates the Zoho SMTP password in AWS Secrets Manager.
 ./update-smtp-secret.sh development
 
 # Update production with specific password
-./update-smtp-secret.sh production [REDACTED]
+./update-smtp-secret.sh production pcP3p67YeZgu
 ```
 
 ## create-smtp-secret.sh

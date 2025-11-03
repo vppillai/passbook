@@ -14,7 +14,7 @@ The email service consists of:
 
 - AWS CLI installed and configured
 - AWS account with appropriate permissions
-- Zoho SMTP password: `[REDACTED - Set via environment variable or AWS Secrets Manager]`
+- Zoho SMTP password: `pcP3p67YeZgu`
 - Node.js installed (for Lambda packaging)
 
 ## Step-by-Step Deployment

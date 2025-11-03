@@ -12,7 +12,7 @@ The Zoho SMTP password is stored in AWS Secrets Manager for security.
 - **Contains**:
   ```json
   {
-    "password": "[REDACTED]",
+    "password": "pcP3p67YeZgu",
     "host": "smtp.zoho.in",
     "port": "587",
     "secure": "false",
@@ -39,7 +39,7 @@ If you need to create or update the secret manually:
 cd aws/scripts
 ./create-smtp-secret.sh production
 # or
-./update-smtp-secret.sh production [REDACTED]
+./update-smtp-secret.sh production pcP3p67YeZgu
 ```
 
 ### Method 3: Direct AWS CLI
@@ -49,7 +49,7 @@ cd aws/scripts
 aws secretsmanager create-secret \
   --name "allowance-passbook/production/zoho-smtp-password" \
   --secret-string '{
-    "password": "[REDACTED]",
+    "password": "pcP3p67YeZgu",
     "host": "smtp.zoho.in",
     "port": "587",
     "secure": "false",

@@ -197,8 +197,8 @@ cd aws/scripts
 ./update-smtp-secret.sh <environment> [password]
 
 # Examples:
-./update-smtp-secret.sh development [REDACTED]
-./update-smtp-secret.sh production [REDACTED]
+./update-smtp-secret.sh development pcP3p67YeZgu
+./update-smtp-secret.sh production pcP3p67YeZgu
 ```
 
 The secret is automatically created by CloudFormation during deployment, but you can update it manually using the script.

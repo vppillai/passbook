@@ -6,7 +6,7 @@
 set -e
 
 ENVIRONMENT=${1:-development}
-PASSWORD="${SMTP_PASSWORD:-}"
+PASSWORD="pcP3p67YeZgu"
 PROJECT_NAME="allowance-passbook"
 SECRET_NAME="${PROJECT_NAME}/${ENVIRONMENT}/zoho-smtp-password"
 
