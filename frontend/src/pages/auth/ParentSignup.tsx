@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { authService } from '../../services/auth/auth.service';
 import { Button } from '../../components/common/Button';
 import { Input } from '../../components/common/Input';
+import { SuccessModal } from '../../components/common/SuccessModal';
 import { validateEmail, validatePassword } from '../../utils/validation';
 
 const CURRENCIES = ['CAD', 'USD', 'EUR', 'GBP', 'AUD', 'JPY'];
@@ -18,6 +19,7 @@ export const ParentSignup = () => {
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
 
   const handleChange = (field: string, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -63,7 +65,7 @@ export const ParentSignup = () => {
         name: formData.name,
         currency: formData.currency,
       });
-      navigate('/login', { state: { message: 'Account created successfully! Please login.' } });
+      setShowSuccess(true);
     } catch (err) {
       setErrors({ submit: err instanceof Error ? err.message : 'Failed to create account' });
     } finally {
@@ -153,6 +155,15 @@ export const ParentSignup = () => {
             Already have an account? Login
           </button>
         </div>
+
+        <SuccessModal
+          isOpen={showSuccess}
+          onClose={() => setShowSuccess(false)}
+          title="Account Created Successfully!"
+          message={`Welcome to Allowance Passbook, ${formData.name}! Your parent account has been created. You can now login and start managing your family's allowances.`}
+          actionText="Go to Login"
+          onAction={() => navigate('/login')}
+        />
       </div>
     </div>
   );

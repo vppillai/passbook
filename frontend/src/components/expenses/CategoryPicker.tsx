@@ -1,4 +1,5 @@
 import { PREDEFINED_CATEGORIES } from '../../data/categories';
+import { CategoryIcon } from '../common/CategoryIcon';
 
 interface CategoryPickerProps {
   selectedCategory: string;
@@ -17,14 +18,22 @@ export const CategoryPicker = ({ selectedCategory, onSelect }: CategoryPickerPro
             key={category.id}
             type="button"
             onClick={() => onSelect(category.id)}
-            className={`p-3 rounded-lg border-2 transition-all ${
+            className={`p-4 rounded-xl border-2 transition-all flex flex-col items-center space-y-2 ${
               selectedCategory === category.id
-                ? 'border-primary-600 bg-primary-50 dark:bg-primary-900'
-                : 'border-gray-300 dark:border-gray-600 hover:border-primary-400'
+                ? 'border-primary-500 bg-primary-50 dark:bg-primary-950 shadow-md'
+                : 'border-gray-200 dark:border-gray-700 hover:border-primary-300 hover:shadow-sm bg-white dark:bg-gray-800'
             }`}
+            style={{
+              borderColor: selectedCategory === category.id ? category.colorHex : undefined,
+              backgroundColor: selectedCategory === category.id ? `${category.colorHex}10` : undefined
+            }}
           >
-            <div className="text-2xl mb-1">{category.icon}</div>
-            <div className="text-xs text-gray-700 dark:text-gray-300">{category.name}</div>
+            <CategoryIcon
+              icon={category.icon}
+              className="w-6 h-6"
+              color={selectedCategory === category.id ? category.colorHex : undefined}
+            />
+            <div className="text-xs font-medium text-gray-700 dark:text-gray-300 text-center">{category.name}</div>
           </button>
         ))}
       </div>

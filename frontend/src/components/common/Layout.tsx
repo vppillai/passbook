@@ -4,6 +4,7 @@ import { useAuth } from '../../contexts/auth.context';
 import { Button } from './Button';
 import { NavigationMenu } from '../navigation/NavigationMenu';
 import { OfflineIndicator } from './OfflineIndicator';
+import { AppVersion } from './AppVersion';
 
 interface LayoutProps {
   children: ReactNode;
@@ -18,7 +19,7 @@ export const Layout = ({ children, title, showBack, onBack, showMenu = true }: L
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
       <OfflineIndicator />
       <header className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700 sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -41,7 +42,7 @@ export const Layout = ({ children, title, showBack, onBack, showMenu = true }: L
                 </button>
               )}
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100" id="page-title">
-                {title || 'Teen Passbook'}
+                {title || 'Allowance Passbook'}
               </h1>
             </div>
             {user && (
@@ -71,7 +72,12 @@ export const Layout = ({ children, title, showBack, onBack, showMenu = true }: L
           </div>
         </div>
       </header>
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">{children}</main>
+      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">{children}</main>
+      <footer className="mt-auto py-4">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+          <AppVersion className="text-xs text-gray-400" />
+        </div>
+      </footer>
       {showMenu && <NavigationMenu isOpen={menuOpen} onClose={() => setMenuOpen(false)} />}
     </div>
   );

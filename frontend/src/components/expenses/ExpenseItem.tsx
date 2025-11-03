@@ -3,6 +3,7 @@ import { formatDateForDisplay } from '../../utils/date';
 import { formatCurrency } from '../../utils/currency';
 import { getCategoryById } from '../../data/categories';
 import { Button } from '../common/Button';
+import { CategoryIcon } from '../common/CategoryIcon';
 
 interface ExpenseItemProps {
   expense: Expense;
@@ -14,14 +15,21 @@ export const ExpenseItem = ({ expense, currency = 'CAD', onEdit }: ExpenseItemPr
   const category = getCategoryById(expense.category);
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 hover:shadow-md transition-shadow">
+    <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-4 hover:shadow-md hover:border-gray-200 dark:hover:border-gray-600 transition-all">
       <div className="flex items-start justify-between">
         <div className="flex-1">
-          <div className="flex items-center space-x-2 mb-1">
+          <div className="flex items-center space-x-3 mb-2">
             {category && (
-              <span className="text-2xl" role="img" aria-label={category.name}>
-                {category.icon}
-              </span>
+              <div
+                className="p-2 rounded-lg"
+                style={{ backgroundColor: `${category.colorHex}15` }}
+              >
+                <CategoryIcon
+                  icon={category.icon}
+                  className="w-5 h-5"
+                  color={category.colorHex}
+                />
+              </div>
             )}
             <h3 className="font-semibold text-gray-900 dark:text-gray-100">{expense.description}</h3>
           </div>

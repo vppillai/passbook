@@ -1,16 +1,16 @@
 import type { Category } from '../types/models';
 
 export const PREDEFINED_CATEGORIES: Category[] = [
-  { id: 'snacks', name: 'Snacks', icon: '🍿', colorHex: '#FFA500', sortOrder: 1 },
-  { id: 'toys', name: 'Toys', icon: '🧸', colorHex: '#FF69B4', sortOrder: 2 },
-  { id: 'crafts', name: 'Crafts', icon: '🎨', colorHex: '#9370DB', sortOrder: 3 },
-  { id: 'games', name: 'Games', icon: '🎮', colorHex: '#00CED1', sortOrder: 4 },
-  { id: 'books', name: 'Books', icon: '📚', colorHex: '#228B22', sortOrder: 5 },
-  { id: 'clothes', name: 'Clothes', icon: '👕', colorHex: '#DC143C', sortOrder: 6 },
-  { id: 'entertainment', name: 'Entertainment', icon: '🎬', colorHex: '#FF4500', sortOrder: 7 },
-  { id: 'sports', name: 'Sports', icon: '⚽', colorHex: '#1E90FF', sortOrder: 8 },
-  { id: 'school', name: 'School', icon: '🎒', colorHex: '#FFD700', sortOrder: 9 },
-  { id: 'other', name: 'Other', icon: '📦', colorHex: '#808080', sortOrder: 10 },
+  { id: 'snacks', name: 'Snacks', icon: 'snacks', colorHex: '#F59E0B', sortOrder: 1 },
+  { id: 'toys', name: 'Toys', icon: 'toys', colorHex: '#EC4899', sortOrder: 2 },
+  { id: 'crafts', name: 'Crafts', icon: 'crafts', colorHex: '#8B5CF6', sortOrder: 3 },
+  { id: 'games', name: 'Games', icon: 'games', colorHex: '#06B6D4', sortOrder: 4 },
+  { id: 'books', name: 'Books', icon: 'books', colorHex: '#10B981', sortOrder: 5 },
+  { id: 'clothes', name: 'Clothes', icon: 'clothes', colorHex: '#EF4444', sortOrder: 6 },
+  { id: 'entertainment', name: 'Entertainment', icon: 'entertainment', colorHex: '#F97316', sortOrder: 7 },
+  { id: 'sports', name: 'Sports', icon: 'sports', colorHex: '#3B82F6', sortOrder: 8 },
+  { id: 'school', name: 'School', icon: 'school', colorHex: '#EAB308', sortOrder: 9 },
+  { id: 'other', name: 'Other', icon: 'other', colorHex: '#6B7280', sortOrder: 10 },
 ];
 
 export const getCategoryById = (id: string): Category | undefined => {

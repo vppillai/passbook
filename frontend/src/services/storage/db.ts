@@ -24,8 +24,8 @@ export class PassbookDatabase extends Dexie {
     this.version(1).stores({
       parentAccounts: 'id, email',
       childAccounts: 'id, parentAccountId, email',
-      expenses: 'id, childAccountId, accountingPeriodId, date, [childAccountId+date]',
-      fundAdditions: 'id, childAccountId, accountingPeriodId, date, [childAccountId+date]',
+      expenses: 'id, childAccountId, accountingPeriodId, date, [childAccountId+date], [childAccountId+accountingPeriodId]',
+      fundAdditions: 'id, childAccountId, accountingPeriodId, date, [childAccountId+date], [childAccountId+accountingPeriodId]',
       accountingPeriods: 'id, parentAccountId, status, [parentAccountId+status], startDate, endDate',
       accountingPeriodBalances: 'id, childAccountId, accountingPeriodId',
     });

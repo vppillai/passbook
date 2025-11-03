@@ -17,6 +17,7 @@ export const TeenDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [expenseToEdit, setExpenseToEdit] = useState<Expense | null>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   useEffect(() => {
     if (user?.type === 'child') {
@@ -48,6 +49,7 @@ export const TeenDashboard = () => {
 
   const handleExpenseSuccess = () => {
     loadAccount();
+    setRefreshTrigger(prev => prev + 1); // Trigger expense list refresh
   };
 
   const handleEditExpense = (expense: Expense) => {
@@ -77,7 +79,7 @@ export const TeenDashboard = () => {
       {account.currentBalance < 0 && (
         <NegativeBalanceWarning balance={account.currentBalance} currency={currency} />
       )}
-      <ExpenseList childAccountId={account.id} currency={currency} onEdit={handleEditExpense} />
+      <ExpenseList childAccountId={account.id} currency={currency} onEdit={handleEditExpense} refreshTrigger={refreshTrigger} />
       <FAB
         onClick={() => {
           setExpenseToEdit(null);

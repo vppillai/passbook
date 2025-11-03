@@ -9,7 +9,7 @@ export const Login = () => {
   const { loginParent, loginChild } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [userType, setUserType] = useState<'parent' | 'child'>('parent');
+  const [userType, setUserType] = useState<'parent' | 'child'>('child');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -59,7 +59,7 @@ export const Login = () => {
                 : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
             }`}
           >
-            Teen
+            Child
           </button>
         </div>
 

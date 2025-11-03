@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { Input } from '../common/Input';
+import { SuccessModal } from '../common/SuccessModal';
 import { authService } from '../../services/auth/auth.service';
 import { validateEmail, validatePassword } from '../../utils/validation';
 import { useAuth } from '../../contexts/auth.context';
@@ -23,6 +24,8 @@ export const AddChildModal = ({ isOpen, onClose, onSuccess }: AddChildModalProps
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [createdChildName, setCreatedChildName] = useState('');
 
   const handleChange = (field: string, value: string | number) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -78,16 +81,8 @@ export const AddChildModal = ({ isOpen, onClose, onSuccess }: AddChildModalProps
         formData.name,
         formData.defaultMonthlyAllowance
       );
-      onSuccess();
-      onClose();
-      // Reset form
-      setFormData({
-        name: '',
-        email: '',
-        password: '',
-        confirmPassword: '',
-        defaultMonthlyAllowance: 100,
-      });
+      setCreatedChildName(formData.name);
+      setShowSuccess(true);
     } catch (err) {
       setErrors({ submit: err instanceof Error ? err.message : 'Failed to create child account' });
     } finally {
@@ -162,6 +157,28 @@ export const AddChildModal = ({ isOpen, onClose, onSuccess }: AddChildModalProps
           </Button>
         </div>
       </form>
+
+      <SuccessModal
+        isOpen={showSuccess}
+        onClose={() => setShowSuccess(false)}
+        title="Child Account Created!"
+        message={`${createdChildName}'s account has been successfully created. They can now login with their email and password to start tracking their allowance.`}
+        actionText="Continue"
+        onAction={() => {
+          setShowSuccess(false);
+          onSuccess();
+          onClose();
+          // Reset form
+          setFormData({
+            name: '',
+            email: '',
+            password: '',
+            confirmPassword: '',
+            defaultMonthlyAllowance: 100,
+          });
+          setCreatedChildName('');
+        }}
+      />
     </Modal>
   );
 };

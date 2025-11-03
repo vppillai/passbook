@@ -8,15 +8,16 @@ interface ExpenseListProps {
   accountingPeriodId?: string;
   currency?: string;
   onEdit?: (expense: Expense) => void;
+  refreshTrigger?: number; // Add refresh trigger
 }
 
-export const ExpenseList = ({ childAccountId, accountingPeriodId, currency, onEdit }: ExpenseListProps) => {
+export const ExpenseList = ({ childAccountId, accountingPeriodId, currency, onEdit, refreshTrigger }: ExpenseListProps) => {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadExpenses();
-  }, [childAccountId, accountingPeriodId]);
+  }, [childAccountId, accountingPeriodId, refreshTrigger]);
 
   const loadExpenses = async () => {
     try {

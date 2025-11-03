@@ -21,6 +21,7 @@ export const ChildDetailView = () => {
   const [showAddFundsModal, setShowAddFundsModal] = useState(false);
   const [showAddExpenseModal, setShowAddExpenseModal] = useState(false);
   const [expenseToEdit, setExpenseToEdit] = useState<Expense | null>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   useEffect(() => {
     if (childId) {
@@ -53,6 +54,7 @@ export const ChildDetailView = () => {
 
   const handleSuccess = () => {
     loadChildAccount();
+    setRefreshTrigger(prev => prev + 1); // Trigger expense list refresh
   };
 
   const handleEditExpense = (expense: Expense) => {
@@ -105,7 +107,7 @@ export const ChildDetailView = () => {
           <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
             Expense History
           </h2>
-          <ExpenseList childAccountId={childAccount.id} currency={currency} onEdit={handleEditExpense} />
+          <ExpenseList childAccountId={childAccount.id} currency={currency} onEdit={handleEditExpense} refreshTrigger={refreshTrigger} />
         </div>
       </div>
 
