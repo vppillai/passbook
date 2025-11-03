@@ -7,6 +7,7 @@
 
 const AWS = require('aws-sdk');
 const nodemailer = require('nodemailer');
+const jwt = require('jsonwebtoken');
 
 const secretsManager = new AWS.SecretsManager({ region: process.env.AWS_REGION || 'us-east-1' });
 
@@ -146,6 +147,62 @@ async function sendGenericEmail(to, subject, html, text) {
 }
 
 /**
+ * Get JWT secret from environment or use a default (in production, this should be from Secrets Manager)
+ */
+function getJwtSecret() {
+  // In production, you might want to store this in Secrets Manager too
+  return process.env.JWT_SECRET || 'allowance-passbook-jwt-secret-key-2024';
+}
+
+/**
+ * Generate a password reset token using JWT
+ */
+function generateResetToken(email, accountType) {
+  const payload = {
+    email,
+    accountType,
+    purpose: 'password-reset',
+    iat: Math.floor(Date.now() / 1000)
+  };
+
+  const options = {
+    expiresIn: '1h', // Token expires in 1 hour
+    issuer: 'allowance-passbook'
+  };
+
+  return jwt.sign(payload, getJwtSecret(), options);
+}
+
+/**
+ * Validate a password reset token
+ */
+function validateResetToken(token) {
+  try {
+    const decoded = jwt.verify(token, getJwtSecret(), {
+      issuer: 'allowance-passbook'
+    });
+
+    // Verify it's a password reset token
+    if (decoded.purpose !== 'password-reset') {
+      return { valid: false, error: 'Invalid token purpose' };
+    }
+
+    return {
+      valid: true,
+      email: decoded.email,
+      accountType: decoded.accountType
+    };
+  } catch (error) {
+    if (error.name === 'TokenExpiredError') {
+      return { valid: false, error: 'Token has expired' };
+    } else if (error.name === 'JsonWebTokenError') {
+      return { valid: false, error: 'Invalid token' };
+    }
+    return { valid: false, error: 'Token validation failed' };
+  }
+}
+
+/**
  * Lambda handler
  */
 exports.handler = async (event) => {
@@ -168,7 +225,75 @@ exports.handler = async (event) => {
 
   try {
     const body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
-    const { to, subject, html, text, resetToken, accountType, baseUrl } = body;
+    const { action } = body || {};
+
+    // Handle token validation request
+    if (action === 'validate-token') {
+      const { token, email } = body;
+
+      if (!token || !email) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders,
+          body: JSON.stringify({ error: 'Missing token or email' }),
+        };
+      }
+
+      const validation = validateResetToken(token);
+
+      // Also verify the email matches the token
+      if (validation.valid && validation.email !== email) {
+        validation.valid = false;
+        validation.error = 'Token does not match email';
+      }
+
+      return {
+        statusCode: 200,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          valid: validation.valid,
+          accountType: validation.accountType,
+          error: validation.error
+        }),
+      };
+    }
+
+    // Handle password reset request (this endpoint won't be used by current frontend)
+    if (action === 'reset-password') {
+      const { token, email, newPassword } = body;
+
+      if (!token || !email || !newPassword) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders,
+          body: JSON.stringify({ error: 'Missing token, email, or newPassword' }),
+        };
+      }
+
+      const validation = validateResetToken(token);
+
+      if (!validation.valid || validation.email !== email) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders,
+          body: JSON.stringify({ error: validation.error || 'Invalid token' }),
+        };
+      }
+
+      // Token is valid - in a full implementation, you'd update the password in a database here
+      // For now, just return success since the frontend handles the actual password update
+      return {
+        statusCode: 200,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          message: 'Password reset validated successfully',
+          accountType: validation.accountType
+        }),
+      };
+    }
+
+    // Handle email sending (default)
+    const { to, subject, html, text, accountType, baseUrl } = body;
 
     if (!to) {
       return {
@@ -178,10 +303,19 @@ exports.handler = async (event) => {
       };
     }
 
-    // If this is a password reset email
-    if (resetToken && accountType) {
+    // For password reset emails, generate our own token
+    if (accountType && (accountType === 'parent' || accountType === 'child')) {
+      const resetToken = generateResetToken(to, accountType);
       const defaultBaseUrl = baseUrl || 'https://vppillai.github.io/passbook';
       await sendPasswordResetEmail(to, resetToken, accountType, defaultBaseUrl);
+
+      return {
+        statusCode: 200,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          message: 'Password reset email sent successfully',
+        }),
+      };
     } else {
       // Generic email sending
       if (!subject && !html && !text) {
@@ -192,15 +326,15 @@ exports.handler = async (event) => {
         };
       }
       await sendGenericEmail(to, subject, html, text);
-    }
 
-    return {
-      statusCode: 200,
-      headers: corsHeaders,
-      body: JSON.stringify({ 
-        message: 'Email sent successfully',
-      }),
-    };
+      return {
+        statusCode: 200,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          message: 'Email sent successfully',
+        }),
+      };
+    }
   } catch (error) {
     console.error('Error sending email:', error);
     

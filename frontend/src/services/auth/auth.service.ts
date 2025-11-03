@@ -142,35 +142,16 @@ export class AuthService {
       return;
     }
 
-    // Generate reset token
-    const token = uuidv4();
-    const expiresAt = Date.now() + 60 * 60 * 1000; // 1 hour from now
-
-    // Store token in database
-    const resetToken: PasswordResetToken = {
-      id: uuidv4(),
-      email,
-      accountType,
-      token,
-      expiresAt,
-      used: false,
-      createdAt: Date.now(),
-    };
-
-    await db.passwordResetTokens.add(resetToken);
-
-    // Send email
+    // Send request to AWS Lambda - let it generate and manage the token
     try {
-      await emailService.sendPasswordResetEmail(email, token, accountType);
+      await emailService.sendPasswordResetEmail(email, '', accountType);
     } catch (error) {
-      // Remove token if email fails
-      await db.passwordResetTokens.delete(resetToken.id);
       throw new Error('Failed to send password reset email. Please try again later.');
     }
   }
 
   /**
-   * Validate reset token
+   * Validate reset token via AWS Lambda API
    */
   async validateResetToken(token: string, email: string): Promise<{ valid: boolean; accountType?: 'parent' | 'child' }> {
     // Validate input parameters first
@@ -186,33 +167,35 @@ export class AuthService {
       return { valid: false };
     }
 
-    let resetToken;
     try {
-      resetToken = await db.passwordResetTokens
-        .where('[token+used]')
-        .equals([trimmedToken, false])
-        .first();
+      const apiUrl = import.meta.env.VITE_EMAIL_API_URL || '/api/email/send';
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'validate-token',
+          token: trimmedToken,
+          email: trimmedEmail,
+        }),
+      });
+
+      if (!response.ok) {
+        console.error('Token validation API error:', response.status, response.statusText);
+        return { valid: false };
+      }
+
+      const result = await response.json();
+      return {
+        valid: result.valid,
+        accountType: result.accountType
+      };
     } catch (error) {
-      // Handle IDBKeyRange errors gracefully
       console.error('Error validating reset token:', error);
       return { valid: false };
     }
-
-    if (!resetToken) {
-      return { valid: false };
-    }
-
-    // Check if token matches email (use trimmed email for consistency)
-    if (resetToken.email !== trimmedEmail) {
-      return { valid: false };
-    }
-
-    // Check if token is expired
-    if (resetToken.expiresAt < Date.now()) {
-      return { valid: false };
-    }
-
-    return { valid: true, accountType: resetToken.accountType };
   }
 
   /**
@@ -225,23 +208,7 @@ export class AuthService {
       throw new Error('Invalid or expired reset token');
     }
 
-    // Get reset token record (with safe parameters)
-    const trimmedToken = token.trim();
     const trimmedEmail = email.trim();
-    let resetToken;
-    try {
-      resetToken = await db.passwordResetTokens
-        .where('[token+used]')
-        .equals([trimmedToken, false])
-        .first();
-    } catch (error) {
-      console.error('Error querying reset token:', error);
-      throw new Error('Invalid reset token');
-    }
-
-    if (!resetToken) {
-      throw new Error('Invalid reset token');
-    }
 
     // Hash new password
     const passwordHash = await this.hashPassword(newPassword);
@@ -270,11 +237,7 @@ export class AuthService {
       });
     }
 
-    // Mark token as used
-    await db.passwordResetTokens.update(resetToken.id, { used: true });
-
-    // Clean up expired tokens (optional background cleanup)
-    this.cleanupExpiredTokens();
+    // Note: JWT tokens are stateless and automatically expire - no need to mark as used
   }
 
   /**

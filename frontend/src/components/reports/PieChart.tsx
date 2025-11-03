@@ -10,6 +10,7 @@ import {
 } from 'chart.js';
 import { formatCurrency } from '../../utils/currency';
 import type { CategoryBreakdown } from '../../services/analytics/analytics.service';
+import { useTheme } from '../../contexts/theme.context';
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
@@ -18,7 +19,48 @@ interface PieChartProps {
   currency?: string;
 }
 
+// Helper function to calculate relative luminance of a color
+const getLuminance = (hex: string): number => {
+  // Remove # if present and normalize to 6 characters
+  let color = hex.replace('#', '');
+  
+  // Handle 3-character hex codes (e.g., #fff -> #ffffff)
+  if (color.length === 3) {
+    color = color.split('').map(char => char + char).join('');
+  }
+  
+  // Ensure we have 6 characters, default to black if invalid
+  if (color.length !== 6) {
+    return 0; // Default to dark (will use white text)
+  }
+  
+  // Convert to RGB
+  const r = parseInt(color.substring(0, 2), 16) / 255;
+  const g = parseInt(color.substring(2, 4), 16) / 255;
+  const b = parseInt(color.substring(4, 6), 16) / 255;
+  
+  // Apply gamma correction
+  const [rs, gs, bs] = [r, g, b].map(val => {
+    return val <= 0.03928 ? val / 12.92 : Math.pow((val + 0.055) / 1.055, 2.4);
+  });
+  
+  // Calculate relative luminance
+  return 0.2126 * rs + 0.7152 * gs + 0.0722 * bs;
+};
+
+// Determine text color based on background luminance for best contrast
+const getTextColor = (backgroundColor: string, isDarkMode: boolean): string => {
+  const luminance = getLuminance(backgroundColor);
+  // Use white text on dark backgrounds (low luminance), black on light backgrounds (high luminance)
+  // In dark mode, we can use a slightly higher threshold
+  const threshold = isDarkMode ? 0.4 : 0.5;
+  return luminance > threshold ? '#000000' : '#ffffff';
+};
+
 export const PieChart = ({ data, currency = 'CAD' }: PieChartProps) => {
+  const { effectiveTheme } = useTheme();
+  const isDarkMode = effectiveTheme === 'dark';
+  
   // Use a ref to store a stable plugin ID for this component instance
   const pluginIdRef = useRef(`percentageLabels-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
   
@@ -57,10 +99,18 @@ export const PieChart = ({ data, currency = 'CAD' }: PieChartProps) => {
         const xPos = centerX + Math.cos(midAngle) * offsetDistance;
         const yPos = centerY + Math.sin(midAngle) * offsetDistance;
 
-        // Use white text with shadow for better visibility on colored backgrounds
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-        ctx.shadowBlur = 2;
-        ctx.fillStyle = '#ffffff';
+        // Get the background color of this slice
+        const backgroundColor = data[index]?.colorHex || '#000000';
+        
+        // Determine text color based on background luminance for optimal contrast
+        const textColor = getTextColor(backgroundColor, isDarkMode);
+        
+        // Use shadow for better visibility - adjust shadow color based on text color
+        ctx.shadowColor = textColor === '#ffffff' 
+          ? 'rgba(0, 0, 0, 0.7)' 
+          : 'rgba(255, 255, 255, 0.7)';
+        ctx.shadowBlur = 3;
+        ctx.fillStyle = textColor;
         ctx.font = 'bold 13px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -71,9 +121,9 @@ export const PieChart = ({ data, currency = 'CAD' }: PieChartProps) => {
 
       ctx.restore();
     },
-  }), [data]);
+  }), [data, isDarkMode]);
 
-  const chartData: ChartData<'pie'> = {
+  const chartData: ChartData<'pie'> = useMemo(() => ({
     labels: data.map((item) => item.categoryName),
     datasets: [
       {
@@ -83,9 +133,9 @@ export const PieChart = ({ data, currency = 'CAD' }: PieChartProps) => {
         borderWidth: 2,
       },
     ],
-  };
+  }), [data]);
 
-  const options: ChartOptions<'pie'> = {
+  const options: ChartOptions<'pie'> = useMemo(() => ({
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
@@ -96,6 +146,7 @@ export const PieChart = ({ data, currency = 'CAD' }: PieChartProps) => {
           font: {
             size: 12,
           },
+          color: isDarkMode ? '#e5e7eb' : '#374151', // Use theme-aware text color
           usePointStyle: true,
           generateLabels: (chart: any) => {
             const data = chart.data;
@@ -113,6 +164,7 @@ export const PieChart = ({ data, currency = 'CAD' }: PieChartProps) => {
                   lineWidth: dataset.borderWidth,
                   hidden: false,
                   index: i,
+                  fontColor: isDarkMode ? '#e5e7eb' : '#374151', // Theme-aware text color
                 };
               });
             }
@@ -121,6 +173,11 @@ export const PieChart = ({ data, currency = 'CAD' }: PieChartProps) => {
         },
       },
       tooltip: {
+        backgroundColor: isDarkMode ? 'rgba(31, 41, 55, 0.95)' : 'rgba(255, 255, 255, 0.95)',
+        titleColor: isDarkMode ? '#e5e7eb' : '#374151',
+        bodyColor: isDarkMode ? '#e5e7eb' : '#374151',
+        borderColor: isDarkMode ? '#4b5563' : '#e5e7eb',
+        borderWidth: 1,
         callbacks: {
           label: (context) => {
             const label = context.label || '';
@@ -131,7 +188,7 @@ export const PieChart = ({ data, currency = 'CAD' }: PieChartProps) => {
         },
       },
     },
-  };
+  }), [data, isDarkMode, currency]);
 
   return (
     <div className="h-64 md:h-80">

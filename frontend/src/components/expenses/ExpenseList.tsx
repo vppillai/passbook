@@ -66,7 +66,7 @@ export const ExpenseList = ({ childAccountId, accountingPeriodId, currency, onEd
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 sm:space-y-4">
       {expenses.map((expense) => (
         <ExpenseItem
           key={expense.id}
