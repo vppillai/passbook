@@ -209,24 +209,41 @@ export class AuthService {
     }
 
     const trimmedEmail = email.trim();
+    console.log('Password reset debugging:', {
+      originalEmail: email,
+      trimmedEmail,
+      accountType: validation.accountType
+    });
 
     // Hash new password
     const passwordHash = await this.hashPassword(newPassword);
 
     // Update account password
     if (validation.accountType === 'parent') {
+      console.log('Looking for parent account with email:', trimmedEmail);
+      const allParents = await db.parentAccounts.toArray();
+      console.log('All parent accounts:', allParents.map(p => ({ id: p.id, email: p.email })));
+
       const account = await db.parentAccounts.where('email').equals(trimmedEmail).first();
+      console.log('Found parent account:', account);
+
       if (!account) {
-        throw new Error('Account not found');
+        throw new Error(`Parent account not found for email: ${trimmedEmail}. Available accounts: ${allParents.map(p => p.email).join(', ')}`);
       }
       await db.parentAccounts.update(account.id, {
         passwordHash,
         updatedAt: Date.now(),
       });
     } else {
+      console.log('Looking for child account with email:', trimmedEmail);
+      const allChildren = await db.childAccounts.toArray();
+      console.log('All child accounts:', allChildren.map(c => ({ id: c.id, email: c.email })));
+
       const account = await db.childAccounts.where('email').equals(trimmedEmail).first();
+      console.log('Found child account:', account);
+
       if (!account) {
-        throw new Error('Account not found');
+        throw new Error(`Child account not found for email: ${trimmedEmail}. Available accounts: ${allChildren.map(c => c.email).join(', ')}`);
       }
       if (!account.isActive) {
         throw new Error('Account is inactive');
