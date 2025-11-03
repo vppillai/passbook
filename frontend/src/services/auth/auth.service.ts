@@ -173,17 +173,37 @@ export class AuthService {
    * Validate reset token
    */
   async validateResetToken(token: string, email: string): Promise<{ valid: boolean; accountType?: 'parent' | 'child' }> {
-    const resetToken = await db.passwordResetTokens
-      .where('[token+used]')
-      .equals([token, false])
-      .first();
+    // Validate input parameters first
+    if (!token || !email || typeof token !== 'string' || typeof email !== 'string') {
+      return { valid: false };
+    }
+
+    // Trim and validate non-empty values
+    const trimmedToken = token.trim();
+    const trimmedEmail = email.trim();
+
+    if (!trimmedToken || !trimmedEmail) {
+      return { valid: false };
+    }
+
+    let resetToken;
+    try {
+      resetToken = await db.passwordResetTokens
+        .where('[token+used]')
+        .equals([trimmedToken, false])
+        .first();
+    } catch (error) {
+      // Handle IDBKeyRange errors gracefully
+      console.error('Error validating reset token:', error);
+      return { valid: false };
+    }
 
     if (!resetToken) {
       return { valid: false };
     }
 
-    // Check if token matches email
-    if (resetToken.email !== email) {
+    // Check if token matches email (use trimmed email for consistency)
+    if (resetToken.email !== trimmedEmail) {
       return { valid: false };
     }
 
@@ -205,11 +225,19 @@ export class AuthService {
       throw new Error('Invalid or expired reset token');
     }
 
-    // Get reset token record
-    const resetToken = await db.passwordResetTokens
-      .where('[token+used]')
-      .equals([token, false])
-      .first();
+    // Get reset token record (with safe parameters)
+    const trimmedToken = token.trim();
+    const trimmedEmail = email.trim();
+    let resetToken;
+    try {
+      resetToken = await db.passwordResetTokens
+        .where('[token+used]')
+        .equals([trimmedToken, false])
+        .first();
+    } catch (error) {
+      console.error('Error querying reset token:', error);
+      throw new Error('Invalid reset token');
+    }
 
     if (!resetToken) {
       throw new Error('Invalid reset token');
@@ -220,7 +248,7 @@ export class AuthService {
 
     // Update account password
     if (validation.accountType === 'parent') {
-      const account = await db.parentAccounts.where('email').equals(email).first();
+      const account = await db.parentAccounts.where('email').equals(trimmedEmail).first();
       if (!account) {
         throw new Error('Account not found');
       }
@@ -229,7 +257,7 @@ export class AuthService {
         updatedAt: Date.now(),
       });
     } else {
-      const account = await db.childAccounts.where('email').equals(email).first();
+      const account = await db.childAccounts.where('email').equals(trimmedEmail).first();
       if (!account) {
         throw new Error('Account not found');
       }
