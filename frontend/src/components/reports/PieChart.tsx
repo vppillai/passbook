@@ -37,8 +37,25 @@ export const PieChart = ({ data, currency = 'CAD' }: PieChartProps) => {
         // Only show label if slice is large enough (more than 5%)
         if (parseFloat(percentage) < 5) return;
 
-        const xPos = segment.x;
-        const yPos = segment.y;
+        // Get the center point of the chart
+        const centerX = segment.x;
+        const centerY = segment.y;
+        
+        // Get the start and end angles of the segment
+        const startAngle = segment.startAngle;
+        const endAngle = segment.endAngle;
+        
+        // Calculate the middle angle of the slice
+        const midAngle = (startAngle + endAngle) / 2;
+        
+        // Calculate the radius of the pie chart (distance from center to edge)
+        const radius = segment.outerRadius;
+        
+        // Calculate position offset from center along the middle angle
+        // Offset by 60% of the radius so labels appear on the slice, not at the center
+        const offsetDistance = radius * 0.6;
+        const xPos = centerX + Math.cos(midAngle) * offsetDistance;
+        const yPos = centerY + Math.sin(midAngle) * offsetDistance;
 
         // Use white text with shadow for better visibility on colored backgrounds
         ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';

@@ -59,14 +59,22 @@ export const PeriodSelector = ({ parentAccountId, selectedPeriodId, onSelect }: 
     }
   };
 
+  // Normalize date to YYYY-MM-DD string for comparison
+  const normalizeDate = (date: Date | string): string => {
+    const d = typeof date === 'string' ? new Date(date + 'T00:00:00') : date;
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   // Get period for a given date
   const getPeriodForDate = (date: Date): AccountingPeriod | null => {
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = normalizeDate(date);
     return periods.find(p => {
-      const start = new Date(p.startDate);
-      const end = new Date(p.endDate);
-      const checkDate = new Date(dateStr);
-      return checkDate >= start && checkDate <= end;
+      const startStr = normalizeDate(p.startDate);
+      const endStr = normalizeDate(p.endDate);
+      return dateStr >= startStr && dateStr <= endStr;
     }) || null;
   };
 
@@ -75,11 +83,10 @@ export const PeriodSelector = ({ parentAccountId, selectedPeriodId, onSelect }: 
     if (!selectedPeriodId) return false;
     const period = periods.find(p => p.id === selectedPeriodId);
     if (!period) return false;
-    const dateStr = date.toISOString().split('T')[0];
-    const start = new Date(period.startDate);
-    const end = new Date(period.endDate);
-    const checkDate = new Date(dateStr);
-    return checkDate >= start && checkDate <= end;
+    const dateStr = normalizeDate(date);
+    const startStr = normalizeDate(period.startDate);
+    const endStr = normalizeDate(period.endDate);
+    return dateStr >= startStr && dateStr <= endStr;
   };
 
   // Generate calendar days
@@ -184,8 +191,13 @@ export const PeriodSelector = ({ parentAccountId, selectedPeriodId, onSelect }: 
         {/* Calendar Grid */}
         <div className="grid grid-cols-7 gap-1">
           {calendarDays.map((day, index) => {
-            const dateStr = day.date.toISOString().split('T')[0];
-            const isToday = dateStr === new Date().toISOString().split('T')[0];
+            const today = new Date();
+            const todayStr = normalizeDate(today);
+            const dateStr = normalizeDate(day.date);
+            const isToday = dateStr === todayStr;
+            
+            // Only highlight if this date is specifically in the selected period
+            const isPartOfSelectedPeriod = day.isSelected;
             
             return (
               <button
@@ -202,7 +214,7 @@ export const PeriodSelector = ({ parentAccountId, selectedPeriodId, onSelect }: 
                     ? 'hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer' 
                     : 'cursor-not-allowed opacity-50'
                   }
-                  ${day.isSelected 
+                  ${isPartOfSelectedPeriod 
                     ? 'bg-primary-100 dark:bg-primary-900 border-2 border-primary-500 font-semibold' 
                     : day.period 
                       ? 'border border-gray-200 dark:border-gray-700' 
@@ -214,7 +226,7 @@ export const PeriodSelector = ({ parentAccountId, selectedPeriodId, onSelect }: 
               >
                 <div className="flex flex-col items-center">
                   <span>{day.date.getDate()}</span>
-                  {day.period && day.isCurrentMonth && (
+                  {day.period && (
                     <span className={`text-xs ${day.period.status === 'active' ? 'text-green-600 dark:text-green-400' : 'text-gray-400'}`}>
                       •
                     </span>
