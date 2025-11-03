@@ -7,19 +7,44 @@ export const expenseStorage = {
   },
 
   async getByChildId(childAccountId: string): Promise<Expense[]> {
-    return db.expenses.where('childAccountId').equals(childAccountId).sortBy('date');
+    const expenses = await db.expenses.where('childAccountId').equals(childAccountId).toArray();
+    // Sort by date descending (most recent first), then by creation time descending
+    return expenses.sort((a, b) => {
+      const dateComparison = new Date(b.date).getTime() - new Date(a.date).getTime();
+      if (dateComparison === 0) {
+        return b.createdAt - a.createdAt;
+      }
+      return dateComparison;
+    });
   },
 
   async getByPeriod(accountingPeriodId: string): Promise<Expense[]> {
-    return db.expenses.where('accountingPeriodId').equals(accountingPeriodId).sortBy('date');
+    const expenses = await db.expenses.where('accountingPeriodId').equals(accountingPeriodId).toArray();
+    // Sort by date descending (most recent first), then by creation time descending
+    return expenses.sort((a, b) => {
+      const dateComparison = new Date(b.date).getTime() - new Date(a.date).getTime();
+      if (dateComparison === 0) {
+        return b.createdAt - a.createdAt;
+      }
+      return dateComparison;
+    });
   },
 
   async getByChildAndPeriod(childAccountId: string, accountingPeriodId: string): Promise<Expense[]> {
-    return db.expenses
+    const expenses = await db.expenses
       .where('[childAccountId+date]')
       .between([childAccountId, 0], [childAccountId, Date.now()], true, true)
       .filter(expense => expense.accountingPeriodId === accountingPeriodId)
-      .sortBy('date');
+      .toArray();
+
+    // Sort by date descending (most recent first), then by creation time descending
+    return expenses.sort((a, b) => {
+      const dateComparison = new Date(b.date).getTime() - new Date(a.date).getTime();
+      if (dateComparison === 0) {
+        return b.createdAt - a.createdAt;
+      }
+      return dateComparison;
+    });
   },
 
   async create(expense: Expense): Promise<string> {

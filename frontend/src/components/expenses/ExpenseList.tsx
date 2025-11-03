@@ -28,11 +28,21 @@ export const ExpenseList = ({ childAccountId, accountingPeriodId, currency, onEd
       }
 
       const expensesList = await query.toArray();
-      // Sort by date descending (most recent first)
-      expensesList.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+      // Sort by date descending (most recent first), then by creation time descending for same dates
+      expensesList.sort((a, b) => {
+        const dateComparison = new Date(b.date).getTime() - new Date(a.date).getTime();
+        if (dateComparison === 0) {
+          // If dates are the same, sort by creation time (most recent first)
+          return b.createdAt - a.createdAt;
+        }
+        return dateComparison;
+      });
+
       setExpenses(expensesList);
     } catch (error) {
       console.error('Failed to load expenses:', error);
+      setExpenses([]);
     } finally {
       setLoading(false);
     }
