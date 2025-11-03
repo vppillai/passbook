@@ -37,7 +37,8 @@ SECRET_JSON=$(cat <<EOF
   "host": "smtp.zoho.in",
   "port": "587",
   "secure": "false",
-  "user": "support@embeddedinn.com"
+  "user": "vysakhpillai@embeddedinn.xyz",
+  "from": "support@embeddedinn.com"
 }
 EOF
 )

@@ -14,12 +14,21 @@ const secretsManager = new AWS.SecretsManager({ region: process.env.AWS_REGION |
  * Retrieve SMTP configuration from Secrets Manager
  */
 async function getSmtpConfig() {
-  const secretName = process.env.ZOHO_SMTP_SECRET_NAME || 
+  const secretName = process.env.ZOHO_SMTP_SECRET_NAME ||
     `allowance-passbook/${process.env.ENVIRONMENT || 'production'}/zoho-smtp-password`;
-  
+
+  console.log('Retrieving SMTP config from secret:', secretName);
+
   try {
     const secret = await secretsManager.getSecretValue({ SecretId: secretName }).promise();
-    return JSON.parse(secret.SecretString);
+    const config = JSON.parse(secret.SecretString);
+    console.log('SMTP config retrieved successfully:', {
+      host: config.host,
+      port: config.port,
+      user: config.user,
+      passwordLength: config.password ? config.password.length : 0
+    });
+    return config;
   } catch (error) {
     console.error('Failed to retrieve SMTP secret:', error);
     throw new Error(`Failed to retrieve SMTP configuration: ${error.message}`);
@@ -86,16 +95,26 @@ async function sendPasswordResetEmail(email, resetToken, accountType, baseUrl) {
   const config = await getSmtpConfig();
   
   const resetUrl = `${baseUrl}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}&type=${accountType}`;
-  
-  const transporter = nodemailer.createTransport({
+
+  const transportConfig = {
     host: config.host,
     port: parseInt(config.port),
     secure: config.secure === 'true',
     auth: {
       user: config.user,
-      password: config.password,
+      pass: config.password,
     },
+  };
+
+  console.log('Creating transporter with config:', {
+    host: transportConfig.host,
+    port: transportConfig.port,
+    secure: transportConfig.secure,
+    authUser: transportConfig.auth.user,
+    authPassLength: transportConfig.auth.pass ? transportConfig.auth.pass.length : 0
   });
+
+  const transporter = nodemailer.createTransport(transportConfig);
 
   const html = generatePasswordResetEmailHtml(email, resetUrl, accountType);
   const text = `Allowance Passbook - Password Reset Request
@@ -131,7 +150,7 @@ async function sendGenericEmail(to, subject, html, text) {
     secure: config.secure === 'true',
     auth: {
       user: config.user,
-      password: config.password,
+      pass: config.password,
     },
   });
 
