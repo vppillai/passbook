@@ -7,8 +7,8 @@ import { Button } from '../../components/common/Button';
 import { AddFundsModal } from '../../components/funds/AddFundsModal';
 import { ExpenseList } from '../../components/expenses/ExpenseList';
 import { ExpenseFormModal } from '../../components/expenses/ExpenseFormModal';
-import { BalanceDisplay } from '../../components/expenses/BalanceDisplay';
 import { ConfirmDeleteModal } from '../../components/common/ConfirmDeleteModal';
+import { formatCurrencyWithSign } from '../../utils/currency';
 import { db } from '../../services/storage/db';
 import { expenseService } from '../../services/expenses/expense.service';
 import type { ChildAccount, Expense } from '../../types/models';
@@ -112,10 +112,27 @@ export const ChildDetailView = () => {
       showBack
       onBack={() => navigate('/parent/dashboard')}
     >
-      <div className="space-y-6">
-        <BalanceDisplay balance={childAccount.currentBalance} currency={currency} />
+      <div className="space-y-6 sm:space-y-8">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6 sm:p-8">
+          <div className="text-center">
+            <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mb-2 uppercase tracking-wide">
+              Current Balance
+            </p>
+            <p
+              className={`text-3xl sm:text-4xl font-bold ${
+                childAccount.currentBalance < 0
+                  ? 'text-red-600 dark:text-red-400'
+                  : 'text-gray-900 dark:text-gray-100'
+              }`}
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              {formatCurrencyWithSign(childAccount.currentBalance, currency)}
+            </p>
+          </div>
+        </div>
 
-        <div className="flex space-x-4">
+        <div className="flex flex-col sm:flex-row gap-4">
           <Button onClick={() => setShowAddFundsModal(true)} className="flex-1">
             Add Funds
           </Button>
@@ -131,8 +148,8 @@ export const ChildDetailView = () => {
           </Button>
         </div>
 
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
+        <div className="space-y-4 sm:space-y-6">
+          <h2 className="text-xl sm:text-2xl font-semibold text-gray-900 dark:text-gray-100">
             Expense History
           </h2>
           <ExpenseList

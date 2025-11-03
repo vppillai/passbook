@@ -2,9 +2,9 @@
  * Version utility to get the application version
  */
 
-// Import the version from package.json during build time
-// This will be statically replaced by Vite during build
-export const APP_VERSION = '1.0.0';
+// Get version from build-time constant (same as AppVersion component)
+// This is statically replaced by Vite during build from git version
+const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev';
 
 /**
  * Get the formatted version string for display

@@ -54,17 +54,19 @@ export const ExpenseList = ({ childAccountId, accountingPeriodId, currency, onEd
 
   if (expenses.length === 0) {
     return (
-      <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-lg shadow">
-        <p className="text-gray-600 dark:text-gray-400">No expenses yet.</p>
-        <p className="text-sm text-gray-500 dark:text-gray-500 mt-2">
-          Tap the + button to add your first expense
+      <div className="text-center py-12 sm:py-16 bg-white dark:bg-gray-800 rounded-lg shadow-sm">
+        <p className="text-base sm:text-lg text-gray-600 dark:text-gray-400 mb-2">
+          No expenses yet.
+        </p>
+        <p className="text-sm text-gray-500 dark:text-gray-500">
+          Tap the + button to add your first expense.
         </p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {expenses.map((expense) => (
         <ExpenseItem
           key={expense.id}
