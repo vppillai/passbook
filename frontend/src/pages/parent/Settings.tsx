@@ -4,6 +4,7 @@ import { parentStorage } from '../../services/storage/parent.storage';
 import { ThemeToggle } from '../../components/settings/ThemeToggle';
 import { AccountingPeriodEditor } from '../../components/settings/AccountingPeriodEditor';
 import { NewPeriodStarter } from '../../components/settings/NewPeriodStarter';
+import { CurrencySelector } from '../../components/common/CurrencySelector';
 import { Button } from '../../components/common/Button';
 import type { ParentAccount, AccountingPeriodType } from '../../types/models';
 
@@ -12,6 +13,7 @@ export const Settings: React.FC = () => {
   const parent = user as ParentAccount;
   const [periodType, setPeriodType] = useState<AccountingPeriodType>('monthly');
   const [startDay, setStartDay] = useState(1);
+  const [currency, setCurrency] = useState('CAD');
   const [isNewPeriodModalOpen, setIsNewPeriodModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
@@ -20,6 +22,7 @@ export const Settings: React.FC = () => {
     if (parent) {
       setPeriodType(parent.accountingPeriodType);
       setStartDay(parent.accountingPeriodStartDay);
+      setCurrency(parent.currency);
     }
   }, [parent]);
 
@@ -33,6 +36,7 @@ export const Settings: React.FC = () => {
       await parentStorage.update(parent.id, {
         accountingPeriodType: periodType,
         accountingPeriodStartDay: startDay,
+        currency: currency,
       });
 
       setSaveMessage('Settings saved successfully!');
@@ -62,6 +66,15 @@ export const Settings: React.FC = () => {
             Appearance
           </h3>
           <ThemeToggle />
+        </div>
+
+        <hr className="border-gray-200 dark:border-gray-700" />
+
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+            Currency Settings
+          </h3>
+          <CurrencySelector value={currency} onChange={setCurrency} />
         </div>
 
         <hr className="border-gray-200 dark:border-gray-700" />

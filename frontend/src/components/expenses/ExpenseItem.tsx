@@ -9,9 +9,10 @@ interface ExpenseItemProps {
   expense: Expense;
   currency?: string;
   onEdit?: (expense: Expense) => void;
+  onDelete?: (expense: Expense) => void;
 }
 
-export const ExpenseItem = ({ expense, currency = 'CAD', onEdit }: ExpenseItemProps) => {
+export const ExpenseItem = ({ expense, currency = 'CAD', onEdit, onDelete }: ExpenseItemProps) => {
   const category = getCategoryById(expense.category);
 
   return (
@@ -41,18 +42,32 @@ export const ExpenseItem = ({ expense, currency = 'CAD', onEdit }: ExpenseItemPr
           </p>
         </div>
         <div className="text-right">
-          <p className="text-xl font-bold text-gray-900 dark:text-gray-100">
+          <p className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-2">
             {formatCurrency(expense.amount, currency)}
           </p>
-          {onEdit && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="mt-2"
-              onClick={() => onEdit(expense)}
-            >
-              Edit
-            </Button>
+          {(onEdit || onDelete) && (
+            <div className="flex flex-col space-y-1">
+              {onEdit && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onEdit(expense)}
+                  className="text-xs px-2 py-1 min-w-[60px]"
+                >
+                  Edit
+                </Button>
+              )}
+              {onDelete && (
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => onDelete(expense)}
+                  className="text-xs px-2 py-1 min-w-[60px]"
+                >
+                  Delete
+                </Button>
+              )}
+            </div>
           )}
         </div>
       </div>

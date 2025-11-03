@@ -20,8 +20,8 @@ export class PassbookDatabase extends Dexie {
   constructor() {
     super('PassbookDB');
 
-    // Define schema
-    this.version(1).stores({
+    // Define schema - incremented version due to adding compound indexes
+    this.version(2).stores({
       parentAccounts: 'id, email',
       childAccounts: 'id, parentAccountId, email',
       expenses: 'id, childAccountId, accountingPeriodId, date, [childAccountId+date], [childAccountId+accountingPeriodId]',

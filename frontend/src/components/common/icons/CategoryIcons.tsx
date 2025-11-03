@@ -7,20 +7,25 @@ interface IconProps {
 
 export const SnacksIcon: React.FC<IconProps> = ({ className = "w-5 h-5", size }) => (
   <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 2v20m8-8H4"/>
-    <path d="M17 7L7 17"/>
-    <path d="M7 7l10 10"/>
-    <circle cx="12" cy="12" r="3"/>
+    <path d="M7 10v12l5-3 5 3V10"/>
+    <path d="M15 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/>
+    <path d="M12 6V2"/>
+    <circle cx="12" cy="15" r="1" fill="currentColor"/>
+    <circle cx="10" cy="18" r="0.5" fill="currentColor"/>
+    <circle cx="14" cy="17" r="0.5" fill="currentColor"/>
   </svg>
 );
 
 export const ToysIcon: React.FC<IconProps> = ({ className = "w-5 h-5", size }) => (
   <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M8 21l8-8-8-8"/>
-    <circle cx="12" cy="8" r="2"/>
-    <path d="m14.5 9.5 1 1"/>
-    <path d="m16 14 4 4"/>
-    <path d="m20 16-4-4"/>
+    <rect x="4" y="4" width="16" height="16" rx="2"/>
+    <rect x="8" y="8" width="8" height="8" rx="1"/>
+    <circle cx="10" cy="10" r="1" fill="currentColor"/>
+    <circle cx="14" cy="10" r="1" fill="currentColor"/>
+    <circle cx="10" cy="14" r="1" fill="currentColor"/>
+    <circle cx="14" cy="14" r="1" fill="currentColor"/>
+    <path d="M12 18v2"/>
+    <path d="M12 2v2"/>
   </svg>
 );
 

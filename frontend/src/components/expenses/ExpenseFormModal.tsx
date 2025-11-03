@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { Input } from '../common/Input';
@@ -35,6 +35,19 @@ export const ExpenseFormModal = ({
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+
+  // Update form data when expense prop changes or modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setFormData({
+        amount: expense?.amount || 0,
+        category: expense?.category || PREDEFINED_CATEGORIES[0].id,
+        description: expense?.description || '',
+        date: expense ? formatDateForInput(expense.date) : getCurrentDate(),
+      });
+      setErrors({});
+    }
+  }, [expense, isOpen]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -7,7 +7,9 @@ import { BalanceDisplay } from '../../components/expenses/BalanceDisplay';
 import { ExpenseList } from '../../components/expenses/ExpenseList';
 import { ExpenseFormModal } from '../../components/expenses/ExpenseFormModal';
 import { NegativeBalanceWarning } from '../../components/expenses/NegativeBalanceWarning';
+import { ConfirmDeleteModal } from '../../components/common/ConfirmDeleteModal';
 import { db } from '../../services/storage/db';
+import { expenseService } from '../../services/expenses/expense.service';
 import type { ChildAccount, Expense } from '../../types/models';
 
 export const TeenDashboard = () => {
@@ -17,6 +19,9 @@ export const TeenDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [expenseToEdit, setExpenseToEdit] = useState<Expense | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [expenseToDelete, setExpenseToDelete] = useState<Expense | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   useEffect(() => {
@@ -57,6 +62,29 @@ export const TeenDashboard = () => {
     setShowExpenseModal(true);
   };
 
+  const handleDeleteExpense = (expense: Expense) => {
+    setExpenseToDelete(expense);
+    setShowDeleteModal(true);
+  };
+
+  const confirmDeleteExpense = async () => {
+    if (!expenseToDelete) return;
+
+    setDeleteLoading(true);
+    try {
+      await expenseService.deleteExpense(expenseToDelete.id);
+      setShowDeleteModal(false);
+      setExpenseToDelete(null);
+      loadAccount(); // Refresh balance
+      setRefreshTrigger(prev => prev + 1); // Trigger expense list refresh
+    } catch (error) {
+      console.error('Failed to delete expense:', error);
+      // TODO: Add toast notification for error
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <Layout title="My Passbook">
@@ -79,7 +107,13 @@ export const TeenDashboard = () => {
       {account.currentBalance < 0 && (
         <NegativeBalanceWarning balance={account.currentBalance} currency={currency} />
       )}
-      <ExpenseList childAccountId={account.id} currency={currency} onEdit={handleEditExpense} refreshTrigger={refreshTrigger} />
+      <ExpenseList
+        childAccountId={account.id}
+        currency={currency}
+        onEdit={handleEditExpense}
+        onDelete={handleDeleteExpense}
+        refreshTrigger={refreshTrigger}
+      />
       <FAB
         onClick={() => {
           setExpenseToEdit(null);
@@ -100,6 +134,19 @@ export const TeenDashboard = () => {
         childAccountId={account.id}
         expense={expenseToEdit}
         onSuccess={handleExpenseSuccess}
+      />
+
+      <ConfirmDeleteModal
+        isOpen={showDeleteModal}
+        onClose={() => {
+          setShowDeleteModal(false);
+          setExpenseToDelete(null);
+        }}
+        onConfirm={confirmDeleteExpense}
+        title="Delete Expense"
+        message="Are you sure you want to delete this expense? This action cannot be undone and will restore the amount to your balance."
+        itemName={expenseToDelete?.description}
+        loading={deleteLoading}
       />
     </Layout>
   );
