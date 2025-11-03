@@ -10,21 +10,38 @@ import type { ParentAccount, AccountingPeriodType } from '../../types/models';
 
 export const Settings: React.FC = () => {
   const { user } = useAuth();
-  const parent = user as ParentAccount;
+  const [parent, setParent] = useState<ParentAccount | null>(null);
   const [periodType, setPeriodType] = useState<AccountingPeriodType>('monthly');
   const [startDay, setStartDay] = useState(1);
   const [currency, setCurrency] = useState('CAD');
   const [isNewPeriodModalOpen, setIsNewPeriodModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (parent) {
-      setPeriodType(parent.accountingPeriodType);
-      setStartDay(parent.accountingPeriodStartDay);
-      setCurrency(parent.currency);
+    if (user && user.type === 'parent') {
+      loadParentData();
     }
-  }, [parent]);
+  }, [user]);
+
+  const loadParentData = async () => {
+    if (!user) return;
+
+    try {
+      const parentAccount = await parentStorage.getById(user.id);
+      if (parentAccount) {
+        setParent(parentAccount);
+        setPeriodType(parentAccount.accountingPeriodType);
+        setStartDay(parentAccount.accountingPeriodStartDay);
+        setCurrency(parentAccount.currency);
+      }
+    } catch (error) {
+      console.error('Failed to load parent data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSave = async () => {
     if (!parent) return;
@@ -39,6 +56,8 @@ export const Settings: React.FC = () => {
         currency: currency,
       });
 
+      // Reload parent data to reflect changes
+      await loadParentData();
       setSaveMessage('Settings saved successfully!');
       setTimeout(() => setSaveMessage(''), 3000);
     } catch (error) {
@@ -48,6 +67,23 @@ export const Settings: React.FC = () => {
       setIsSaving(false);
     }
   };
+
+  if (loading) {
+    return (
+      <div className="max-w-3xl mx-auto">
+        <div className="animate-pulse">
+          <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/4 mb-4"></div>
+          <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2 mb-8"></div>
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+            <div className="space-y-6">
+              <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded w-1/3"></div>
+              <div className="h-10 bg-gray-200 dark:bg-gray-700 rounded"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!parent) return null;
 

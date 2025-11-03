@@ -111,7 +111,6 @@ export const TeenDashboard = () => {
         childAccountId={account.id}
         currency={currency}
         onEdit={handleEditExpense}
-        onDelete={handleDeleteExpense}
         refreshTrigger={refreshTrigger}
       />
       <FAB
@@ -134,6 +133,7 @@ export const TeenDashboard = () => {
         childAccountId={account.id}
         expense={expenseToEdit}
         onSuccess={handleExpenseSuccess}
+        onDelete={handleDeleteExpense}
       />
 
       <ConfirmDeleteModal

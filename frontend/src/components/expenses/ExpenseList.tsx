@@ -8,11 +8,10 @@ interface ExpenseListProps {
   accountingPeriodId?: string;
   currency?: string;
   onEdit?: (expense: Expense) => void;
-  onDelete?: (expense: Expense) => void;
   refreshTrigger?: number; // Add refresh trigger
 }
 
-export const ExpenseList = ({ childAccountId, accountingPeriodId, currency, onEdit, onDelete, refreshTrigger }: ExpenseListProps) => {
+export const ExpenseList = ({ childAccountId, accountingPeriodId, currency, onEdit, refreshTrigger }: ExpenseListProps) => {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -62,7 +61,6 @@ export const ExpenseList = ({ childAccountId, accountingPeriodId, currency, onEd
           expense={expense}
           currency={currency}
           onEdit={onEdit}
-          onDelete={onDelete}
         />
       ))}
     </div>

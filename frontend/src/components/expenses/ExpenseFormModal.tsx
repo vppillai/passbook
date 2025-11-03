@@ -17,6 +17,7 @@ interface ExpenseFormModalProps {
   childAccountId: string;
   expense?: Expense | null;
   onSuccess: () => void;
+  onDelete?: (expense: Expense) => void;
 }
 
 export const ExpenseFormModal = ({
@@ -25,6 +26,7 @@ export const ExpenseFormModal = ({
   childAccountId,
   expense,
   onSuccess,
+  onDelete,
 }: ExpenseFormModalProps) => {
   const { user } = useAuth();
   const [formData, setFormData] = useState({
@@ -153,6 +155,17 @@ export const ExpenseFormModal = ({
           <Button type="button" variant="outline" onClick={onClose} className="flex-1" disabled={loading}>
             Cancel
           </Button>
+          {expense && onDelete && (
+            <Button
+              type="button"
+              variant="danger"
+              onClick={() => onDelete(expense)}
+              className="flex-1"
+              disabled={loading}
+            >
+              Delete
+            </Button>
+          )}
           <Button type="submit" className="flex-1" disabled={loading}>
             {loading ? 'Saving...' : expense ? 'Update' : 'Add Expense'}
           </Button>

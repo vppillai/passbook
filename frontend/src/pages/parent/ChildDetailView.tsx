@@ -139,7 +139,6 @@ export const ChildDetailView = () => {
             childAccountId={childAccount.id}
             currency={currency}
             onEdit={handleEditExpense}
-            onDelete={handleDeleteExpense}
             refreshTrigger={refreshTrigger}
           />
         </div>
@@ -161,6 +160,7 @@ export const ChildDetailView = () => {
         childAccountId={childAccount.id}
         expense={expenseToEdit}
         onSuccess={handleSuccess}
+        onDelete={handleDeleteExpense}
       />
 
       <ConfirmDeleteModal
