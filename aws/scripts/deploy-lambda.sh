@@ -1,16 +1,18 @@
 #!/bin/bash
 
 # Deploy Lambda function code after CloudFormation stack is deployed
-# Usage: ./deploy-lambda.sh <environment> [region]
-# Example: ./deploy-lambda.sh production us-east-1
+# Usage: ./deploy-lambda.sh <service-name> <environment> [region]
+# Example: ./deploy-lambda.sh email-service production us-west-2
+# Example: ./deploy-lambda.sh auth-service production us-west-2
 
 set -e
 
-ENVIRONMENT=${1:-development}
-REGION=${2:-us-east-1}
+SERVICE_NAME=${1:-email-service}
+ENVIRONMENT=${2:-development}
+REGION=${3:-us-west-2}
 PROJECT_NAME="allowance-passbook"
-FUNCTION_NAME="${PROJECT_NAME}-${ENVIRONMENT}-email-service"
-LAMBDA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lambda/email-service" && pwd)"
+FUNCTION_NAME="${PROJECT_NAME}-${ENVIRONMENT}-${SERVICE_NAME}"
+LAMBDA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lambda/${SERVICE_NAME}" && pwd)"
 
 echo "🚀 Deploying Lambda function: ${FUNCTION_NAME}"
 echo "   Environment: ${ENVIRONMENT}"
@@ -60,10 +62,19 @@ echo ""
 echo "📋 Function details:"
 cat /tmp/lambda-update.json | grep -E "(FunctionName|LastModified|CodeSize)" | head -3
 echo ""
-echo "🧪 Test the function:"
-echo "   aws lambda invoke \\"
-echo "     --function-name ${FUNCTION_NAME} \\"
-echo "     --payload '{\"body\":\"{\\\"to\\\":\\\"test@example.com\\\",\\\"resetToken\\\":\\\"test\\\",\\\"accountType\\\":\\\"parent\\\",\\\"baseUrl\\\":\\\"https://vppillai.github.io/passbook\\\"}\"}' \\"
-echo "     --region ${REGION} \\"
-echo "     response.json"
+if [ "$SERVICE_NAME" = "email-service" ]; then
+  echo "🧪 Test the function:"
+  echo "   aws lambda invoke \\"
+  echo "     --function-name ${FUNCTION_NAME} \\"
+  echo "     --payload '{\"body\":\"{\\\"to\\\":\\\"test@example.com\\\",\\\"resetToken\\\":\\\"test\\\",\\\"accountType\\\":\\\"parent\\\",\\\"baseUrl\\\":\\\"https://vppillai.github.io/passbook\\\"}\"}' \\"
+  echo "     --region ${REGION} \\"
+  echo "     response.json"
+elif [ "$SERVICE_NAME" = "auth-service" ]; then
+  echo "🧪 Test the function:"
+  echo "   aws lambda invoke \\"
+  echo "     --function-name ${FUNCTION_NAME} \\"
+  echo "     --payload '{\"httpMethod\":\"POST\",\"path\":\"/auth/login\",\"body\":\"{\\\"email\\\":\\\"test@example.com\\\",\\\"password\\\":\\\"test123\\\",\\\"userType\\\":\\\"parent\\\"}\"}' \\"
+  echo "     --region ${REGION} \\"
+  echo "     response.json"
+fi
 

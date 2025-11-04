@@ -10,7 +10,8 @@ const getEmailApiUrl = (): string => {
   if (envUrl) {
     return envUrl;
   }
-  return '/api/email/send';
+  // Default to production API Gateway endpoint
+  return 'https://nktkmakeil.execute-api.us-west-2.amazonaws.com/v1/api/email/send';
 };
 
 export class EmailService {

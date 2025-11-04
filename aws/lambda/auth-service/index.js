@@ -13,7 +13,8 @@ const AWS = require('aws-sdk');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
-const dynamodb = new AWS.DynamoDB.DocumentClient({ region: process.env.AWS_REGION || 'us-east-1' });
+// AWS_REGION is automatically set by Lambda runtime
+const dynamodb = new AWS.DynamoDB.DocumentClient({ region: process.env.AWS_REGION || 'us-west-2' });
 
 const PARENT_ACCOUNTS_TABLE = process.env.PARENT_ACCOUNTS_TABLE || 
   `allowance-passbook-${process.env.ENVIRONMENT || 'production'}-parent-accounts`;
@@ -54,7 +55,7 @@ async function initializeJwtSecret() {
   const secretName = process.env.JWT_SECRET_NAME;
   if (secretName) {
     try {
-      const secretsManager = new AWS.SecretsManager({ region: process.env.AWS_REGION || 'us-east-1' });
+      const secretsManager = new AWS.SecretsManager({ region: process.env.AWS_REGION || 'us-west-2' });
       const secret = await secretsManager.getSecretValue({ SecretId: secretName }).promise();
       const config = JSON.parse(secret.SecretString);
       JWT_SECRET = config.secret || JWT_SECRET;
@@ -295,11 +296,11 @@ exports.handler = async (event) => {
 
   try {
     const body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
-    const path = event.path || event.resource || '';
+    const path = event.path || event.resource || event.requestContext?.path || '';
     const method = event.httpMethod;
 
     // Route based on path and method
-    if (path.includes('/login') && method === 'POST') {
+    if ((path.includes('/login') || path.endsWith('/login')) && method === 'POST') {
       const response = await handleLogin(body);
       return {
         ...response,
@@ -307,7 +308,7 @@ exports.handler = async (event) => {
       };
     }
 
-    if (path.includes('/validate') && method === 'POST') {
+    if ((path.includes('/validate') || path.endsWith('/validate')) && method === 'POST') {
       const response = await handleValidateToken(body);
       return {
         ...response,
@@ -319,14 +320,14 @@ exports.handler = async (event) => {
     return {
       statusCode: 404,
       headers: corsHeaders,
-      body: JSON.stringify({ error: 'Not found' }),
+      body: JSON.stringify({ error: 'Not found', path: path }),
     };
   } catch (error) {
     console.error('Handler error:', error);
     return {
       statusCode: 500,
       headers: corsHeaders,
-      body: JSON.stringify({ error: 'Internal server error' }),
+      body: JSON.stringify({ error: 'Internal server error', message: error.message }),
     };
   }
 };

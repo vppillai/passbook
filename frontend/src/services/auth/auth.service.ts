@@ -76,7 +76,7 @@ export class AuthService {
 
   async loginParent(credentials: LoginCredentials): Promise<{ user: AuthUser; token: string; passwordChangedAt: number }> {
     // Try server-side authentication first
-    const apiUrl = import.meta.env.VITE_AUTH_API_URL || import.meta.env.VITE_API_URL;
+    const apiUrl = import.meta.env.VITE_AUTH_API_URL || import.meta.env.VITE_API_URL || 'https://nktkmakeil.execute-api.us-west-2.amazonaws.com/v1/api';
 
     if (apiUrl) {
       try {
@@ -145,7 +145,7 @@ export class AuthService {
 
   async loginChild(credentials: LoginCredentials): Promise<{ user: AuthUser; token: string; passwordChangedAt: number }> {
     // Try server-side authentication first
-    const apiUrl = import.meta.env.VITE_AUTH_API_URL || import.meta.env.VITE_API_URL;
+    const apiUrl = import.meta.env.VITE_AUTH_API_URL || import.meta.env.VITE_API_URL || 'https://nktkmakeil.execute-api.us-west-2.amazonaws.com/v1/api';
 
     if (apiUrl) {
       try {
@@ -230,7 +230,7 @@ export class AuthService {
    * Validate JWT token with server
    */
   async validateToken(token: string): Promise<{ valid: boolean; userId?: string; email?: string; userType?: string; name?: string }> {
-    const apiUrl = import.meta.env.VITE_AUTH_API_URL || import.meta.env.VITE_API_URL;
+    const apiUrl = import.meta.env.VITE_AUTH_API_URL || import.meta.env.VITE_API_URL || 'https://nktkmakeil.execute-api.us-west-2.amazonaws.com/v1/api';
 
     if (!apiUrl || !token) {
       return { valid: false };
@@ -319,7 +319,7 @@ export class AuthService {
     }
 
     try {
-      const apiUrl = import.meta.env.VITE_EMAIL_API_URL || '/api/email/send';
+      const apiUrl = import.meta.env.VITE_EMAIL_API_URL || 'https://nktkmakeil.execute-api.us-west-2.amazonaws.com/v1/api/email/send';
 
       const response = await fetch(apiUrl, {
         method: 'POST',

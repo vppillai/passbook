@@ -414,7 +414,6 @@ Resources:
           PARENT_ACCOUNTS_TABLE: !Ref ParentAccountsTable
           CHILD_ACCOUNTS_TABLE: !Ref ChildAccountsTable
           ENVIRONMENT: !Ref Environment
-          AWS_REGION: !Ref AWS::Region
           JWT_SECRET: !Ref JwtSecretParameter
       Timeout: 30
       MemorySize: 256
