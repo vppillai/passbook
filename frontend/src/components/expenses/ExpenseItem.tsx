@@ -15,7 +15,7 @@ export const ExpenseItem = ({ expense, currency = 'CAD', onEdit }: ExpenseItemPr
   const category = getCategoryById(expense.category);
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-4 sm:p-5 hover:shadow-md hover:border-gray-200 dark:hover:border-gray-600 transition-all">
+    <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 px-3 py-3.5 sm:px-4 sm:py-4 md:px-5 md:py-5 hover:shadow-md hover:border-gray-200 dark:hover:border-gray-600 transition-all">
       <div className="flex items-start justify-between gap-4">
         {/* Left section: Icon and Details */}
         <div className="flex items-start gap-3 sm:gap-4 flex-1 min-w-0">
