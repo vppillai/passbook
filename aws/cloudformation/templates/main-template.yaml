@@ -368,7 +368,7 @@ Resources:
           };
       Environment:
         Variables:
-          ZOHO_SMTP_SECRET_NAME: 'allowance-passbook/development/zoho-smtp-password'
+          ZOHO_SMTP_SECRET_NAME: !Sub '${ProjectName}/${Environment}/zoho-smtp-password'
           ENVIRONMENT: !Ref Environment
       Timeout: 30
       MemorySize: 256
