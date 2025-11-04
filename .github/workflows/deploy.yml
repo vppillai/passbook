@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'frontend/.env.production'
+      - 'frontend/src/**'
+      - 'frontend/package.json'
+      - 'frontend/vite.config.ts'
   workflow_dispatch:
 
 permissions:
