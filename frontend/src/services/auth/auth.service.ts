@@ -125,7 +125,7 @@ export class AuthService {
    * Request password reset - generates token and sends email
    */
   async requestPasswordReset(email: string, accountType: 'parent' | 'child'): Promise<void> {
-    // Check if account exists
+    // Check if account exists locally (but don't block if it doesn't - could be on different device)
     let account: ParentAccount | ChildAccount | undefined;
     if (accountType === 'parent') {
       account = await db.parentAccounts.where('email').equals(email).first();
@@ -136,13 +136,8 @@ export class AuthService {
       }
     }
 
-    // Don't reveal if email exists (security best practice)
-    if (!account) {
-      // Still return success to prevent email enumeration
-      return;
-    }
-
-    // Send request to AWS Lambda - let it generate and manage the token
+    // For cross-device support: Always attempt to send email regardless of local account existence
+    // The actual account validation will happen server-side or during password reset
     try {
       await emailService.sendPasswordResetEmail(email, '', accountType);
     } catch (error) {
@@ -213,28 +208,58 @@ export class AuthService {
     // Hash new password
     const passwordHash = await this.hashPassword(newPassword);
 
-    // Update account password
+    // Update account password - create account if it doesn't exist locally (cross-device support)
     if (validation.accountType === 'parent') {
-      const account = await db.parentAccounts.where('email').equals(trimmedEmail).first();
+      let account = await db.parentAccounts.where('email').equals(trimmedEmail).first();
+
       if (!account) {
-        throw new Error('Parent account not found');
+        // Account doesn't exist locally (different device) - create it for cross-device support
+        const newAccount: ParentAccount = {
+          id: uuidv4(),
+          email: trimmedEmail,
+          passwordHash, // Will be set with the new password
+          name: trimmedEmail.split('@')[0], // Use email prefix as default name
+          currency: 'CAD',
+          accountingPeriodType: 'monthly',
+          accountingPeriodStartDay: 1,
+          theme: 'system',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        await db.parentAccounts.add(newAccount);
+      } else {
+        await db.parentAccounts.update(account.id, {
+          passwordHash,
+          updatedAt: Date.now(),
+        });
       }
-      await db.parentAccounts.update(account.id, {
-        passwordHash,
-        updatedAt: Date.now(),
-      });
     } else {
-      const account = await db.childAccounts.where('email').equals(trimmedEmail).first();
+      let account = await db.childAccounts.where('email').equals(trimmedEmail).first();
+
       if (!account) {
-        throw new Error('Child account not found');
+        // Account doesn't exist locally (different device) - create it for cross-device support
+        // Note: For child accounts, we need a parent ID, so we'll create a basic structure
+        const newAccount: ChildAccount = {
+          id: uuidv4(),
+          parentAccountId: 'unknown', // This will need to be resolved later
+          email: trimmedEmail,
+          passwordHash, // Will be set with the new password
+          name: trimmedEmail.split('@')[0], // Use email prefix as default name
+          defaultMonthlyAllowance: 100,
+          isActive: true,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        await db.childAccounts.add(newAccount);
+      } else {
+        if (!account.isActive) {
+          throw new Error('Account is inactive');
+        }
+        await db.childAccounts.update(account.id, {
+          passwordHash,
+          updatedAt: Date.now(),
+        });
       }
-      if (!account.isActive) {
-        throw new Error('Account is inactive');
-      }
-      await db.childAccounts.update(account.id, {
-        passwordHash,
-        updatedAt: Date.now(),
-      });
     }
 
     // Note: JWT tokens are stateless and automatically expire - no need to mark as used
