@@ -154,7 +154,7 @@ aws apigateway put-integration-response \
   --resource-id ${SEND_RESOURCE} \
   --http-method OPTIONS \
   --status-code 200 \
-  --response-parameters '{"method.response.header.Access-Control-Allow-Origin":"'"'"'"*"'"'"'","method.response.header.Access-Control-Allow-Headers":"'"'"'"Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token"'"'"'","method.response.header.Access-Control-Allow-Methods":"'"'"'"POST,OPTIONS"'"'"'"}' \
+  --response-parameters '{"method.response.header.Access-Control-Allow-Origin":"'"'"'*'"'"'","method.response.header.Access-Control-Allow-Headers":"'"'"'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"'"'","method.response.header.Access-Control-Allow-Methods":"'"'"'POST,OPTIONS'"'"'"}' \
   --region ${REGION}
 
 echo "Created OPTIONS method for CORS"
