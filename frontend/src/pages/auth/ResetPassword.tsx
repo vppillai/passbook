@@ -172,7 +172,7 @@ export const ResetPassword = () => {
           navigate('/login');
         }}
         title="Password Reset Successful"
-        message="Your password has been reset successfully. You can now login with your new password."
+        message="Your password has been reset successfully. You can now login with your new password on this device. Note: If you reset your password from a different device than where you originally created your account, you'll need to use the new password on this device and the old password may still work on other devices since data is stored locally."
         onAction={() => {
           setShowSuccessModal(false);
           navigate('/login');

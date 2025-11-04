@@ -17,6 +17,7 @@ export interface ParentAccount {
   theme: Theme;
   createdAt: number; // timestamp
   updatedAt: number; // timestamp
+  passwordChangedAt: number; // timestamp when password was last changed (for session invalidation)
 }
 
 export interface ChildAccount {
@@ -31,6 +32,7 @@ export interface ChildAccount {
   theme: Theme;
   createdAt: number; // timestamp
   updatedAt: number; // timestamp
+  passwordChangedAt: number; // timestamp when password was last changed (for session invalidation)
 }
 
 export interface Expense {

@@ -154,6 +154,7 @@ function getJwtSecret() {
   return process.env.JWT_SECRET || 'allowance-passbook-jwt-secret-key-2024';
 }
 
+
 /**
  * Generate a password reset token using JWT
  */

@@ -1,0 +1,12 @@
+{
+  "name": "allowance-passbook-auth-service",
+  "version": "1.0.0",
+  "description": "Lambda function for authentication and authorization",
+  "main": "index.js",
+  "dependencies": {
+    "aws-sdk": "^2.1500.0",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3"
+  }
+}
+

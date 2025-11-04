@@ -53,7 +53,8 @@ export class ParentAccountService {
       isActive: true,
       theme: 'system' as const,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      passwordChangedAt: now, // Track when password was set
     };
 
     await db.childAccounts.add(childAccount);

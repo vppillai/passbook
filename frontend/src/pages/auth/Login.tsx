@@ -11,6 +11,7 @@ export const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [userType, setUserType] = useState<'parent' | 'child'>('child');
+  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -21,10 +22,10 @@ export const Login = () => {
 
     try {
       if (userType === 'parent') {
-        await loginParent(email, password);
+        await loginParent(email, password, rememberMe);
         navigate('/parent/dashboard');
       } else {
-        await loginChild(email, password);
+        await loginChild(email, password, rememberMe);
         navigate('/child/dashboard');
       }
     } catch (err) {
@@ -81,6 +82,23 @@ export const Login = () => {
             required
             disabled={loading}
           />
+
+          <div className="flex items-center">
+            <input
+              id="remember-me"
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              disabled={loading}
+              className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+            />
+            <label
+              htmlFor="remember-me"
+              className="ml-2 block text-sm text-gray-900 dark:text-gray-300 cursor-pointer"
+            >
+              Remember me for 7 days
+            </label>
+          </div>
 
           {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 

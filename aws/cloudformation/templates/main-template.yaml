@@ -61,6 +61,13 @@ Parameters:
     AllowedValues: ['true', 'false']
     Description: Enable detailed CloudWatch monitoring (additional costs)
 
+  # Security
+  JwtSecretParameter:
+    Type: String
+    Default: 'change-this-secret-in-production-use-secrets-manager'
+    NoEcho: true
+    Description: JWT secret for token signing (should be stored in Secrets Manager in production)
+
 Conditions:
   IsProduction: !Equals [!Ref Environment, production]
   IsDetailedMonitoring: !Equals [!Ref EnableDetailedMonitoring, 'true']
@@ -380,6 +387,52 @@ Resources:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref EmailServiceFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*'
+
+  # Lambda Function - Auth Service
+  AuthServiceFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-auth-service'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          // Placeholder - actual code deployed separately
+          // See aws/lambda/auth-service/ for the full implementation
+          exports.handler = async (event) => {
+            return {
+              statusCode: 500,
+              body: JSON.stringify({ error: 'Lambda function code not deployed. Run deployment script first.' }),
+            };
+          };
+      Environment:
+        Variables:
+          PARENT_ACCOUNTS_TABLE: !Ref ParentAccountsTable
+          CHILD_ACCOUNTS_TABLE: !Ref ChildAccountsTable
+          ENVIRONMENT: !Ref Environment
+          AWS_REGION: !Ref AWS::Region
+          JWT_SECRET: !Ref JwtSecretParameter
+      Timeout: 30
+      MemorySize: 256
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: CostCenter
+          Value: !Ref CostCenter
+
+  # Lambda Permission for Auth Service API Gateway
+  AuthServiceApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AuthServiceFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*'

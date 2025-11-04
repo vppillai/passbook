@@ -32,6 +32,28 @@ export class PassbookDatabase extends Dexie {
       accountingPeriodBalances: 'id, childAccountId, accountingPeriodId',
       passwordResetTokens: 'id, token, email, expiresAt, [token+used]',
     });
+
+    // Version 4: Add passwordChangedAt field for security
+    this.version(4)
+      .stores({
+        parentAccounts: 'id, email',
+        childAccounts: 'id, parentAccountId, email',
+        expenses: 'id, childAccountId, accountingPeriodId, date, [childAccountId+date], [childAccountId+accountingPeriodId]',
+        fundAdditions: 'id, childAccountId, accountingPeriodId, date, [childAccountId+date], [childAccountId+accountingPeriodId]',
+        accountingPeriods: 'id, parentAccountId, status, [parentAccountId+status], startDate, endDate',
+        accountingPeriodBalances: 'id, childAccountId, accountingPeriodId',
+        passwordResetTokens: 'id, token, email, expiresAt, [token+used]',
+      })
+      .upgrade(async (tx) => {
+        // Migrate existing accounts: set passwordChangedAt to createdAt for existing accounts
+        const now = Date.now();
+        await tx.table('parentAccounts').toCollection().modify((account) => {
+          account.passwordChangedAt = account.passwordChangedAt || account.createdAt || now;
+        });
+        await tx.table('childAccounts').toCollection().modify((account) => {
+          account.passwordChangedAt = account.passwordChangedAt || account.createdAt || now;
+        });
+      });
   }
 }
 
