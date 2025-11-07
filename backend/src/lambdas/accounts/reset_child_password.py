@@ -2,9 +2,9 @@
 Lambda handler for resetting a child account password.
 """
 import bcrypt
-from src.utils.lambda_handler import lambda_handler_wrapper, create_response, get_request_body, get_authorization_token, get_path_parameter, LambdaError
-from src.utils.db_client import DynamoDBClient
-from src.utils.jwt_utils import verify_token
+from utils.lambda_handler import lambda_handler_wrapper, create_response, get_request_body, get_authorization_token, get_path_parameter, LambdaError
+from utils.db_client import DynamoDBClient
+from utils.jwt_utils import verify_token
 from datetime import datetime
 
 

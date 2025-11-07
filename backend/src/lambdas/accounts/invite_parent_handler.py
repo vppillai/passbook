@@ -1,12 +1,12 @@
 """
 Lambda handler for inviting a parent to join a family.
 """
-from src.utils.lambda_handler import lambda_handler_wrapper, create_response, get_request_body, get_authorization_token, LambdaError
-from src.utils.db_client import DynamoDBClient
-from src.utils.jwt_utils import verify_token
-from src.utils.email_service import send_verification_email
-from src.models.parent_account import ParentAccount
-from src.models.email_verification import EmailVerification
+from utils.lambda_handler import lambda_handler_wrapper, create_response, get_request_body, get_authorization_token, LambdaError
+from utils.db_client import DynamoDBClient
+from utils.jwt_utils import verify_token
+from utils.email_service import send_verification_email
+from models.parent_account import ParentAccount
+from models.email_verification import EmailVerification
 
 
 @lambda_handler_wrapper

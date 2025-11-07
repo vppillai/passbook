@@ -1,11 +1,11 @@
 """
 Lambda handler for generating financial reports (PDF/Excel).
 """
-from src.utils.lambda_handler import lambda_handler_wrapper, create_response, get_authorization_token, get_query_parameter, LambdaError
-from src.utils.db_client import DynamoDBClient
-from src.utils.jwt_utils import verify_token
-from src.models.expense import Expense
-from src.models.fund_addition import FundAddition
+from utils.lambda_handler import lambda_handler_wrapper, create_response, get_authorization_token, get_query_parameter, LambdaError
+from utils.db_client import DynamoDBClient
+from utils.jwt_utils import verify_token
+from models.expense import Expense
+from models.fund_addition import FundAddition
 from datetime import datetime
 import json
 import base64

@@ -2,10 +2,10 @@
 Lambda handler for user login (parent or child).
 """
 import bcrypt
-from src.utils.lambda_handler import lambda_handler_wrapper, create_response, get_request_body, LambdaError
-from src.utils.db_client import DynamoDBClient
-from src.utils.jwt_utils import generate_token
-from src.models.parent_account import ParentAccount
+from utils.lambda_handler import lambda_handler_wrapper, create_response, get_request_body, LambdaError
+from utils.db_client import DynamoDBClient
+from utils.jwt_utils import generate_token
+from models.parent_account import ParentAccount
 
 
 @lambda_handler_wrapper

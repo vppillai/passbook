@@ -1,10 +1,10 @@
 """
 Lambda handler for listing children in a family.
 """
-from src.utils.lambda_handler import lambda_handler_wrapper, create_response, get_authorization_token, LambdaError
-from src.utils.db_client import DynamoDBClient
-from src.utils.jwt_utils import verify_token
-from src.models.child_account import ChildAccount
+from utils.lambda_handler import lambda_handler_wrapper, create_response, get_authorization_token, LambdaError
+from utils.db_client import DynamoDBClient
+from utils.jwt_utils import verify_token
+from models.child_account import ChildAccount
 
 
 @lambda_handler_wrapper

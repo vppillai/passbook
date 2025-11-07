@@ -2,11 +2,11 @@
 Lambda handler for sending low balance reminder emails to parents.
 """
 import os
-from src.utils.lambda_handler import lambda_handler_wrapper, create_response, LambdaError
-from src.utils.db_client import DynamoDBClient
-from src.utils.email_service import send_email
-from src.models.child_account import ChildAccount
-from src.models.family_account import FamilyAccount
+from utils.lambda_handler import lambda_handler_wrapper, create_response, LambdaError
+from utils.db_client import DynamoDBClient
+from utils.email_service import send_email
+from models.child_account import ChildAccount
+from models.family_account import FamilyAccount
 
 
 @lambda_handler_wrapper

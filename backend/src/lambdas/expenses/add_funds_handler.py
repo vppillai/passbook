@@ -1,11 +1,11 @@
 """
 Lambda handler for adding funds to a child account.
 """
-from src.utils.lambda_handler import lambda_handler_wrapper, create_response, get_request_body, get_authorization_token, LambdaError
-from src.utils.db_client import DynamoDBClient
-from src.utils.jwt_utils import verify_token
-from src.utils.balance_manager import update_child_balance
-from src.models.fund_addition import FundAddition
+from utils.lambda_handler import lambda_handler_wrapper, create_response, get_request_body, get_authorization_token, LambdaError
+from utils.db_client import DynamoDBClient
+from utils.jwt_utils import verify_token
+from utils.balance_manager import update_child_balance
+from models.fund_addition import FundAddition
 
 
 @lambda_handler_wrapper

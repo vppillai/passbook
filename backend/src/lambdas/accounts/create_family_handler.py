@@ -1,11 +1,11 @@
 """
 Lambda handler for creating a family account.
 """
-from src.utils.lambda_handler import lambda_handler_wrapper, create_response, get_request_body, get_authorization_token, LambdaError
-from src.utils.db_client import DynamoDBClient
-from src.utils.jwt_utils import verify_token
-from src.models.family_account import FamilyAccount
-from src.models.parent_account import ParentAccount
+from utils.lambda_handler import lambda_handler_wrapper, create_response, get_request_body, get_authorization_token, LambdaError
+from utils.db_client import DynamoDBClient
+from utils.jwt_utils import verify_token
+from models.family_account import FamilyAccount
+from models.parent_account import ParentAccount
 
 
 @lambda_handler_wrapper
