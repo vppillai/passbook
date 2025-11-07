@@ -26,7 +26,7 @@ def get_jwt_secret() -> str:
         Exception: If secret cannot be retrieved
     """
     secret_name = os.environ.get('JWT_SECRET_NAME', 'passbook/development/jwt-secret')
-    region = os.environ.get('AWS_REGION', 'us-west-2')
+    region = os.environ.get('PASSBOOK_AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
 
     session = boto3.session.Session()
     client = session.client(

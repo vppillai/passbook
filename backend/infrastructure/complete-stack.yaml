@@ -40,7 +40,7 @@ Globals:
         AUTH_TABLE: !Ref AuthTable
         JWT_SECRET_NAME: !Ref JWTSecret
         SMTP_SECRET_NAME: !Ref SMTPSecret
-        AWS_REGION: !Ref AWS::Region
+        PASSBOOK_AWS_REGION: !Ref AWS::Region
     Tags:
       Project: passbook
       Environment: !Ref Environment

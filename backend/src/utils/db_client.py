@@ -21,7 +21,7 @@ class DynamoDBClient:
     """Wrapper for DynamoDB operations."""
 
     def __init__(self):
-        region = os.environ.get('AWS_REGION', 'us-west-2')
+        region = os.environ.get('PASSBOOK_AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
         self.dynamodb = boto3.resource('dynamodb', region_name=region)
         self.client = boto3.client('dynamodb', region_name=region)
 

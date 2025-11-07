@@ -19,7 +19,7 @@ def get_smtp_credentials() -> dict:
         Dictionary with SMTP configuration
     """
     secret_name = os.environ.get('SMTP_SECRET_NAME', 'passbook/development/smtp-credentials')
-    region = os.environ.get('AWS_REGION', 'us-west-2')
+    region = os.environ.get('PASSBOOK_AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
 
     session = boto3.session.Session()
     client = session.client(
