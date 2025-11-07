@@ -39,19 +39,7 @@
       "bundler": "metro",
       "output": "static",
       "name": "Passbook",
-      "shortName": "Passbook",
-      "lang": "en",
-      "scope": "/",
-      "themeColor": "#ffffff",
-      "backgroundColor": "#ffffff",
-      "display": "standalone",
-      "orientation": "portrait",
-      "startUrl": "/",
-      "splash": {
-        "image": "./assets/splash.png",
-        "resizeMode": "contain",
-        "backgroundColor": "#ffffff"
-      }
+      "shortName": "Passbook"
     },
     "plugins": [],
     "scheme": "passbook",
