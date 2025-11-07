@@ -287,8 +287,6 @@ Resources:
       MethodSettings:
         - ResourcePath: '/*'
           HttpMethod: '*'
-          LoggingLevel: INFO
-          DataTraceEnabled: true
           MetricsEnabled: true
           ThrottlingRateLimit: 100
           ThrottlingBurstLimit: 200
