@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+build/
+dist/
+web-build/
+.expo/
+
+# Generated files
+coverage/
+*.min.js
+*.bundle.js
+
+# Config files
+*.config.js
+*.config.ts
+
+# Test files (if not linting tests)
+# __tests__/
+# *.test.*
+# *.spec.*
+
+# Platform-specific
+ios/
+android/
+platform/
+
+# Documentation
+*.md
+
+# Backend (Python, not JS)
+backend/

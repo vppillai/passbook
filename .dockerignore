@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile*
+.dockerignore
+
+# Environment
+.env*
+*.log*
+
+# Testing
+coverage/
+.nyc_output
+__tests__/
+*.test.*
+*.spec.*
+
+# Build outputs
+build/
+dist/
+web-build/
+
+# Expo
+.expo/
+.expo-shared/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Specs (not needed in Docker)
+specs/
