@@ -1,18 +1,23 @@
 import React, { useState } from 'react';
-import {  View, Text, TextInput, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { StatusBar } from 'expo-status-bar';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 
 export default function App() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
+    if (!email || !password) {
+      setMessage('❌ Please enter email and password');
+      return;
+    }
+
+    setLoading(true);
     setMessage('Logging in...');
+    
     try {
-      const API_URL = Platform.OS === 'web' 
-        ? 'https://afbtrc48hc.execute-api.us-west-2.amazonaws.com/development'
-        : process.env.EXPO_PUBLIC_API_URL;
+      const API_URL = 'https://afbtrc48hc.execute-api.us-west-2.amazonaws.com/development';
       
       const response = await fetch(`${API_URL}/auth/login`, {
         method: 'POST',
@@ -25,19 +30,19 @@ export default function App() {
       const data = await response.json();
       
       if (response.ok) {
-        setMessage(`✅ Login successful! Welcome ${data.user.displayName}`);
+        setMessage(`✅ Login successful! Welcome ${data.user?.displayName || 'User'}`);
       } else {
-        setMessage(`❌ Error: ${data.error || 'Login failed'}`);
+        setMessage(`❌ ${data.error || 'Login failed'}`);
       }
     } catch (error) {
-      setMessage(`❌ Error: ${error.message}`);
+      setMessage(`❌ Network error: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
     <View style={styles.container}>
-      <StatusBar style="auto" />
-      
       <View style={styles.content}>
         <Text style={styles.title}>🏦 Passbook</Text>
         <Text style={styles.subtitle}>Family Allowance Manager</Text>
@@ -50,6 +55,7 @@ export default function App() {
             onChangeText={setEmail}
             keyboardType="email-address"
             autoCapitalize="none"
+            editable={!loading}
           />
 
           <TextInput
@@ -58,21 +64,35 @@ export default function App() {
             value={password}
             onChangeText={setPassword}
             secureTextEntry
+            editable={!loading}
           />
 
-          <TouchableOpacity style={styles.button} onPress={handleLogin}>
-            <Text style={styles.buttonText}>Login</Text>
+          <TouchableOpacity 
+            style={[styles.button, loading && styles.buttonDisabled]} 
+            onPress={handleLogin}
+            disabled={loading}
+          >
+            <Text style={styles.buttonText}>
+              {loading ? 'Logging in...' : 'Login'}
+            </Text>
           </TouchableOpacity>
 
           {message ? (
-            <Text style={styles.message}>{message}</Text>
+            <View style={styles.messageBox}>
+              <Text style={styles.message}>{message}</Text>
+            </View>
           ) : null}
 
           <View style={styles.info}>
-            <Text style={styles.infoText}>Test Account:</Text>
+            <Text style={styles.infoTitle}>Test Account:</Text>
             <Text style={styles.infoText}>Email: support@embeddedinn.com</Text>
             <Text style={styles.infoText}>Password: Passbook2025!</Text>
           </View>
+        </View>
+
+        <View style={styles.footer}>
+          <Text style={styles.footerText}>Backend: AWS Lambda + DynamoDB</Text>
+          <Text style={styles.footerText}>Frontend: GitHub Pages</Text>
         </View>
       </View>
     </View>
@@ -91,15 +111,15 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   title: {
-    fontSize: 32,
+    fontSize: 36,
     fontWeight: 'bold',
     color: '#333',
     marginBottom: 8,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 18,
     color: '#666',
-    marginBottom: 40,
+    marginBottom: 48,
   },
   form: {
     width: '100%',
@@ -110,37 +130,63 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#ddd',
     borderRadius: 8,
-    padding: 12,
+    padding: 14,
     marginBottom: 16,
     fontSize: 16,
+    outlineStyle: 'none',
   },
   button: {
     backgroundColor: '#007AFF',
     padding: 16,
     borderRadius: 8,
     alignItems: 'center',
+    marginTop: 8,
+  },
+  buttonDisabled: {
+    backgroundColor: '#999',
   },
   buttonText: {
     color: 'white',
     fontSize: 16,
     fontWeight: '600',
   },
-  message: {
-    marginTop: 16,
-    padding: 12,
+  messageBox: {
+    marginTop: 20,
+    padding: 14,
     backgroundColor: 'white',
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  message: {
+    fontSize: 15,
     textAlign: 'center',
+    color: '#333',
   },
   info: {
-    marginTop: 24,
+    marginTop: 32,
     padding: 16,
     backgroundColor: '#e3f2fd',
     borderRadius: 8,
+  },
+  infoTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1976d2',
+    marginBottom: 8,
   },
   infoText: {
     fontSize: 14,
     color: '#1976d2',
     marginBottom: 4,
+  },
+  footer: {
+    marginTop: 40,
+    alignItems: 'center',
+  },
+  footerText: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 4,
   },
 });
