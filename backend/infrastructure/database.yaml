@@ -1,0 +1,144 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'DynamoDB tables for Passbook application'
+
+Resources:
+  # Families and Accounts Table
+  FamiliesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: passbook-families
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: familyId
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+        - AttributeName: username
+          AttributeType: S
+      KeySchema:
+        - AttributeName: familyId
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: email-index
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: username-family-index
+          KeySchema:
+            - AttributeName: familyId
+              KeyType: HASH
+            - AttributeName: username
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Project
+          Value: passbook
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: DataClassification
+          Value: PII
+
+  # Transactions Table
+  TransactionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: passbook-transactions
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: childUserId
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: familyId
+          AttributeType: S
+        - AttributeName: expenseDate
+          AttributeType: S
+      KeySchema:
+        - AttributeName: childUserId
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      LocalSecondaryIndexes:
+        - IndexName: family-date-index
+          KeySchema:
+            - AttributeName: childUserId
+              KeyType: HASH
+            - AttributeName: expenseDate
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Project
+          Value: passbook
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: DataClassification
+          Value: Financial
+
+  # Auth Table (for email verification tokens)
+  AuthTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: passbook-auth
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: token
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: token
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Project
+          Value: passbook
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: DataClassification
+          Value: Sensitive
+
+Parameters:
+  Environment:
+    Type: String
+    Default: development
+    AllowedValues:
+      - development
+      - staging
+      - production
+
+Outputs:
+  FamiliesTableName:
+    Description: Name of the families table
+    Value: !Ref FamiliesTable
+    Export:
+      Name: !Sub '${AWS::StackName}-FamiliesTable'
+
+  TransactionsTableName:
+    Description: Name of the transactions table
+    Value: !Ref TransactionsTable
+    Export:
+      Name: !Sub '${AWS::StackName}-TransactionsTable'
+
+  AuthTableName:
+    Description: Name of the auth table
+    Value: !Ref AuthTable
+    Export:
+      Name: !Sub '${AWS::StackName}-AuthTable'

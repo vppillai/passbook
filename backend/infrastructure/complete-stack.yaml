@@ -1,0 +1,619 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Complete Passbook Infrastructure - All resources in one template for easy deployment'
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  Environment:
+    Type: String
+    Default: development
+    AllowedValues:
+      - development
+      - staging
+      - production
+    Description: Deployment environment
+
+  SMTPUser:
+    Type: String
+    Description: SMTP username for email service
+    NoEcho: true
+
+  SMTPPassword:
+    Type: String
+    Description: SMTP password for email service
+    NoEcho: true
+
+  SMTPFrom:
+    Type: String
+    Default: support@embeddedinn.com
+    Description: From email address
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Timeout: 30
+    MemorySize: 256
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        FAMILIES_TABLE: !Ref FamiliesTable
+        TRANSACTIONS_TABLE: !Ref TransactionsTable
+        AUTH_TABLE: !Ref AuthTable
+        JWT_SECRET_NAME: !Ref JWTSecret
+        SMTP_SECRET_NAME: !Ref SMTPSecret
+        AWS_REGION: !Ref AWS::Region
+    Tags:
+      Project: passbook
+      Environment: !Ref Environment
+
+Resources:
+  # ============================================================================
+  # DYNAMODB TABLES
+  # ============================================================================
+
+  FamiliesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'passbook-${Environment}-families'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: familyId
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: familyId
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: email-index
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Tags:
+        - Key: Project
+          Value: passbook
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: DataClassification
+          Value: PII
+
+  TransactionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'passbook-${Environment}-transactions'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: childUserId
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: expenseDate
+          AttributeType: S
+      KeySchema:
+        - AttributeName: childUserId
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      LocalSecondaryIndexes:
+        - IndexName: date-index
+          KeySchema:
+            - AttributeName: childUserId
+              KeyType: HASH
+            - AttributeName: expenseDate
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Tags:
+        - Key: Project
+          Value: passbook
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: DataClassification
+          Value: Financial
+
+  AuthTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'passbook-${Environment}-auth'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: token
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: token
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Project
+          Value: passbook
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================================================
+  # SECRETS MANAGER
+  # ============================================================================
+
+  JWTSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub 'passbook/${Environment}/jwt-secret'
+      Description: JWT signing secret for authentication tokens
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: secret
+        PasswordLength: 64
+        ExcludeCharacters: '"@/\'
+      Tags:
+        - Key: Project
+          Value: passbook
+        - Key: Environment
+          Value: !Ref Environment
+
+  SMTPSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub 'passbook/${Environment}/smtp-credentials'
+      Description: SMTP credentials for email service
+      SecretString: !Sub |
+        {
+          "host": "smtp.zoho.in",
+          "port": "587",
+          "secure": "false",
+          "user": "${SMTPUser}",
+          "password": "${SMTPPassword}",
+          "from": "${SMTPFrom}"
+        }
+      Tags:
+        - Key: Project
+          Value: passbook
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================================================
+  # IAM ROLES
+  # ============================================================================
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'passbook-${Environment}-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:BatchGetItem
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !GetAtt FamiliesTable.Arn
+                  - !Sub '${FamiliesTable.Arn}/index/*'
+                  - !GetAtt TransactionsTable.Arn
+                  - !Sub '${TransactionsTable.Arn}/index/*'
+                  - !GetAtt AuthTable.Arn
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource:
+                  - !Ref JWTSecret
+                  - !Ref SMTPSecret
+      Tags:
+        - Key: Project
+          Value: passbook
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================================================
+  # S3 BACKUP BUCKET
+  # ============================================================================
+
+  BackupBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'passbook-${Environment}-backups-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldBackups
+            Status: Enabled
+            ExpirationInDays: 90
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Project
+          Value: passbook
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ============================================================================
+  # API GATEWAY
+  # ============================================================================
+
+  PassbookApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub 'passbook-${Environment}-api'
+      StageName: !Ref Environment
+      Cors:
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          LoggingLevel: INFO
+          DataTraceEnabled: true
+          MetricsEnabled: true
+          ThrottlingRateLimit: 100
+          ThrottlingBurstLimit: 200
+      Tags:
+        Project: passbook
+        Environment: !Ref Environment
+
+  # ============================================================================
+  # LAMBDA FUNCTIONS - Authentication
+  # ============================================================================
+
+  SignupFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-signup'
+      CodeUri: ../src/lambdas/auth/
+      Handler: signup_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PassbookApi
+            Path: /auth/signup
+            Method: POST
+
+  LoginFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-login'
+      CodeUri: ../src/lambdas/auth/
+      Handler: login_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PassbookApi
+            Path: /auth/login
+            Method: POST
+
+  VerifyEmailFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-verify-email'
+      CodeUri: ../src/lambdas/auth/
+      Handler: verify_email_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PassbookApi
+            Path: /auth/verify-email
+            Method: POST
+
+  # ============================================================================
+  # LAMBDA FUNCTIONS - Accounts
+  # ============================================================================
+
+  CreateFamilyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-create-family'
+      CodeUri: ../src/lambdas/accounts/
+      Handler: create_family_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PassbookApi
+            Path: /families
+            Method: POST
+
+  CreateChildFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-create-child'
+      CodeUri: ../src/lambdas/accounts/
+      Handler: create_child_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PassbookApi
+            Path: /children
+            Method: POST
+
+  ListChildrenFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-list-children'
+      CodeUri: ../src/lambdas/accounts/
+      Handler: list_children_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PassbookApi
+            Path: /children
+            Method: GET
+
+  UpdateChildFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-update-child'
+      CodeUri: ../src/lambdas/accounts/
+      Handler: update_child_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PassbookApi
+            Path: /children/{childId}
+            Method: PUT
+
+  ResetChildPasswordFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-reset-child-password'
+      CodeUri: ../src/lambdas/accounts/
+      Handler: reset_child_password.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PassbookApi
+            Path: /children/{childId}/reset-password
+            Method: POST
+
+  InviteParentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-invite-parent'
+      CodeUri: ../src/lambdas/accounts/
+      Handler: invite_parent_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PassbookApi
+            Path: /parents/invite
+            Method: POST
+
+  ListParentsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-list-parents'
+      CodeUri: ../src/lambdas/accounts/
+      Handler: list_parents_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PassbookApi
+            Path: /parents
+            Method: GET
+
+  # ============================================================================
+  # LAMBDA FUNCTIONS - Transactions
+  # ============================================================================
+
+  AddExpenseFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-add-expense'
+      CodeUri: ../src/lambdas/expenses/
+      Handler: add_expense_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PassbookApi
+            Path: /expenses
+            Method: POST
+
+  ListExpensesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-list-expenses'
+      CodeUri: ../src/lambdas/expenses/
+      Handler: list_expenses_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PassbookApi
+            Path: /expenses
+            Method: GET
+
+  UpdateExpenseFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-update-expense'
+      CodeUri: ../src/lambdas/expenses/
+      Handler: update_expense_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PassbookApi
+            Path: /expenses/{expenseId}
+            Method: PUT
+
+  AddFundsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-add-funds'
+      CodeUri: ../src/lambdas/expenses/
+      Handler: add_funds_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PassbookApi
+            Path: /funds
+            Method: POST
+
+  # ============================================================================
+  # LAMBDA FUNCTIONS - Analytics
+  # ============================================================================
+
+  GetAnalyticsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-get-analytics'
+      CodeUri: ../src/lambdas/analytics/
+      Handler: get_analytics_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PassbookApi
+            Path: /analytics
+            Method: GET
+
+  GenerateReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-generate-report'
+      CodeUri: ../src/lambdas/analytics/
+      Handler: generate_report_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PassbookApi
+            Path: /reports
+            Method: POST
+
+  # ============================================================================
+  # LAMBDA FUNCTIONS - Email & Reminders
+  # ============================================================================
+
+  ReminderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-reminder'
+      CodeUri: ../src/lambdas/email/
+      Handler: reminder_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        DailySchedule:
+          Type: Schedule
+          Properties:
+            Schedule: 'cron(0 9 * * ? *)'  # 9 AM UTC daily
+            Description: Daily low balance reminder
+
+# ============================================================================
+# OUTPUTS
+# ============================================================================
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${PassbookApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiUrl'
+
+  ApiId:
+    Description: API Gateway ID
+    Value: !Ref PassbookApi
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiId'
+
+  FamiliesTableName:
+    Description: DynamoDB Families table name
+    Value: !Ref FamiliesTable
+    Export:
+      Name: !Sub '${AWS::StackName}-FamiliesTable'
+
+  TransactionsTableName:
+    Description: DynamoDB Transactions table name
+    Value: !Ref TransactionsTable
+    Export:
+      Name: !Sub '${AWS::StackName}-TransactionsTable'
+
+  AuthTableName:
+    Description: DynamoDB Auth table name
+    Value: !Ref AuthTable
+    Export:
+      Name: !Sub '${AWS::StackName}-AuthTable'
+
+  BackupBucketName:
+    Description: S3 backup bucket name
+    Value: !Ref BackupBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-BackupBucket'
+
+  LambdaExecutionRoleArn:
+    Description: Lambda execution role ARN
+    Value: !GetAtt LambdaExecutionRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaRole'

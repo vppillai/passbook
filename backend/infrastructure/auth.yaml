@@ -1,0 +1,122 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Secrets Manager for Passbook authentication and email service'
+
+Resources:
+  # JWT Secret
+  JWTSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub 'passbook/${Environment}/jwt-secret'
+      Description: JWT signing secret for authentication tokens
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: 'secret'
+        PasswordLength: 64
+        ExcludeCharacters: '"@/\'
+      Tags:
+        - Key: Project
+          Value: passbook
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: DataClassification
+          Value: Sensitive
+
+  # SMTP Credentials
+  SMTPSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub 'passbook/${Environment}/smtp-credentials'
+      Description: SMTP credentials for Zoho email service
+      SecretString: !Sub |
+        {
+          "host": "${SMTPHost}",
+          "port": "${SMTPPort}",
+          "secure": "${SMTPSecure}",
+          "user": "${SMTPUser}",
+          "password": "${SMTPPassword}",
+          "from": "${SMTPFrom}"
+        }
+      Tags:
+        - Key: Project
+          Value: passbook
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: DataClassification
+          Value: Sensitive
+
+  # API Key Secret
+  APIKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub 'passbook/${Environment}/api-key'
+      Description: API key for additional security layer
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: 'apiKey'
+        PasswordLength: 32
+        ExcludeCharacters: '"@/\'
+      Tags:
+        - Key: Project
+          Value: passbook
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: DataClassification
+          Value: Sensitive
+
+Parameters:
+  Environment:
+    Type: String
+    Default: development
+    AllowedValues:
+      - development
+      - staging
+      - production
+
+  SMTPHost:
+    Type: String
+    Default: smtp.zoho.in
+    Description: SMTP server hostname
+
+  SMTPPort:
+    Type: String
+    Default: '587'
+    Description: SMTP server port
+
+  SMTPSecure:
+    Type: String
+    Default: 'false'
+    Description: Use TLS/SSL for SMTP
+
+  SMTPUser:
+    Type: String
+    Description: SMTP username (email address)
+    NoEcho: true
+
+  SMTPPassword:
+    Type: String
+    Description: SMTP password
+    NoEcho: true
+
+  SMTPFrom:
+    Type: String
+    Description: From email address
+    Default: support@embeddedinn.com
+
+Outputs:
+  JWTSecretArn:
+    Description: ARN of JWT secret
+    Value: !Ref JWTSecret
+    Export:
+      Name: !Sub '${AWS::StackName}-JWTSecretArn'
+
+  SMTPSecretArn:
+    Description: ARN of SMTP secret
+    Value: !Ref SMTPSecret
+    Export:
+      Name: !Sub '${AWS::StackName}-SMTPSecretArn'
+
+  APIKeySecretArn:
+    Description: ARN of API key secret
+    Value: !Ref APIKeySecret
+    Export:
+      Name: !Sub '${AWS::StackName}-APIKeySecretArn'

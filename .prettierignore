@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+build/
+dist/
+web-build/
+.expo/
+
+# Generated files
+coverage/
+*.min.js
+*.bundle.js
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Config files (may have specific formatting)
+*.config.js
+*.config.ts
+
+# Platform-specific
+ios/
+android/
+platform/
+
+# Documentation
+*.md
+
+# Backend (Python, not JS/TS)
+backend/

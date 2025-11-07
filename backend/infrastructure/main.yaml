@@ -1,0 +1,154 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Main CloudFormation stack for Passbook application - Complete infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: development
+    AllowedValues:
+      - development
+      - staging
+      - production
+    Description: Deployment environment
+
+  Region:
+    Type: String
+    Default: us-west-2
+    Description: AWS region for deployment
+
+  SMTPUser:
+    Type: String
+    Description: SMTP username for email service
+    NoEcho: true
+
+  SMTPPassword:
+    Type: String
+    Description: SMTP password for email service
+    NoEcho: true
+
+  SMTPFrom:
+    Type: String
+    Default: support@embeddedinn.com
+    Description: From email address
+
+Resources:
+  # Nested stacks for modular infrastructure
+  DatabaseStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: database.yaml
+      Parameters:
+        Environment: !Ref Environment
+
+  ApiStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: api.yaml
+      Parameters:
+        Environment: !Ref Environment
+
+  AuthStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: auth.yaml
+      Parameters:
+        Environment: !Ref Environment
+        SMTPHost: smtp.zoho.in
+        SMTPPort: '587'
+        SMTPSecure: 'false'
+        SMTPUser: !Ref SMTPUser
+        SMTPPassword: !Ref SMTPPassword
+        SMTPFrom: !Ref SMTPFrom
+
+  # IAM Role for Lambda functions
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'passbook-${Environment}-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:BatchGetItem
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/passbook-*'
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource:
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:passbook/${Environment}/*'
+      Tags:
+        - Key: Project
+          Value: passbook
+        - Key: Environment
+          Value: !Ref Environment
+
+  # S3 Bucket for backups
+  BackupBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'passbook-${Environment}-backups-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldBackups
+            Status: Enabled
+            ExpirationInDays: 90
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Project
+          Value: passbook
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: infrastructure
+
+Outputs:
+  FamiliesTableName:
+    Description: Name of the families DynamoDB table
+    Value: !GetAtt DatabaseStack.Outputs.FamiliesTableName
+
+  TransactionsTableName:
+    Description: Name of the transactions DynamoDB table
+    Value: !GetAtt DatabaseStack.Outputs.TransactionsTableName
+
+  AuthTableName:
+    Description: Name of the auth DynamoDB table
+    Value: !GetAtt DatabaseStack.Outputs.AuthTableName
+
+  ApiGatewayUrl:
+    Description: API Gateway endpoint URL
+    Value: !GetAtt ApiStack.Outputs.ApiGatewayUrl
+
+  LambdaExecutionRoleArn:
+    Description: ARN of Lambda execution role
+    Value: !GetAtt LambdaExecutionRole.Arn
+
+  BackupBucketName:
+    Description: Name of S3 backup bucket
+    Value: !Ref BackupBucket
