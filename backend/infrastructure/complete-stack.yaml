@@ -302,8 +302,8 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub 'passbook-${Environment}-signup'
-      CodeUri: ../src/
-      Handler: lambdas.auth.signup_handler.handler
+      CodeUri: ../src/lambdas/auth/
+      Handler: signup_handler.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         ApiEvent:
