@@ -1,7 +1,17 @@
-# Tasks: Passbook - Family Allowance Management System
+# Tasks: Passbook - Complete Family Allowance Management System
 
-**Input**: Design documents from `/specs/001-passbook-mvp/`
+**Input**: Design documents from `/specs/001-passbook-complete/`  
 **Prerequisites**: plan.md (required), spec.md (required), research.md, data-model.md, contracts/
+
+**Scope**: This task list covers the COMPLETE Passbook application with ALL features from requirements.md:
+- ✅ All authentication & multi-parent management features
+- ✅ Complete child account management with username/email support
+- ✅ Full fund management with reminders and periods
+- ✅ Comprehensive expense tracking with all categories
+- ✅ Complete analytics with charts and PDF/Excel reports
+- ✅ Full offline functionality with sync
+- ✅ Push notifications for all platforms
+- ✅ All security, timezone, and currency features
 
 **Tests**: Tests are included based on requirements.md specifications (70%+ coverage target).
 
@@ -62,7 +72,7 @@
 
 ---
 
-## Phase 3: User Story 1 - Parent Account Setup & Family Creation (Priority: P1) 🎯 MVP
+## Phase 3: User Story 1 - Parent Account Setup & Family Creation (Priority: P1) 🎯
 
 **Goal**: Enable parents to create accounts, verify email, and set up family
 
@@ -190,7 +200,7 @@
 - [ ] T089 [US4] Update store with expenses in src/store/expensesSlice.ts
 - [ ] T090 [US4] Add floating action button in src/components/common/FAB.tsx
 
-**Checkpoint**: Core MVP complete - all P1 stories functional
+**Checkpoint**: Core functionality complete - all P1 stories functional
 
 ---
 
@@ -387,7 +397,7 @@ Task: T041 [P] [US1] Create FamilySetupScreen
 
 ## Implementation Strategy
 
-### MVP First (User Stories 1-4 Only)
+### Core Features First (User Stories 1-4)
 
 1. Complete Phase 1: Setup
 2. Complete Phase 2: Foundational (CRITICAL - blocks all stories)
@@ -396,7 +406,7 @@ Task: T041 [P] [US1] Create FamilySetupScreen
 5. Complete Phase 5: User Story 3 (Funding)
 6. Complete Phase 6: User Story 4 (Expenses)
 7. **STOP and VALIDATE**: Test core functionality end-to-end
-8. Deploy MVP if ready
+8. Deploy core features if ready
 
 ### Incremental Delivery
 
@@ -404,7 +414,7 @@ Task: T041 [P] [US1] Create FamilySetupScreen
 2. Add User Story 1 → Parents can sign up (Demo point)
 3. Add User Story 2 → Children can be added (Demo point)
 4. Add User Story 3 → Allowances work (Demo point)
-5. Add User Story 4 → Full MVP ready! (Major demo)
+5. Add User Story 4 → Core features ready! (Major demo)
 6. Add Stories 5-6 → Enhanced features (V2)
 7. Add Stories 7-8 → Premium features (V3)
 

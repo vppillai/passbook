@@ -1,4 +1,4 @@
-# Specification Quality Checklist: Passbook - Family Allowance Management System
+# Specification Quality Checklist: Passbook - Complete Family Allowance Management System
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2025-11-07

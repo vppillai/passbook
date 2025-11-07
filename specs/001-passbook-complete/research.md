@@ -1,6 +1,6 @@
-# Research & Technical Decisions: Passbook MVP
+# Research & Technical Decisions: Passbook Complete Application
 
-**Feature**: Family Allowance Management System  
+**Feature**: Complete Family Allowance Management System  
 **Date**: 2025-11-07  
 **Status**: Complete
 

@@ -1,7 +1,7 @@
-# Implementation Plan: Passbook - Family Allowance Management System
+# Implementation Plan: Passbook - Complete Family Allowance Management System
 
-**Branch**: `001-passbook-mvp` | **Date**: 2025-11-07 | **Spec**: [spec.md](spec.md)
-**Input**: Feature specification from `/specs/001-passbook-mvp/spec.md`
+**Branch**: `001-passbook-complete` | **Date**: 2025-11-07 | **Spec**: [spec.md](spec.md)
+**Input**: Feature specification from `/specs/001-passbook-complete/spec.md`
 
 **Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/commands/plan.md` for the execution workflow.
 
@@ -40,7 +40,7 @@ Cross-platform family allowance management application enabling parents to provi
 ### Documentation (this feature)
 
 ```text
-specs/001-passbook-mvp/
+specs/001-passbook-complete/
 ├── plan.md              # This file (/speckit.plan command output)
 ├── research.md          # Phase 0 output (/speckit.plan command)
 ├── data-model.md        # Phase 1 output (/speckit.plan command)

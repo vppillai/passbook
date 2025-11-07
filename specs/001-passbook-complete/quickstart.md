@@ -1,6 +1,6 @@
-# Passbook MVP - Quick Start Guide
+# Passbook - Complete Application Quick Start Guide
 
-**Feature**: Family Allowance Management System
+**Feature**: Complete Family Allowance Management System  
 **Last Updated**: 2025-11-07
 
 ## Overview

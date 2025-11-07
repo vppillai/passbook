@@ -1,8 +1,8 @@
-# Feature Specification: Passbook - Family Allowance Management System
+# Feature Specification: Passbook - Complete Family Allowance Management System
 
-**Feature Branch**: `001-passbook-mvp`
-**Created**: 2025-11-07
-**Status**: Draft
+**Feature Branch**: `001-passbook-complete`  
+**Created**: 2025-11-07  
+**Status**: Draft  
 **Input**: User description: "Cross-platform family allowance management app with expense tracking and financial education features"
 
 ## User Scenarios & Testing *(mandatory)*
