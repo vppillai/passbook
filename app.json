@@ -53,16 +53,7 @@
         "backgroundColor": "#ffffff"
       }
     },
-    "plugins": [
-      "expo-router",
-      [
-        "expo-notifications",
-        {
-          "icon": "./assets/notification-icon.png",
-          "color": "#ffffff"
-        }
-      ]
-    ],
+    "plugins": [],
     "scheme": "passbook",
     "extra": {
       "eas": {
