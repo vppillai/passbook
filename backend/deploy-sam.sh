@@ -9,7 +9,6 @@ set -e
 ENVIRONMENT=${1:-development}
 REGION=${2:-us-west-2}
 STACK_NAME="passbook-${ENVIRONMENT}"
-S3_BUCKET="passbook-${ENVIRONMENT}-deployments-${RANDOM}"
 
 echo "============================================"
 echo "Passbook SAM Deployment"
@@ -42,16 +41,24 @@ fi
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 echo "✅ AWS Account: ${ACCOUNT_ID}"
 
-# Prompt for SMTP credentials if not in environment
-if [ -z "$SMTP_USER" ]; then
-  read -p "Enter SMTP username (email): " SMTP_USER
-fi
-if [ -z "$SMTP_PASSWORD" ]; then
-  read -sp "Enter SMTP password: " SMTP_PASSWORD
-  echo
-fi
-if [ -z "$SMTP_FROM" ]; then
-  SMTP_FROM="${SMTP_USER}"
+# Prompt for SMTP credentials if not in environment and not in CI
+if [ -z "$CI" ] && [ -z "$GITHUB_ACTIONS" ]; then
+  if [ -z "$SMTP_USER" ]; then
+    read -p "Enter SMTP username (email): " SMTP_USER
+  fi
+  if [ -z "$SMTP_PASSWORD" ]; then
+    read -sp "Enter SMTP password: " SMTP_PASSWORD
+    echo
+  fi
+  if [ -z "$SMTP_FROM" ]; then
+    SMTP_FROM="${SMTP_USER}"
+  fi
+else
+  # In CI, use defaults if not provided
+  SMTP_USER=${SMTP_USER:-"noreply@passbook.local"}
+  SMTP_PASSWORD=${SMTP_PASSWORD:-"placeholder"}
+  SMTP_FROM=${SMTP_FROM:-"noreply@passbook.local"}
+  echo "ℹ️  Using default SMTP credentials for CI (emails will not send)"
 fi
 
 echo ""
