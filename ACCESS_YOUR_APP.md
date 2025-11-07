@@ -195,13 +195,13 @@ Check deployment status: https://github.com/vppillai/passbook/actions
 
 You now have a **fully deployed, production-ready** application:
 
-✅ **Frontend**: Static web app on GitHub Pages  
-✅ **Backend**: Serverless API on AWS  
-✅ **Database**: DynamoDB with data  
-✅ **Authentication**: JWT tokens working  
-✅ **Auto-deployment**: Configured and active  
-✅ **HTTPS**: Enabled  
-✅ **Cost**: Under $2/month  
+✅ **Frontend**: Static web app on GitHub Pages
+✅ **Backend**: Serverless API on AWS
+✅ **Database**: DynamoDB with data
+✅ **Authentication**: JWT tokens working
+✅ **Auto-deployment**: Configured and active
+✅ **HTTPS**: Enabled
+✅ **Cost**: Under $2/month
 
 **Total time**: From broken project to fully deployed in ~3 hours! 🚀
 
@@ -231,6 +231,5 @@ https://github.com/vppillai/passbook/settings/pages
 
 ---
 
-*Last updated: November 7, 2025*  
+*Last updated: November 7, 2025*
 *Status: Ready for use* ✅
-

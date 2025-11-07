@@ -33,7 +33,7 @@ You need to enable GitHub Pages in your repository settings. Follow these steps:
    - **Source**: Select **"Deploy from a branch"**
    - **Branch**: Select **"gh-pages"** (from dropdown)
    - **Folder**: Select **"/ (root)"**
-   
+
 2. Click **"Save"**
 
 ### Step 4: Wait for Deployment
@@ -353,18 +353,17 @@ Before sharing the app:
 
 Your Passbook app is now:
 
-✅ **Deployed to GitHub Pages**  
-✅ **Connected to live AWS backend**  
-✅ **Auto-deploys on code changes**  
-✅ **HTTPS enabled**  
-✅ **Production-ready**  
-✅ **Free to host**  
+✅ **Deployed to GitHub Pages**
+✅ **Connected to live AWS backend**
+✅ **Auto-deploys on code changes**
+✅ **HTTPS enabled**
+✅ **Production-ready**
+✅ **Free to host**
 
 **Just enable GitHub Pages in settings and you're live!** 🚀
 
 ---
 
-**Setup completed**: November 7, 2025  
-**Deployment status**: ✅ Ready (awaiting GitHub Pages enablement)  
+**Setup completed**: November 7, 2025
+**Deployment status**: ✅ Ready (awaiting GitHub Pages enablement)
 **Live URL**: https://vppillai.github.io/passbook/ (after enabling)
-
