@@ -1,0 +1,1100 @@
+openapi: 3.0.3
+info:
+  title: Passbook API
+  description: Family allowance management system API for tracking children's expenses and teaching financial literacy
+  version: 1.0.0
+  contact:
+    email: support@embeddedinn.com
+
+servers:
+  - url: https://api.passbook.app/v1
+    description: Production server
+  - url: https://staging-api.passbook.app/v1
+    description: Staging server
+  - url: http://localhost:3000/v1
+    description: Local development
+
+security:
+  - bearerAuth: []
+  - apiKey: []
+
+tags:
+  - name: Auth
+    description: Authentication and authorization
+  - name: Families
+    description: Family account management
+  - name: Accounts
+    description: Parent and child account operations
+  - name: Transactions
+    description: Fund additions and expenses
+  - name: Analytics
+    description: Reports and analytics
+  - name: Periods
+    description: Accounting period management
+
+paths:
+  # Authentication
+  /auth/signup:
+    post:
+      tags: [Auth]
+      summary: Create new parent account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupRequest'
+      responses:
+        '201':
+          description: Account created, verification email sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Email already exists
+
+  /auth/verify-email:
+    post:
+      tags: [Auth]
+      summary: Verify email with token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        '200':
+          description: Email verified successfully
+        '400':
+          description: Invalid or expired token
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with email/password or username/password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Invalid credentials
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        '200':
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+
+  /auth/password-reset:
+    post:
+      tags: [Auth]
+      summary: Request password reset
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Reset email sent if account exists
+
+  /auth/password-reset/confirm:
+    post:
+      tags: [Auth]
+      summary: Confirm password reset with token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, newPassword]
+              properties:
+                token:
+                  type: string
+                newPassword:
+                  type: string
+                  minLength: 8
+      responses:
+        '200':
+          description: Password reset successfully
+
+  # Families
+  /families:
+    post:
+      tags: [Families]
+      summary: Create family account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFamilyRequest'
+      responses:
+        '201':
+          description: Family created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Family'
+
+  /families/{familyId}:
+    get:
+      tags: [Families]
+      summary: Get family details
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+      responses:
+        '200':
+          description: Family details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Family'
+
+    patch:
+      tags: [Families]
+      summary: Update family settings
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateFamilyRequest'
+      responses:
+        '200':
+          description: Family updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Family'
+
+  # Accounts
+  /families/{familyId}/parents:
+    get:
+      tags: [Accounts]
+      summary: List parent accounts
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+      responses:
+        '200':
+          description: List of parents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ParentAccount'
+
+    post:
+      tags: [Accounts]
+      summary: Invite parent to family
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '201':
+          description: Invitation sent
+
+  /families/{familyId}/children:
+    get:
+      tags: [Accounts]
+      summary: List child accounts
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+      responses:
+        '200':
+          description: List of children
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ChildAccount'
+
+    post:
+      tags: [Accounts]
+      summary: Create child account
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChildRequest'
+      responses:
+        '201':
+          description: Child account created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChildAccount'
+
+  /families/{familyId}/children/{childId}:
+    get:
+      tags: [Accounts]
+      summary: Get child account details
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+        - $ref: '#/components/parameters/childId'
+      responses:
+        '200':
+          description: Child account details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChildAccount'
+
+    patch:
+      tags: [Accounts]
+      summary: Update child account
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+        - $ref: '#/components/parameters/childId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateChildRequest'
+      responses:
+        '200':
+          description: Child account updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChildAccount'
+
+  /families/{familyId}/children/{childId}/reset-password:
+    post:
+      tags: [Accounts]
+      summary: Reset child password (parent only)
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+        - $ref: '#/components/parameters/childId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newPassword]
+              properties:
+                newPassword:
+                  type: string
+                  minLength: 6
+      responses:
+        '200':
+          description: Password reset successfully
+
+  # Transactions
+  /families/{familyId}/children/{childId}/funds:
+    post:
+      tags: [Transactions]
+      summary: Add funds to child account
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+        - $ref: '#/components/parameters/childId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddFundsRequest'
+      responses:
+        '201':
+          description: Funds added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FundAddition'
+
+  /families/{familyId}/children/{childId}/expenses:
+    get:
+      tags: [Transactions]
+      summary: List child expenses
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+        - $ref: '#/components/parameters/childId'
+        - name: startDate
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: category
+          in: query
+          schema:
+            $ref: '#/components/schemas/ExpenseCategory'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of expenses
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  expenses:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Expense'
+                  total:
+                    type: integer
+                  hasMore:
+                    type: boolean
+
+    post:
+      tags: [Transactions]
+      summary: Add expense
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+        - $ref: '#/components/parameters/childId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddExpenseRequest'
+      responses:
+        '201':
+          description: Expense added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Expense'
+
+  /families/{familyId}/children/{childId}/expenses/{expenseId}:
+    get:
+      tags: [Transactions]
+      summary: Get expense details
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+        - $ref: '#/components/parameters/childId'
+        - $ref: '#/components/parameters/expenseId'
+      responses:
+        '200':
+          description: Expense details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Expense'
+
+    patch:
+      tags: [Transactions]
+      summary: Update expense
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+        - $ref: '#/components/parameters/childId'
+        - $ref: '#/components/parameters/expenseId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateExpenseRequest'
+      responses:
+        '200':
+          description: Expense updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Expense'
+
+  # Analytics
+  /families/{familyId}/children/{childId}/analytics:
+    get:
+      tags: [Analytics]
+      summary: Get spending analytics
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+        - $ref: '#/components/parameters/childId'
+        - name: periodId
+          in: query
+          description: Accounting period ID (defaults to current)
+          schema:
+            type: string
+        - name: startDate
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Analytics data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsResponse'
+
+  /families/{familyId}/children/{childId}/reports:
+    post:
+      tags: [Analytics]
+      summary: Generate report (Excel or PDF)
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+        - $ref: '#/components/parameters/childId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateReportRequest'
+      responses:
+        '200':
+          description: Report generated
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+
+  # Accounting Periods
+  /families/{familyId}/periods:
+    get:
+      tags: [Periods]
+      summary: List accounting periods
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, closed]
+      responses:
+        '200':
+          description: List of periods
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AccountingPeriod'
+
+    post:
+      tags: [Periods]
+      summary: Start new accounting period
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePeriodRequest'
+      responses:
+        '201':
+          description: Period created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountingPeriod'
+
+  /families/{familyId}/periods/{periodId}/close:
+    post:
+      tags: [Periods]
+      summary: Close accounting period
+      parameters:
+        - $ref: '#/components/parameters/familyId'
+        - $ref: '#/components/parameters/periodId'
+      responses:
+        '200':
+          description: Period closed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountingPeriod'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  parameters:
+    familyId:
+      name: familyId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    childId:
+      name: childId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    expenseId:
+      name: expenseId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    periodId:
+      name: periodId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Access denied
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    # Common
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+
+    ExpenseCategory:
+      type: string
+      enum: [snacks, food, games, sports, school, crafts, toys, books, clothes, entertainment, other]
+
+    PeriodType:
+      type: string
+      enum: [weekly, biweekly, monthly, custom]
+
+    # Auth
+    SignupRequest:
+      type: object
+      required: [email, password, displayName, familyName, currency, timezone]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        displayName:
+          type: string
+        familyName:
+          type: string
+        familyDescription:
+          type: string
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        timezone:
+          type: string
+
+    LoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        username:
+          type: string
+        password:
+          type: string
+      oneOf:
+        - required: [email, password]
+        - required: [username, password]
+
+    AuthResponse:
+      type: object
+      required: [accessToken, refreshToken, expiresIn, userType, userId]
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        expiresIn:
+          type: integer
+          description: Seconds until token expires
+        userType:
+          type: string
+          enum: [parent, child]
+        userId:
+          type: string
+          format: uuid
+        familyId:
+          type: string
+          format: uuid
+
+    # Families
+    Family:
+      type: object
+      required: [familyId, familyName, currency, timezone, createdAt]
+      properties:
+        familyId:
+          type: string
+          format: uuid
+        familyName:
+          type: string
+        description:
+          type: string
+        currency:
+          type: string
+        timezone:
+          type: string
+        reminderTime:
+          type: string
+          pattern: '^[0-2][0-9]:[0-5][0-9]$'
+        reminderThreshold:
+          type: number
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateFamilyRequest:
+      type: object
+      required: [familyName, currency, timezone]
+      properties:
+        familyName:
+          type: string
+        description:
+          type: string
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        timezone:
+          type: string
+
+    UpdateFamilyRequest:
+      type: object
+      properties:
+        familyName:
+          type: string
+        description:
+          type: string
+        currency:
+          type: string
+        timezone:
+          type: string
+        reminderTime:
+          type: string
+          pattern: '^[0-2][0-9]:[0-5][0-9]$'
+        reminderThreshold:
+          type: number
+
+    # Accounts
+    ParentAccount:
+      type: object
+      required: [userId, email, displayName, status]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        displayName:
+          type: string
+        status:
+          type: string
+          enum: [pending, active, suspended]
+        emailVerified:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        lastLoginAt:
+          type: string
+          format: date-time
+
+    ChildAccount:
+      type: object
+      required: [userId, displayName, currentBalance, status]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        displayName:
+          type: string
+        currentBalance:
+          type: number
+        overdraftLimit:
+          type: number
+        fundingPeriod:
+          $ref: '#/components/schemas/FundingPeriod'
+        notificationsEnabled:
+          type: boolean
+        status:
+          type: string
+          enum: [active, suspended]
+        createdAt:
+          type: string
+          format: date-time
+        lastActivityAt:
+          type: string
+          format: date-time
+
+    CreateChildRequest:
+      type: object
+      required: [displayName, password]
+      properties:
+        username:
+          type: string
+          pattern: '^[a-zA-Z0-9_]{3,20}$'
+        email:
+          type: string
+          format: email
+        displayName:
+          type: string
+        password:
+          type: string
+          minLength: 6
+        overdraftLimit:
+          type: number
+          default: 0
+        fundingPeriod:
+          $ref: '#/components/schemas/FundingPeriod'
+
+    UpdateChildRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+        overdraftLimit:
+          type: number
+        fundingPeriod:
+          $ref: '#/components/schemas/FundingPeriod'
+        notificationsEnabled:
+          type: boolean
+
+    FundingPeriod:
+      type: object
+      properties:
+        type:
+          $ref: '#/components/schemas/PeriodType'
+        nextFundingDate:
+          type: string
+          format: date
+        amount:
+          type: number
+
+    # Transactions
+    AddFundsRequest:
+      type: object
+      required: [amount, reason]
+      properties:
+        amount:
+          type: number
+          minimum: 0.01
+        reason:
+          type: string
+
+    FundAddition:
+      type: object
+      required: [transactionId, amount, reason, addedBy, addedAt, balanceAfter]
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+        amount:
+          type: number
+        currency:
+          type: string
+        reason:
+          type: string
+        addedBy:
+          type: string
+          format: uuid
+        addedAt:
+          type: string
+          format: date-time
+        balanceAfter:
+          type: number
+
+    AddExpenseRequest:
+      type: object
+      required: [amount, category, description]
+      properties:
+        amount:
+          type: number
+          minimum: 0.01
+        category:
+          $ref: '#/components/schemas/ExpenseCategory'
+        description:
+          type: string
+        expenseDate:
+          type: string
+          format: date
+          description: Defaults to today if not provided
+
+    UpdateExpenseRequest:
+      type: object
+      properties:
+        amount:
+          type: number
+          minimum: 0.01
+        category:
+          $ref: '#/components/schemas/ExpenseCategory'
+        description:
+          type: string
+        expenseDate:
+          type: string
+          format: date
+
+    Expense:
+      type: object
+      required: [transactionId, amount, category, description, expenseDate, recordedBy, recordedAt, balanceAfter]
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+        amount:
+          type: number
+        currency:
+          type: string
+        category:
+          $ref: '#/components/schemas/ExpenseCategory'
+        description:
+          type: string
+        expenseDate:
+          type: string
+          format: date
+        recordedBy:
+          type: string
+          format: uuid
+        recordedAt:
+          type: string
+          format: date-time
+        isParentRecorded:
+          type: boolean
+        lastEditedBy:
+          type: string
+          format: uuid
+        lastEditedAt:
+          type: string
+          format: date-time
+        balanceAfter:
+          type: number
+        wasOverdraft:
+          type: boolean
+
+    # Analytics
+    AnalyticsResponse:
+      type: object
+      required: [period, totalExpenses, totalFunds, balance, categorySummary, dailyTrends]
+      properties:
+        period:
+          type: object
+          properties:
+            startDate:
+              type: string
+              format: date
+            endDate:
+              type: string
+              format: date
+        totalExpenses:
+          type: number
+        totalFunds:
+          type: number
+        balance:
+          type: number
+        categorySummary:
+          type: array
+          items:
+            type: object
+            properties:
+              category:
+                $ref: '#/components/schemas/ExpenseCategory'
+              amount:
+                type: number
+              percentage:
+                type: number
+              count:
+                type: integer
+        dailyTrends:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              expenses:
+                type: number
+              funds:
+                type: number
+              balance:
+                type: number
+
+    GenerateReportRequest:
+      type: object
+      required: [format]
+      properties:
+        format:
+          type: string
+          enum: [pdf, excel]
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        periodId:
+          type: string
+          format: uuid
+
+    # Periods
+    AccountingPeriod:
+      type: object
+      required: [periodId, type, startDate, endDate, status]
+      properties:
+        periodId:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/PeriodType'
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        status:
+          type: string
+          enum: [active, closed]
+        closedAt:
+          type: string
+          format: date-time
+        closedBy:
+          type: string
+          format: uuid
+
+    CreatePeriodRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          $ref: '#/components/schemas/PeriodType'
+        startDate:
+          type: string
+          format: date
+          description: Defaults to today if not provided
+        endDate:
+          type: string
+          format: date
+          description: Required only for custom periods
