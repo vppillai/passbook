@@ -1,0 +1,48 @@
+# AWS SDK
+boto3>=1.28.0
+botocore>=1.31.0
+
+# Lambda runtime
+aws-lambda-powertools>=2.0.0
+
+# Authentication & Security
+bcrypt>=4.0.1
+PyJWT>=2.8.0
+cryptography>=41.0.0
+
+# Email
+# smtplib is built-in, no need to install
+email-validator>=2.1.0
+
+# Data validation
+pydantic>=2.5.0
+marshmallow>=3.20.0
+
+# HTTP handling
+requests>=2.31.0
+
+# Date/time handling
+python-dateutil>=2.8.2
+pytz>=2023.3
+
+# PDF generation
+reportlab>=4.0.7
+fpdf2>=2.7.0
+
+# Excel generation
+openpyxl>=3.1.2
+xlsxwriter>=3.1.3
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-mock>=3.12.0
+moto>=4.2.0  # For mocking AWS services
+
+# Code quality
+black>=23.11.0
+flake8>=6.1.0
+mypy>=1.7.0
+
+# Utilities
+python-dotenv>=1.0.0
