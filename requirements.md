@@ -1,16 +1,29 @@
 ## Features and workflow
 
-This is a web based application that parents can use to provide allowances to children and track usage. The child can then login to their account and enter categorized expenses into the passbook. The available balance is clearly shown on login in a prominent position (large font, sticky during scroll). This is a tool to manage allowances as well as teach kids financial discipline.
+This is a cross-platform application (web and mobile) that parents can use to provide allowances to children and track usage. The application will be available as:
+- **Web Application**: Responsive web app that works on mobile and desktop browsers
+- **Android App**: Native Android application distributed via Google Play Store
+- **iOS App**: Native iOS application distributed via Apple App Store (optional, can be added later)
+
+The child can then login to their account and enter categorized expenses into the passbook. The available balance is clearly shown on login in a prominent position (large font, sticky during scroll). This is a tool to manage allowances as well as teach kids financial discipline.
 
 ### Account Management
 
 An account manager parent creates a family account and can then add other members into it. Other members could be another parent or kids. The other parent also gets account manager rights and becomes account manager. A family name and description should be set when the family account is created. This can be edited later from the settings screen.
 
-Account manager including additional parent logins should be based on verified email addresses. When the account manager creates an account, they should get an email based activation before they can proceed with account setup. The activation email should contain a secure link that expires within 24 hours. When clicked, the link activates the account and allows the user to complete setup (set name, password, currency, timezone). When a parent is invited into the account by the account manager they should get an email invitation with a secure activation link. They then click on it to activate and setup their account to join the family account. The invitation link should expire within 7 days and can be resent by the account manager if needed.
+Account manager including additional parent logins should be based on verified email addresses. When the account manager creates an account, they should get an email based activation before they can proceed with account setup. The activation email should contain a secure link that expires within 24 hours. When clicked:
+- **Web**: The link opens in the browser and activates the account, allowing the user to complete setup (set name, password, currency, timezone)
+- **Mobile**: The link uses Universal Links (iOS) or App Links (Android) to open the native app directly, or falls back to web if app is not installed. The app then activates the account and allows the user to complete setup
+
+When a parent is invited into the account by the account manager they should get an email invitation with a secure activation link. They then click on it to activate and setup their account to join the family account. The invitation link should expire within 7 days and can be resent by the account manager if needed. The same deep linking behavior applies for parent invitations.
 
 Account manager sets up a username and password for kids account.It can be either email address based or a seperate username based login. If username based login is used, each kids username should be unique within the family account but need not be universally unique. The parents should be able to edit the username ,display name and password of the kids account from a child account management screen in the parent dashboard. If email address based login is used, the email address should be unique just like any other email address.
 
-An email verification based password reset flow should be implemented for parent accounts as it is done with all standard web based applications. If a password is reset, all active sessions on other devices should be invalidated for security. The password reset email should contain a secure token that expires within 1 hour. Children accounts password reset can be done without email verification by the account manager. If a child account uses email address based login, the password reset should be done via email verification and the child should be able to reset their password without the account manager's intervention.
+An email verification based password reset flow should be implemented for parent accounts as it is done with all standard web based applications. If a password is reset, all active sessions on other devices should be invalidated for security. The password reset email should contain a secure token that expires within 1 hour. The reset link should support deep linking:
+- **Web**: Opens password reset page in browser
+- **Mobile**: Opens native app directly via Universal Links (iOS) or App Links (Android), or falls back to web
+
+Children accounts password reset can be done without email verification by the account manager. If a child account uses email address based login, the password reset should be done via email verification and the child should be able to reset their password without the account manager's intervention. The same deep linking behavior applies for child password resets.
 
 ### Fund Management
 
@@ -136,21 +149,57 @@ When backend stack changes it could result in URL and some other parameter chang
 
 ## Frontend
 
-When backend stack changes it could result in URL and some other parameter changes. The front-end should be built in a configurable and parametrized manner to absorb these changes seamlessly during deployment. This will also make it easy for others to consume this open source project and deploy it in their own system. Configuration should be managed through environment variables (VITE_* prefix) that are injected at build time.
+The frontend will be built using **React Native with React Native Web** to support a single codebase that deploys to web, Android, and iOS platforms. This approach allows code sharing across all platforms while providing native experiences where needed.
 
-Parensts should be able to opt in to get push notifications for new expenses, fund additions, account balance alerts, etc. children should be able to opt in to get push notifications for new expenses, fund additions, account balance alerts, etc.
+When backend stack changes it could result in URL and some other parameter changes. The front-end should be built in a configurable and parametrized manner to absorb these changes seamlessly during deployment. This will also make it easy for others to consume this open source project and deploy it in their own system. Configuration should be managed through environment variables that are injected at build time.
 
+### Platform Support
 
-Hosting is to be done with GitHub Pages. The deployment should be automated via GitHub Actions that builds and deploys on push to main branch.
+The application will support:
+- **Web**: Responsive web application that works on mobile and desktop browsers, deployable to GitHub Pages
+- **Android**: Native Android application distributed via Google Play Store
+- **iOS**: Native iOS application distributed via Apple App Store (can be added later if needed)
 
-The Web app must be responsive and work on mobile and desktop. It should be built as a Progressive Web App (PWA) with:
+### Push Notifications
+
+Parents should be able to opt in to get push notifications for new expenses, fund additions, account balance alerts, etc. Children should be able to opt in to get push notifications for new expenses, fund additions, account balance alerts, etc.
+
+Push notification implementation will be platform-specific:
+- **Web**: Web Push API for browser-based notifications
+- **Android**: Firebase Cloud Messaging (FCM) for native push notifications
+- **iOS**: Apple Push Notification service (APNs) for native push notifications
+
+### Offline Functionality
+
+The application must work offline with the following capabilities:
+- **Web**: Service worker for offline functionality, IndexedDB for data storage, background sync capabilities
+- **Mobile**: Local database (SQLite or AsyncStorage) for offline data persistence, background sync when online
+- Data should sync automatically when connection is restored
+- Critical operations should be queued and executed when online
+
+Even when the app works offline, if a password reset is performed on other devices, the app should invalidate local sessions and force a login with the new password when it comes online.
+
+### Web Application (PWA)
+
+The web version must be responsive and work on mobile and desktop. It should be built as a Progressive Web App (PWA) with:
 - Service worker for offline functionality
 - App manifest for installation
 - Offline data storage using IndexedDB
 - Background sync capabilities
-- Push notification support
+- Push notification support (Web Push API)
+- Installable on mobile and desktop devices
 
-Even though the app is a PWA, when a password reset is performed on other devices, the app should not continue wo working with previous password. It should force a login with the new password.
+### Mobile Applications
+
+The mobile applications (Android and iOS) should provide:
+- Native UI components for better performance and user experience
+- Native push notifications (more reliable than web push)
+- Native file system access for PDF/Excel export
+- Better offline capabilities with local database
+- Native sharing capabilities
+- Deep linking support for email activation links (Universal Links on iOS, App Links on Android)
+
+### Design and UX
 
 The look and feel of the application should be modern, minimalistic and sleek. Do not use emojis for icons. Instead use standardized SVG icons available for free. The layout should not look cluttered. Additional information can be structured into menus that can be launched from the primary view or tiles. When using animations, do not be overly flashy. Use subtle ones.
 
@@ -163,21 +212,126 @@ The frontend should be built to be child friendly since the child account users 
 
 ### Frontend Technical Requirements
 
-- Framework: React 18 with TypeScript
-- Build tool: Vite
-- State management: Context API or similar lightweight solution
-- Storage: IndexedDB (via Dexie) for offline data persistence
-- Routing: React Router
-- Styling: Tailwind CSS or similar utility-first framework
-- Charts: Chart.js or similar for analytics visualizations
-- Form validation: Client-side validation with clear error messages
-- Accessibility: WCAG 2.1 AA compliance where possible
+**Core Framework:**
+- **React Native** (latest stable version) with **TypeScript**
+- **React Native Web** for web platform support
+- **Expo** (recommended) for easier development and deployment, or **React Native CLI** for full control
+
+**State Management:**
+- Context API or Zustand (lightweight solution)
+- React Query or similar for API state management and caching
+
+**Storage:**
+- **Web**: IndexedDB (via AsyncStorage polyfill or Dexie)
+- **Mobile**: AsyncStorage for simple key-value storage, or SQLite for complex queries
+- Platform-agnostic storage abstraction layer
+
+**Routing:**
+- **React Navigation** for mobile apps
+- **React Navigation** with web support for web app
+- Deep linking support for email activation flows
+
+**Styling:**
+- React Native StyleSheet API (works across all platforms)
+- Platform-specific styles when needed using `Platform.OS` detection
+- Responsive design using Flexbox (works consistently across platforms)
+
+**Charts & Visualizations:**
+- **victory-native** (works on web, iOS, and Android) for pie charts and line graphs
+- Alternative: **react-native-chart-kit** for simpler charts
+- Charts should be responsive and work well on both mobile and desktop
+
+**PDF Generation:**
+- **@react-pdf/renderer** for programmatic PDF generation (works on all platforms)
+- Platform-specific file handling:
+  - **Web**: Download via browser download API
+  - **Mobile**: Save to device storage and share via native share dialog
+
+**Excel Export:**
+- **xlsx** library (works in React Native and web)
+- Platform-specific file handling:
+  - **Web**: Download via browser download API
+  - **Mobile**: Save to device storage and share via native share dialog
+
+**Form Validation:**
+- Client-side validation with clear error messages
+- Platform-appropriate input components (native pickers on mobile, web inputs on web)
+
+**Accessibility:**
+- WCAG 2.1 AA compliance where possible
+- Native accessibility features on mobile platforms
+- Screen reader support
+
+**Platform-Specific Code:**
+- Use `Platform.OS` to detect platform when platform-specific code is needed
+- Keep platform-specific code minimal and isolated
+- Share business logic across all platforms
 
 ### Key UI Components
 
-- Balance display: Prominently shown at top of dashboard, sticky during scroll, large font
-- Expense list: Sorted by date (most recent first), shows date, category, description, amount
-- Floating Action Button (FAB): Bottom right corner for adding expenses
-- Navigation menu: Accessible from primary view, contains analytics, reports, settings
-- Period selector: Dropdown or calendar view for selecting accounting periods
-- Category picker: Dropdown with icons and colors for expense categories
+- **Balance display**: Prominently shown at top of dashboard, sticky during scroll (web), large font
+- **Expense list**: Sorted by date (most recent first), shows date, category, description, amount
+- **Floating Action Button (FAB)**: Bottom right corner for adding expenses (native on mobile, styled button on web)
+- **Navigation menu**: Accessible from primary view, contains analytics, reports, settings
+  - **Mobile**: Native navigation drawer or bottom tab bar
+  - **Web**: Sidebar or top navigation bar
+- **Period selector**: Dropdown or calendar view for selecting accounting periods
+- **Category picker**: Dropdown with icons and colors for expense categories
+  - **Mobile**: Native picker component
+  - **Web**: Custom dropdown or native select
+
+### Deployment
+
+**Web Application:**
+- Hosting: GitHub Pages (as specified)
+- Deployment: Automated via GitHub Actions that builds and deploys web version on push to main branch
+- Build: React Native Web build process generates web-optimized bundle
+
+**Android Application:**
+- Distribution: Google Play Store
+- Build: Automated via GitHub Actions using Fastlane or similar
+- Signing: Automated signing with keystore stored in GitHub Secrets
+- Deployment: Can be automated or manual via Play Console
+
+**iOS Application (Optional):**
+- Distribution: Apple App Store
+- Build: Automated via GitHub Actions using Fastlane
+- Signing: Automated signing with certificates stored in GitHub Secrets
+- Deployment: Via App Store Connect
+
+**CI/CD Pipeline:**
+- GitHub Actions workflows for:
+  - Building web version and deploying to GitHub Pages
+  - Building Android APK/AAB and deploying to Play Store (on release tags)
+  - Building iOS app and deploying to App Store (on release tags, if iOS support is added)
+- Separate workflows for development, staging, and production environments
+
+### Code Organization
+
+The codebase should be organized to maximize code sharing:
+
+```
+passbook/
+├── src/                      # Shared code
+│   ├── components/          # React Native components (work on all platforms)
+│   ├── screens/            # App screens
+│   ├── services/          # API services (shared)
+│   ├── utils/             # Utility functions (shared)
+│   ├── types/             # TypeScript types (shared)
+│   └── store/             # State management (shared)
+├── platform/               # Platform-specific code (when needed)
+│   ├── web/               # Web-specific implementations
+│   ├── android/           # Android-specific implementations
+│   └── ios/               # iOS-specific implementations
+├── web/                    # Web build configuration
+├── android/                # Android native code
+├── ios/                    # iOS native code (if iOS support added)
+└── package.json
+```
+
+### Development Workflow
+
+- Use Expo for development (recommended) for easier setup and testing
+- Can eject to bare React Native if advanced native features are needed
+- Hot reloading works on all platforms
+- Test on web browser, Android emulator, and iOS simulator during development
