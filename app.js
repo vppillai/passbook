@@ -1,6 +1,21 @@
 // Passbook Web Dashboard - Complete Application
 // API Configuration
 const API_URL = 'https://afbtrc48hc.execute-api.us-west-2.amazonaws.com/development';
+const VERSION = 'v1-legacy-37-g3d12e1e'; // Will be replaced during deployment
+
+// Currency symbols
+const currencySymbols = {
+    USD: '$',
+    CAD: '$',
+    EUR: '€',
+    GBP: '£',
+    INR: '₹'
+};
+
+function formatCurrency(amount, currency = 'CAD') {
+    const symbol = currencySymbols[currency] || currency;
+    return `${symbol}${parseFloat(amount || 0).toFixed(2)}`;
+}
 
 // SVG Icons
 const icons = {
@@ -164,7 +179,7 @@ function logoutAndCloseMobile() {
 // Render Sidebar
 function renderSidebar() {
     const isParent = state.userType === 'parent';
-
+    
     return `
         <div class="sidebar">
             <div class="sidebar-header">
@@ -221,6 +236,9 @@ function renderSidebar() {
                     </a>
                 </li>
             </ul>
+            <div style="padding: 20px; text-align: center; font-size: 11px; opacity: 0.5; border-top: 1px solid rgba(255,255,255,0.1); margin-top: auto;">
+                v${VERSION}
+            </div>
         </div>
     `;
 }
@@ -440,11 +458,11 @@ function renderFamily() {
                     <div class="form-group">
                         <label>Currency</label>
                         <select id="currency" required>
-                            <option value="USD">USD - US Dollar</option>
-                            <option value="CAD">CAD - Canadian Dollar</option>
-                            <option value="EUR">EUR - Euro</option>
-                            <option value="GBP">GBP - British Pound</option>
-                            <option value="INR">INR - Indian Rupee</option>
+                            <option value="CAD" selected>CAD - Canadian Dollar ($)</option>
+                            <option value="USD">USD - US Dollar ($)</option>
+                            <option value="EUR">EUR - Euro (€)</option>
+                            <option value="GBP">GBP - British Pound (£)</option>
+                            <option value="INR">INR - Indian Rupee (₹)</option>
                         </select>
                     </div>
                     <button type="submit" class="btn btn-primary">Create Family</button>
@@ -808,8 +826,8 @@ async function loadChildren() {
                             <tr>
                                 <td><strong>${child.displayName}</strong></td>
                                 <td>${child.username || 'N/A'}</td>
-                                <td>$${parseFloat(child.weeklyAllowance || 0).toFixed(2)}/week</td>
-                                <td>$${parseFloat(child.currentBalance || 0).toFixed(2)}</td>
+                                <td>${formatCurrency(child.weeklyAllowance, state.family?.currency)}/week</td>
+                                <td>${formatCurrency(child.currentBalance, state.family?.currency)}</td>
                             </tr>
                         `).join('')}
                     </tbody>
@@ -850,7 +868,7 @@ async function loadExpenses() {
                                 ${state.userType === 'parent' ? `<td>${expense.childName || 'Unknown'}</td>` : ''}
                                 <td>${expense.description}</td>
                                 <td><span class="badge badge-${expense.status || 'success'}">${expense.category}</span></td>
-                                <td><strong>$${parseFloat(expense.amount || 0).toFixed(2)}</strong></td>
+                                <td><strong>${formatCurrency(expense.amount, state.family?.currency)}</strong></td>
                             </tr>
                         `).join('')}
                     </tbody>
