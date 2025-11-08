@@ -1,7 +1,7 @@
 // Passbook Web Dashboard - Complete Application
 // API Configuration
 const API_URL = 'https://afbtrc48hc.execute-api.us-west-2.amazonaws.com/development';
-const VERSION = 'g37edaf2'; // Will be replaced during deployment
+const VERSION = 'g9353e84'; // Will be replaced during deployment
 
 // Currency symbols
 const currencySymbols = {
@@ -37,7 +37,7 @@ const icons = {
 // Application State
 const state = {
     currentPage: 'login',
-    userType: 'parent', // 'parent' or 'child'
+    userType: 'child', // 'parent' or 'child' - child is default
     user: null,
     token: null,
     family: null,
@@ -63,7 +63,7 @@ function loadStateFromStorage() {
     if (token && user) {
         state.token = token;
         state.user = JSON.parse(user);
-        state.userType = userType || 'parent';
+        state.userType = userType || 'child'; // Default to child if not set
     }
 }
 
@@ -304,6 +304,10 @@ function renderLoginPage() {
                     </div>
                     <button type="submit" class="btn btn-primary btn-block">Login</button>
                 </form>
+                
+                <div style="text-align: center; margin-top: 24px; font-size: 11px; color: #a0aec0;">
+                    v${VERSION}
+                </div>
             </div>
         </div>
     `;
