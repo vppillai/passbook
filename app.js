@@ -1,7 +1,7 @@
 // Passbook Web Dashboard - Complete Application
 // API Configuration
 const API_URL = 'https://afbtrc48hc.execute-api.us-west-2.amazonaws.com/development';
-const VERSION = 'v1.0.0-1-g0d5da08'; // Will be replaced during deployment
+const VERSION = 'g37edaf2'; // Will be replaced during deployment
 
 // Currency symbols
 const currencySymbols = {
@@ -316,6 +316,16 @@ function switchLoginType(type) {
 
 function attachLoginHandlers() {
     const form = document.getElementById('loginForm');
+    const userTypeToggle = document.getElementById('userTypeToggle');
+
+    if (userTypeToggle) {
+        userTypeToggle.addEventListener('change', (e) => {
+            state.userType = e.target.checked ? 'child' : 'parent';
+            saveStateToStorage();
+            render(); // Re-render to update login form fields
+        });
+    }
+
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
 
@@ -326,11 +336,12 @@ function attachLoginHandlers() {
         messageDiv.innerHTML = '<div class="alert alert-info">Logging in...</div>';
 
         try {
-            const loginData = state.userType === 'parent'
-                ? { email: identifier, password }
-                : { username: identifier, password };
-
-            const data = await apiCall('/auth/login', 'POST', loginData);
+            let data;
+            if (state.userType === 'parent') {
+                data = await apiCall('/auth/login', 'POST', { email: identifier, password });
+            } else {
+                data = await apiCall('/auth/child-login', 'POST', { identifier, password });
+            }
 
             state.user = data.user;
             state.token = data.token;
@@ -387,23 +398,8 @@ function renderDashboard() {
                         <button class="btn btn-primary" onclick="navigate('family')">Create Family</button>
                     ` : `
                         <p>Your family allowance management system is active.</p>
-                        <div style="margin-top: 16px;">
-                            <button class="btn btn-primary" onclick="navigate('children')">Manage Children</button>
-                            <button class="btn btn-success" onclick="navigate('expenses')" style="margin-left: 8px;">Track Expenses</button>
-                        </div>
+                        <p style="margin-top: 12px; color: #718096;">Use the navigation menu on the left to manage your family, children, expenses, and more.</p>
                     `}
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header">
-                    <h2 class="card-title">Quick Actions</h2>
-                </div>
-                <div class="card-body" style="display: flex; gap: 16px; flex-wrap: wrap;">
-                    <button class="btn btn-primary" onclick="navigate('children')">${icons.add} Add Child</button>
-                    <button class="btn btn-success" onclick="navigate('funds')">${icons.funds} Add Funds</button>
-                    <button class="btn btn-secondary" onclick="navigate('expenses')">${icons.expenses} Log Expense</button>
-                    <button class="btn btn-secondary" onclick="navigate('analytics')">${icons.analytics} View Analytics</button>
                 </div>
             </div>
         `;
@@ -473,12 +469,45 @@ function renderFamily() {
                 <div class="card-header">
                     <h2 class="card-title">Family Information</h2>
                 </div>
-                <div class="alert alert-success">
-                    <strong>Family ID:</strong> ${state.user.familyId}
-                </div>
                 <p>Your family is active and ready to manage allowances!</p>
                 <div style="margin-top: 16px;">
                     <button class="btn btn-primary" onclick="navigate('children')">Manage Children</button>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 24px;">
+                <div class="card-header">
+                    <h2 class="card-title">Parent Accounts</h2>
+                    <button class="btn btn-primary" onclick="showInviteParentModal()">
+                        ${icons.add} Invite Parent
+                    </button>
+                </div>
+                <div id="parentsList">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>Loading parents...</p>
+                    </div>
+                </div>
+            </div>
+
+            <div id="inviteParentModal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2 class="modal-title">Invite Parent</h2>
+                        <button class="close-btn" onclick="closeModal('inviteParentModal')">×</button>
+                    </div>
+                    <div id="inviteMessage"></div>
+                    <form id="inviteParentForm">
+                        <div class="form-group">
+                            <label>Parent Email</label>
+                            <input type="email" id="parentEmail" required placeholder="parent@example.com">
+                        </div>
+                        <div class="form-group">
+                            <label>Parent Name</label>
+                            <input type="text" id="parentName" required placeholder="Parent's full name">
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-block">Send Invite</button>
+                    </form>
                 </div>
             </div>
         `}
@@ -684,7 +713,27 @@ function renderAnalytics() {
 
 // Modal Functions
 function showAddChildModal() {
-    document.getElementById('addChildModal').classList.add('active');
+    const form = document.getElementById('addChildForm');
+    const modal = document.getElementById('addChildModal');
+
+    // Reset form
+    form.reset();
+    delete form.dataset.editingChildId;
+
+    // Reset modal title and button text
+    document.querySelector('#addChildModal .modal-title').textContent = 'Add Child';
+    document.querySelector('#addChildForm button[type="submit"]').textContent = 'Add Child';
+
+    // Show password field
+    const passwordField = document.getElementById('childPassword').parentElement;
+    passwordField.style.display = 'block';
+    document.getElementById('childPassword').required = true;
+
+    modal.classList.add('active');
+}
+
+function showInviteParentModal() {
+    document.getElementById('inviteParentModal').classList.add('active');
 }
 
 function showAddExpenseModal() {
@@ -693,6 +742,48 @@ function showAddExpenseModal() {
 
 function closeModal(modalId) {
     document.getElementById(modalId).classList.remove('active');
+}
+
+// Child Management Functions
+function editChild(userId) {
+    const child = state.children.find(c => c.userId === userId);
+    if (!child) return;
+
+    // Populate modal with child data
+    document.getElementById('childName').value = child.displayName;
+    document.getElementById('childUsername').value = child.username || '';
+    document.getElementById('allowance').value = child.fundingPeriod?.amount || child.weeklyAllowance || 0;
+    document.getElementById('fundingPeriodType').value = child.fundingPeriod?.type || 'weekly';
+    document.getElementById('fundingStartDate').value = child.fundingPeriod?.startDate || '';
+
+    // Store child ID for update
+    document.getElementById('addChildForm').dataset.editingChildId = userId;
+
+    // Change modal title and button text
+    document.querySelector('#addChildModal .modal-title').textContent = 'Edit Child';
+    document.querySelector('#addChildForm button[type="submit"]').textContent = 'Update Child';
+
+    // Hide password field for editing
+    const passwordField = document.getElementById('childPassword').parentElement;
+    passwordField.style.display = 'none';
+
+    showAddChildModal();
+}
+
+async function deleteChild(userId) {
+    const child = state.children.find(c => c.userId === userId);
+    if (!child) return;
+
+    if (!confirm(`Are you sure you want to delete ${child.displayName}'s account? This action cannot be undone.`)) {
+        return;
+    }
+
+    try {
+        await apiCall(`/children/${userId}`, 'DELETE');
+        loadChildren();
+    } catch (error) {
+        alert(`Failed to delete child: ${error.message}`);
+    }
 }
 
 // Global Event Handlers
@@ -722,6 +813,31 @@ function attachGlobalHandlers() {
                 messageDiv.innerHTML = `<div class="alert alert-error">${error.message}</div>`;
             }
         });
+
+        loadParents();
+    }
+
+    // Invite Parent Form
+    const inviteParentForm = document.getElementById('inviteParentForm');
+    if (inviteParentForm) {
+        inviteParentForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('parentEmail').value;
+            const name = document.getElementById('parentName').value;
+            const messageDiv = document.getElementById('inviteMessage');
+
+            messageDiv.innerHTML = '<div class="alert alert-info">Sending invite...</div>';
+
+            try {
+                await apiCall('/parents/invite', 'POST', { email, name });
+                messageDiv.innerHTML = '<div class="alert alert-success">Invitation sent successfully!</div>';
+                closeModal('inviteParentModal');
+                inviteParentForm.reset();
+                loadParents();
+            } catch (error) {
+                messageDiv.innerHTML = `<div class="alert alert-error">${error.message}</div>`;
+            }
+        });
     }
 
     // Add Child Form
@@ -733,18 +849,36 @@ function attachGlobalHandlers() {
             const username = document.getElementById('childUsername').value;
             const password = document.getElementById('childPassword').value;
             const weeklyAllowance = document.getElementById('allowance').value;
+            const fundingPeriodType = document.getElementById('fundingPeriodType').value;
+            const fundingStartDate = document.getElementById('fundingStartDate').value;
             const messageDiv = document.getElementById('childMessage');
 
-            messageDiv.innerHTML = '<div class="alert alert-info">Adding child...</div>';
+            const editingChildId = addChildForm.dataset.editingChildId;
+            const isEditing = !!editingChildId;
+
+            messageDiv.innerHTML = `<div class="alert alert-info">${isEditing ? 'Updating' : 'Adding'} child...</div>`;
 
             try {
-                await apiCall('/children', 'POST', {
+                const payload = {
                     displayName,
                     username,
-                    password,
-                    weeklyAllowance: parseFloat(weeklyAllowance)
-                });
-                messageDiv.innerHTML = '<div class="alert alert-success">Child added successfully!</div>';
+                    weeklyAllowance: parseFloat(weeklyAllowance),
+                    fundingPeriodType,
+                    fundingStartDate: fundingStartDate || undefined
+                };
+
+                // Only include password for new children
+                if (!isEditing) {
+                    payload.password = password;
+                }
+
+                if (isEditing) {
+                    await apiCall(`/children/${editingChildId}`, 'PUT', payload);
+                } else {
+                    await apiCall('/children', 'POST', payload);
+                }
+
+                messageDiv.innerHTML = `<div class="alert alert-success">Child ${isEditing ? 'updated' : 'added'} successfully!</div>`;
                 closeModal('addChildModal');
                 loadChildren();
             } catch (error) {
@@ -791,7 +925,7 @@ function attachGlobalHandlers() {
     if (addFundsForm) {
         addFundsForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const childId = document.getElementById('fundChildId').value;
+            const childUserId = document.getElementById('fundChildId').value;
             const amount = document.getElementById('fundAmount').value;
             const notes = document.getElementById('fundNotes').value;
             const messageDiv = document.getElementById('fundsMessage');
@@ -800,12 +934,13 @@ function attachGlobalHandlers() {
 
             try {
                 await apiCall('/funds', 'POST', {
-                    childId,
+                    childUserId,
                     amount: parseFloat(amount),
-                    notes
+                    reason: notes
                 });
                 messageDiv.innerHTML = '<div class="alert alert-success">Funds added successfully!</div>';
                 addFundsForm.reset();
+                loadChildren(); // Refresh children to show updated balances
             } catch (error) {
                 messageDiv.innerHTML = `<div class="alert alert-error">${error.message}</div>`;
             }
@@ -829,17 +964,26 @@ async function loadChildren() {
                         <tr>
                             <th>Name</th>
                             <th>Username</th>
-                            <th>Weekly Allowance</th>
+                            <th>Allowance</th>
                             <th>Balance</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         ${state.children.map(child => `
                             <tr>
                                 <td><strong>${child.displayName}</strong></td>
-                                <td>${child.username || 'N/A'}</td>
-                                <td>${formatCurrency(child.weeklyAllowance, state.family?.currency)}/week</td>
+                                <td>${child.username || child.email || 'N/A'}</td>
+                                <td>${formatCurrency(child.weeklyAllowance || child.fundingPeriod?.amount || 0, state.family?.currency)}/${child.fundingPeriod?.type || 'week'}</td>
                                 <td>${formatCurrency(child.currentBalance, state.family?.currency)}</td>
+                                <td>
+                                    <button class="btn btn-sm btn-secondary" onclick="editChild('${child.userId}')" title="Edit">
+                                        ${icons.edit}
+                                    </button>
+                                    <button class="btn btn-sm btn-error" onclick="deleteChild('${child.userId}')" title="Delete" style="margin-left: 4px;">
+                                        ${icons.delete}
+                                    </button>
+                                </td>
                             </tr>
                         `).join('')}
                     </tbody>
@@ -849,6 +993,46 @@ async function loadChildren() {
     } catch (error) {
         document.getElementById('childrenList').innerHTML =
             `<div class="alert alert-error">Failed to load children: ${error.message}</div>`;
+    }
+}
+
+async function loadParents() {
+    const parentsList = document.getElementById('parentsList');
+    if (!parentsList) return;
+
+    try {
+        const data = await apiCall('/parents');
+        const parents = data.parents || [];
+
+        if (parents.length === 0) {
+            parentsList.innerHTML = '<p style="padding: 20px; text-align: center; color: #a0aec0;">No other parents yet. Invite parents to help manage the family.</p>';
+        } else {
+            parentsList.innerHTML = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Status</th>
+                            <th>Joined</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${parents.map(parent => `
+                            <tr>
+                                <td><strong>${parent.displayName || parent.email}</strong></td>
+                                <td>${parent.email}</td>
+                                <td><span class="badge badge-${parent.status === 'active' ? 'success' : 'warning'}">${parent.status}</span></td>
+                                <td>${new Date(parent.createdAt).toLocaleDateString()}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+    } catch (error) {
+        parentsList.innerHTML =
+            `<div class="alert alert-error">Failed to load parents: ${error.message}</div>`;
     }
 }
 
