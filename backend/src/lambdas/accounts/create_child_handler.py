@@ -2,6 +2,7 @@
 Lambda handler for creating a child account.
 """
 import bcrypt
+from decimal import Decimal
 from utils.lambda_handler import lambda_handler_wrapper, create_response, get_request_body, get_authorization_token, LambdaError
 from utils.db_client import DynamoDBClient
 from utils.jwt_utils import verify_token
@@ -37,6 +38,13 @@ def handler(event, context):
     username = body.get('username', '').strip()
     email = body.get('email', '').strip()
     password = body.get('password', '')
+    weekly_allowance = body.get('weeklyAllowance', 0)
+
+    # Convert to Decimal for DynamoDB
+    if isinstance(weekly_allowance, (int, float)):
+        weekly_allowance = Decimal(str(weekly_allowance))
+    elif isinstance(weekly_allowance, str):
+        weekly_allowance = Decimal(weekly_allowance)
 
     if not display_name:
         raise LambdaError("Display name is required", 400)
