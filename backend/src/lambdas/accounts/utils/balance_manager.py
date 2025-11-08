@@ -1,8 +1,8 @@
 """
 Balance management utilities for updating child account balances.
 """
-from src.utils.db_client import DynamoDBClient
-from src.models.child_account import ChildAccount
+from utils.db_client import DynamoDBClient
+from models.child_account import ChildAccount
 from datetime import datetime
 
 

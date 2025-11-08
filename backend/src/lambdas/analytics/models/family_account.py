@@ -3,6 +3,7 @@ Family Account model for DynamoDB operations.
 """
 from typing import Optional
 from datetime import datetime
+from decimal import Decimal
 import uuid
 
 
@@ -18,7 +19,7 @@ class FamilyAccount:
         description: Optional[str] = None,
         family_id: Optional[str] = None,
         reminder_time: str = '09:00',
-        reminder_threshold: float = 1.0,
+        reminder_threshold: Optional[Decimal] = None,
         created_at: Optional[str] = None,
         updated_at: Optional[str] = None,
         updated_by: Optional[str] = None,
@@ -29,7 +30,9 @@ class FamilyAccount:
         self.currency = currency
         self.timezone = timezone
         self.reminder_time = reminder_time
-        self.reminder_threshold = reminder_threshold
+        self.reminder_threshold = reminder_threshold if reminder_threshold is not None else Decimal('1.0')
+        if isinstance(self.reminder_threshold, (int, float)):
+            self.reminder_threshold = Decimal(str(self.reminder_threshold))
         self.created_by = created_by
         self.created_at = created_at or datetime.utcnow().isoformat()
         self.updated_at = updated_at or datetime.utcnow().isoformat()
@@ -59,6 +62,10 @@ class FamilyAccount:
     @classmethod
     def from_dict(cls, data: dict) -> 'FamilyAccount':
         """Create from DynamoDB item format."""
+        reminder_threshold = data.get('reminderThreshold', Decimal('1.0'))
+        if isinstance(reminder_threshold, (int, float)):
+            reminder_threshold = Decimal(str(reminder_threshold))
+        
         return cls(
             family_id=data['familyId'],
             family_name=data['familyName'],
@@ -67,7 +74,7 @@ class FamilyAccount:
             timezone=data.get('timezone', 'America/Toronto'),
             description=data.get('description'),
             reminder_time=data.get('reminderTime', '09:00'),
-            reminder_threshold=data.get('reminderThreshold', 1.0),
+            reminder_threshold=reminder_threshold,
             created_at=data.get('createdAt'),
             updated_at=data.get('updatedAt'),
             updated_by=data.get('updatedBy'),
@@ -80,7 +87,7 @@ class FamilyAccount:
         currency: Optional[str] = None,
         timezone: Optional[str] = None,
         reminder_time: Optional[str] = None,
-        reminder_threshold: Optional[float] = None,
+        reminder_threshold: Optional[Decimal] = None,
         updated_by: Optional[str] = None,
     ):
         """Update family account fields."""
@@ -95,6 +102,8 @@ class FamilyAccount:
         if reminder_time is not None:
             self.reminder_time = reminder_time
         if reminder_threshold is not None:
+            if isinstance(reminder_threshold, (int, float)):
+                reminder_threshold = Decimal(str(reminder_threshold))
             self.reminder_threshold = reminder_threshold
 
         self.updated_at = datetime.utcnow().isoformat()

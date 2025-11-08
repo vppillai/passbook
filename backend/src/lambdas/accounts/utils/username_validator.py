@@ -2,7 +2,7 @@
 Username validation utilities for child accounts.
 """
 from typing import Optional
-from src.utils.db_client import DynamoDBClient
+from utils.db_client import DynamoDBClient
 
 
 def is_username_unique(family_id: str, username: str, exclude_user_id: Optional[str] = None) -> bool:

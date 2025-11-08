@@ -1,8 +1,8 @@
 """
 Overdraft checking utilities for expense validation.
 """
-from src.utils.db_client import DynamoDBClient
-from src.models.child_account import ChildAccount
+from utils.db_client import DynamoDBClient
+from models.child_account import ChildAccount
 
 
 def check_overdraft(
