@@ -39,12 +39,19 @@ def handler(event, context):
     email = body.get('email', '').strip()
     password = body.get('password', '')
     weekly_allowance = body.get('weeklyAllowance', 0)
+    funding_period_type = body.get('fundingPeriodType', 'weekly')  # weekly, biweekly, monthly
+    funding_start_date = body.get('fundingStartDate')  # ISO date string
 
     # Convert to Decimal for DynamoDB
     if isinstance(weekly_allowance, (int, float)):
         weekly_allowance = Decimal(str(weekly_allowance))
     elif isinstance(weekly_allowance, str):
         weekly_allowance = Decimal(weekly_allowance)
+    
+    # Validate funding period type
+    valid_periods = ['weekly', 'biweekly', 'monthly']
+    if funding_period_type not in valid_periods:
+        raise LambdaError(f"Invalid funding period type. Must be one of: {', '.join(valid_periods)}", 400)
 
     if not display_name:
         raise LambdaError("Display name is required", 400)
@@ -79,6 +86,14 @@ def handler(event, context):
     # Hash password
     password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
+    # Create funding period configuration
+    funding_period = {
+        'type': funding_period_type,
+        'amount': str(weekly_allowance)
+    }
+    if funding_start_date:
+        funding_period['startDate'] = funding_start_date
+
     # Create child account
     child = ChildAccount(
         family_id=family_id,
@@ -87,6 +102,8 @@ def handler(event, context):
         created_by=user_id,
         username=username if username else None,
         email=email if email else None,
+        weekly_allowance=weekly_allowance,
+        funding_period=funding_period
     )
 
     # Save to DynamoDB
@@ -110,6 +127,8 @@ def handler(event, context):
                 'displayName': child.display_name,
                 'username': child.username,
                 'email': child.email,
+                'weeklyAllowance': str(child.weekly_allowance),
+                'fundingPeriod': child.funding_period
             }
         }
     )

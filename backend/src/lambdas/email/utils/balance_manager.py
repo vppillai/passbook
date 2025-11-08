@@ -1,6 +1,7 @@
 """
 Balance management utilities for updating child account balances.
 """
+from decimal import Decimal
 from utils.db_client import DynamoDBClient
 from models.child_account import ChildAccount
 from datetime import datetime
@@ -10,9 +11,9 @@ def update_child_balance(
     db: DynamoDBClient,
     child_user_id: str,
     family_id: str,
-    amount: float,
+    amount,
     operation: str = 'add'
-) -> float:
+):
     """
     Update a child's balance atomically.
 
@@ -20,12 +21,16 @@ def update_child_balance(
         db: DynamoDB client instance
         child_user_id: Child account user ID
         family_id: Family account ID
-        amount: Amount to add or subtract
+        amount: Amount to add or subtract (can be float, int, or Decimal)
         operation: 'add' or 'subtract'
 
     Returns:
         New balance after update
     """
+    # Convert amount to Decimal if needed
+    if isinstance(amount, (int, float)):
+        amount = Decimal(str(amount))
+    
     # Get current child account
     child_item = db.get_item(
         table_name=db.families_table,
@@ -73,7 +78,7 @@ def get_child_balance(
     db: DynamoDBClient,
     child_user_id: str,
     family_id: str
-) -> float:
+):
     """
     Get current balance for a child account.
 
@@ -83,7 +88,7 @@ def get_child_balance(
         family_id: Family account ID
 
     Returns:
-        Current balance
+        Current balance as Decimal
     """
     child_item = db.get_item(
         table_name=db.families_table,
@@ -96,4 +101,7 @@ def get_child_balance(
     if not child_item:
         raise Exception("Child account not found")
 
-    return child_item.get('currentBalance', 0.0)
+    balance = child_item.get('currentBalance', Decimal('0.0'))
+    if isinstance(balance, (int, float)):
+        balance = Decimal(str(balance))
+    return balance

@@ -524,8 +524,20 @@ function renderChildren() {
                         <input type="password" id="childPassword" required minlength="6">
                     </div>
                     <div class="form-group">
-                        <label>Weekly Allowance</label>
-                        <input type="number" id="allowance" required step="0.01" min="0">
+                        <label>Allowance Amount</label>
+                        <input type="number" id="allowance" required step="0.01" min="0" placeholder="10.00">
+                    </div>
+                    <div class="form-group">
+                        <label>Allowance Frequency</label>
+                        <select id="fundingPeriodType" required>
+                            <option value="weekly">Weekly</option>
+                            <option value="biweekly">Bi-weekly</option>
+                            <option value="monthly">Monthly</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Start Date (optional)</label>
+                        <input type="date" id="fundingStartDate">
                     </div>
                     <button type="submit" class="btn btn-primary btn-block">Add Child</button>
                 </form>

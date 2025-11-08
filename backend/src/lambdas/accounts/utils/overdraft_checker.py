@@ -1,6 +1,7 @@
 """
 Overdraft checking utilities for expense validation.
 """
+from decimal import Decimal
 from utils.db_client import DynamoDBClient
 from models.child_account import ChildAccount
 
@@ -9,8 +10,8 @@ def check_overdraft(
     db: DynamoDBClient,
     child_user_id: str,
     family_id: str,
-    expense_amount: float
-) -> tuple[bool, float]:
+    expense_amount
+) -> tuple[bool, Decimal]:
     """
     Check if an expense would result in overdraft.
 
@@ -18,11 +19,15 @@ def check_overdraft(
         db: DynamoDB client instance
         child_user_id: Child account user ID
         family_id: Family account ID
-        expense_amount: Amount of the expense
+        expense_amount: Amount of the expense (can be float, int, or Decimal)
 
     Returns:
         Tuple of (would_overdraft, new_balance)
     """
+    # Convert expense_amount to Decimal if needed
+    if isinstance(expense_amount, (int, float)):
+        expense_amount = Decimal(str(expense_amount))
+    
     # Get child account
     child_item = db.get_item(
         table_name=db.families_table,
@@ -52,7 +57,7 @@ def can_make_expense(
     db: DynamoDBClient,
     child_user_id: str,
     family_id: str,
-    expense_amount: float
+    expense_amount
 ) -> bool:
     """
     Check if child can make an expense (within overdraft limit).
@@ -61,7 +66,7 @@ def can_make_expense(
         db: DynamoDB client instance
         child_user_id: Child account user ID
         family_id: Family account ID
-        expense_amount: Amount of the expense
+        expense_amount: Amount of the expense (can be float, int, or Decimal)
 
     Returns:
         True if expense is allowed, False otherwise
