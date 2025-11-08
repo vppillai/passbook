@@ -1,7 +1,7 @@
 // Passbook Web Dashboard - Complete Application
 // API Configuration
 const API_URL = 'https://afbtrc48hc.execute-api.us-west-2.amazonaws.com/development';
-const VERSION = 'g9353e84'; // Will be replaced during deployment
+const VERSION = 'g96be322'; // Will be replaced during deployment
 
 // Currency symbols
 const currencySymbols = {
@@ -304,7 +304,7 @@ function renderLoginPage() {
                     </div>
                     <button type="submit" class="btn btn-primary btn-block">Login</button>
                 </form>
-                
+
                 <div style="text-align: center; margin-top: 24px; font-size: 11px; color: #a0aec0;">
                     v${VERSION}
                 </div>
