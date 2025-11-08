@@ -387,23 +387,8 @@ function renderDashboard() {
                         <button class="btn btn-primary" onclick="navigate('family')">Create Family</button>
                     ` : `
                         <p>Your family allowance management system is active.</p>
-                        <div style="margin-top: 16px;">
-                            <button class="btn btn-primary" onclick="navigate('children')">Manage Children</button>
-                            <button class="btn btn-success" onclick="navigate('expenses')" style="margin-left: 8px;">Track Expenses</button>
-                        </div>
+                        <p style="margin-top: 12px; color: #718096;">Use the navigation menu on the left to manage your family, children, expenses, and more.</p>
                     `}
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header">
-                    <h2 class="card-title">Quick Actions</h2>
-                </div>
-                <div class="card-body" style="display: flex; gap: 16px; flex-wrap: wrap;">
-                    <button class="btn btn-primary" onclick="navigate('children')">${icons.add} Add Child</button>
-                    <button class="btn btn-success" onclick="navigate('funds')">${icons.funds} Add Funds</button>
-                    <button class="btn btn-secondary" onclick="navigate('expenses')">${icons.expenses} Log Expense</button>
-                    <button class="btn btn-secondary" onclick="navigate('analytics')">${icons.analytics} View Analytics</button>
                 </div>
             </div>
         `;
@@ -817,10 +802,10 @@ function attachGlobalHandlers() {
                 messageDiv.innerHTML = `<div class="alert alert-error">${error.message}</div>`;
             }
         });
-        
+
         loadParents();
     }
-    
+
     // Invite Parent Form
     const inviteParentForm = document.getElementById('inviteParentForm');
     if (inviteParentForm) {
@@ -1003,7 +988,7 @@ async function loadChildren() {
 async function loadParents() {
     const parentsList = document.getElementById('parentsList');
     if (!parentsList) return;
-    
+
     try {
         const data = await apiCall('/parents');
         const parents = data.parents || [];
