@@ -15,23 +15,28 @@ A cross-platform family allowance management application that helps parents teac
 
 ## Tech Stack
 
-- **Frontend**: React Native with React Native Web, TypeScript, Expo SDK 49+
-- **Backend**: AWS Serverless (Lambda, DynamoDB, API Gateway)
-- **State Management**: Zustand
-- **Charts**: Victory Native
-- **Storage**: AsyncStorage (mobile), IndexedDB (web)
-- **Notifications**: Expo Notifications
+- **Frontend**: Pure HTML/CSS/JavaScript web dashboard (no build step required)
+- **Backend**: AWS Serverless (Lambda, DynamoDB, API Gateway, SAM)
+- **CI/CD**: GitHub Actions for automated deployment
+- **Hosting**: GitHub Pages (frontend), AWS (backend)
+- **Infrastructure**: AWS SAM (Serverless Application Model)
 
 ## Quick Start
 
 ### Prerequisites
 
-- Node.js 18+ and npm 8+
+- AWS Account with admin access
 - AWS CLI v2 configured
-- Expo CLI: `npm install -g expo-cli`
-- Python 3.11 (for Lambda development)
+- SAM CLI installed
+- Python 3.11+
+- GitHub account
+- GitHub CLI (`gh`) - optional but recommended
 
-### Installation
+### Deployment
+
+**For detailed deployment instructions, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**
+
+Quick setup:
 
 1. Clone the repository:
 ```bash
@@ -39,73 +44,81 @@ git clone https://github.com/vppillai/passbook.git
 cd passbook
 ```
 
-2. Install dependencies:
+2. Set up AWS IAM for GitHub Actions:
 ```bash
-npm install
+chmod +x scripts/setup-github-actions-iam.sh
+./scripts/setup-github-actions-iam.sh
 ```
 
-3. Configure environment:
-```bash
-cp .env.example .env.local
-# Edit .env.local with your configuration
-```
+3. Configure GitHub Secrets (follow output from step 2)
 
-4. Deploy backend infrastructure:
+4. Deploy backend:
 ```bash
 cd backend
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
-./deploy.sh development
+chmod +x deploy-sam.sh
+./deploy-sam.sh development us-west-2
 ```
 
-5. Start development server:
+5. Push to GitHub to trigger CI/CD:
 ```bash
-npm start
+git push origin main
+```
+
+### Local Development
+
+- **Frontend**: Open `web-dashboard/index.html` in a browser
+- **Backend Tests**: 
+```bash
+cd backend
+source venv/bin/activate
+pytest tests/
 ```
 
 ## Project Structure
 
 ```
 passbook/
-├── src/                    # React Native source code
-│   ├── components/         # Reusable UI components
-│   ├── screens/           # App screens
-│   ├── services/          # API and business logic services
-│   ├── store/             # Zustand state management
-│   ├── utils/             # Utility functions
-│   └── types/             # TypeScript type definitions
+├── web-dashboard/          # Pure HTML/CSS/JS frontend
+│   ├── index.html         # Main HTML file
+│   ├── app.js            # Application logic
+│   └── styles.css        # Styling
 ├── backend/               # AWS Lambda backend
-│   ├── infrastructure/    # CloudFormation templates
+│   ├── infrastructure/    # SAM/CloudFormation templates
 │   ├── src/              # Lambda function code
-│   └── tests/            # Backend tests
-└── platform/             # Platform-specific code
-    └── web/              # Web-specific implementations
+│   │   └── lambdas/      # Individual Lambda handlers
+│   ├── tests/            # Backend tests
+│   └── deploy-sam.sh     # Deployment script
+├── scripts/              # Deployment and setup scripts
+│   └── setup-github-actions-iam.sh
+├── docs/                 # Documentation
+│   └── DEPLOYMENT.md     # Detailed deployment guide
+└── .github/workflows/    # GitHub Actions CI/CD
+    ├── deploy-backend.yml
+    └── deploy-frontend.yml
 ```
 
 ## Development
 
-### Running the App
+### Accessing the Application
 
-- **Web**: `npm run web`
-- **iOS**: `npm run ios` (requires macOS)
-- **Android**: `npm run android`
+- **Frontend**: https://vppillai.github.io/passbook/ (or your GitHub Pages URL)
+- **Backend API**: Get from CloudFormation outputs after deployment
 
 ### Testing
 
-- **Frontend**: `npm test`
-- **Backend**: `cd backend && pytest`
-
-### Building
-
-- **Web**: `npm run build:web`
-- **Mobile**: `eas build --platform ios` or `eas build --platform android`
+- **Frontend**: Open `web-dashboard/index.html` in a browser
+- **Backend**: `cd backend && source venv/bin/activate && pytest`
 
 ## Deployment
 
-See [docs/deployment.md](docs/deployment.md) for detailed deployment instructions.
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed deployment instructions.
 
 ## Documentation
 
-- [API Documentation](docs/api.md)
+- [Deployment Guide](docs/DEPLOYMENT.md) - Complete deployment instructions
 - [Data Model](specs/001-passbook-complete/data-model.md)
 - [Quick Start Guide](specs/001-passbook-complete/quickstart.md)
 - [Architecture](specs/001-passbook-complete/plan.md)
