@@ -15,7 +15,8 @@ const icons = {
     add: '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>',
     edit: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>',
     delete: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>',
-    user: '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>'
+    user: '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>',
+    menu: '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>'
 };
 
 // Application State
@@ -122,6 +123,10 @@ function render() {
         attachLoginHandlers();
     } else {
         app.innerHTML = `
+            <button class="mobile-menu-btn" onclick="toggleMobileMenu()" aria-label="Toggle menu">
+                ${icons.menu}
+            </button>
+            <div class="mobile-overlay" onclick="closeMobileMenu()"></div>
             ${renderSidebar()}
             <div class="main-content">
                 ${renderCurrentPage()}
@@ -129,6 +134,31 @@ function render() {
         `;
         attachGlobalHandlers();
     }
+}
+
+// Mobile Menu Functions
+function toggleMobileMenu() {
+    const sidebar = document.querySelector('.sidebar');
+    const overlay = document.querySelector('.mobile-overlay');
+    sidebar.classList.toggle('mobile-open');
+    overlay.classList.toggle('active');
+}
+
+function closeMobileMenu() {
+    const sidebar = document.querySelector('.sidebar');
+    const overlay = document.querySelector('.mobile-overlay');
+    sidebar.classList.remove('mobile-open');
+    overlay.classList.remove('active');
+}
+
+function navigateAndCloseMobile(page) {
+    closeMobileMenu();
+    navigate(page);
+}
+
+function logoutAndCloseMobile() {
+    closeMobileMenu();
+    logout();
 }
 
 // Render Sidebar
@@ -145,47 +175,47 @@ function renderSidebar() {
             </div>
             <ul class="nav-menu">
                 <li class="nav-item">
-                    <a href="#" class="nav-link ${state.currentPage === 'dashboard' ? 'active' : ''}" onclick="navigate('dashboard')">
+                    <a href="#" class="nav-link ${state.currentPage === 'dashboard' ? 'active' : ''}" onclick="navigateAndCloseMobile('dashboard'); return false;">
                         <span class="nav-icon">${icons.dashboard}</span>
                         Dashboard
                     </a>
                 </li>
                 ${isParent ? `
                 <li class="nav-item">
-                    <a href="#" class="nav-link ${state.currentPage === 'family' ? 'active' : ''}" onclick="navigate('family')">
+                    <a href="#" class="nav-link ${state.currentPage === 'family' ? 'active' : ''}" onclick="navigateAndCloseMobile('family'); return false;">
                         <span class="nav-icon">${icons.family}</span>
                         Family
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a href="#" class="nav-link ${state.currentPage === 'children' ? 'active' : ''}" onclick="navigate('children')">
+                    <a href="#" class="nav-link ${state.currentPage === 'children' ? 'active' : ''}" onclick="navigateAndCloseMobile('children'); return false;">
                         <span class="nav-icon">${icons.children}</span>
                         Children
                     </a>
                 </li>
                 ` : ''}
                 <li class="nav-item">
-                    <a href="#" class="nav-link ${state.currentPage === 'expenses' ? 'active' : ''}" onclick="navigate('expenses')">
+                    <a href="#" class="nav-link ${state.currentPage === 'expenses' ? 'active' : ''}" onclick="navigateAndCloseMobile('expenses'); return false;">
                         <span class="nav-icon">${icons.expenses}</span>
                         ${isParent ? 'Expenses' : 'My Expenses'}
                     </a>
                 </li>
                 ${isParent ? `
                 <li class="nav-item">
-                    <a href="#" class="nav-link ${state.currentPage === 'funds' ? 'active' : ''}" onclick="navigate('funds')">
+                    <a href="#" class="nav-link ${state.currentPage === 'funds' ? 'active' : ''}" onclick="navigateAndCloseMobile('funds'); return false;">
                         <span class="nav-icon">${icons.funds}</span>
                         Add Funds
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a href="#" class="nav-link ${state.currentPage === 'analytics' ? 'active' : ''}" onclick="navigate('analytics')">
+                    <a href="#" class="nav-link ${state.currentPage === 'analytics' ? 'active' : ''}" onclick="navigateAndCloseMobile('analytics'); return false;">
                         <span class="nav-icon">${icons.analytics}</span>
                         Analytics
                     </a>
                 </li>
                 ` : ''}
                 <li class="nav-item">
-                    <a href="#" class="nav-link" onclick="logout()">
+                    <a href="#" class="nav-link" onclick="logoutAndCloseMobile(); return false;">
                         <span class="nav-icon">${icons.logout}</span>
                         Logout
                     </a>
@@ -225,17 +255,17 @@ function renderLoginPage() {
                 <p class="subtitle">Family Allowance Manager</p>
 
                 <div style="display: flex; gap: 8px; margin-bottom: 24px;">
-                    <button 
-                        id="parentLoginTab" 
-                        class="btn ${state.userType === 'parent' ? 'btn-primary' : 'btn-secondary'}" 
+                    <button
+                        id="parentLoginTab"
+                        class="btn ${state.userType === 'parent' ? 'btn-primary' : 'btn-secondary'}"
                         style="flex: 1;"
                         onclick="switchLoginType('parent')"
                     >
                         Parent Login
                     </button>
-                    <button 
-                        id="childLoginTab" 
-                        class="btn ${state.userType === 'child' ? 'btn-primary' : 'btn-secondary'}" 
+                    <button
+                        id="childLoginTab"
+                        class="btn ${state.userType === 'child' ? 'btn-primary' : 'btn-secondary'}"
                         style="flex: 1;"
                         onclick="switchLoginType('child')"
                     >
@@ -278,10 +308,10 @@ function attachLoginHandlers() {
         messageDiv.innerHTML = '<div class="alert alert-info">Logging in...</div>';
 
         try {
-            const loginData = state.userType === 'parent' 
+            const loginData = state.userType === 'parent'
                 ? { email: identifier, password }
                 : { username: identifier, password };
-            
+
             const data = await apiCall('/auth/login', 'POST', loginData);
 
             state.user = data.user;
@@ -299,7 +329,7 @@ function attachLoginHandlers() {
 // Dashboard Page
 function renderDashboard() {
     const isParent = state.userType === 'parent';
-    
+
     if (isParent) {
         return `
             <h1 style="margin-bottom: 24px;">Dashboard</h1>
@@ -489,7 +519,7 @@ function renderChildren() {
 // Expenses Page
 function renderExpenses() {
     const isParent = state.userType === 'parent';
-    
+
     return `
         <h1 style="margin-bottom: 24px;">${isParent ? 'Expense Tracking' : 'My Expenses'}</h1>
 
@@ -520,8 +550,8 @@ function renderExpenses() {
                         <select id="childId" required>
                             <option value="">Select Child</option>
                             ${state.children.map(child =>
-                                `<option value="${child.userId}">${child.displayName}</option>`
-                            ).join('')}
+        `<option value="${child.userId}">${child.displayName}</option>`
+    ).join('')}
                         </select>
                     </div>
                     <div class="form-group">
@@ -566,8 +596,8 @@ function renderFunds() {
                     <select id="fundChildId" required>
                         <option value="">Select Child</option>
                         ${state.children.map(child =>
-                            `<option value="${child.userId}">${child.displayName}</option>`
-                        ).join('')}
+        `<option value="${child.userId}">${child.displayName}</option>`
+    ).join('')}
                     </select>
                 </div>
                 <div class="form-group">
@@ -674,11 +704,11 @@ function attachGlobalHandlers() {
             const password = document.getElementById('childPassword').value;
             const weeklyAllowance = document.getElementById('allowance').value;
             const messageDiv = document.getElementById('childMessage');
-            
+
             messageDiv.innerHTML = '<div class="alert alert-info">Adding child...</div>';
-            
+
             try {
-                await apiCall('/children', 'POST', { 
+                await apiCall('/children', 'POST', {
                     displayName,
                     username,
                     password,
