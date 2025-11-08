@@ -350,6 +350,21 @@ Resources:
             Path: /auth/login
             Method: POST
 
+  ChildLoginFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-child-login'
+      CodeUri: ../src/lambdas/auth/
+      Handler: child_login_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PassbookApi
+            Path: /auth/child-login
+            Method: POST
+
   VerifyEmailFunction:
     Type: AWS::Serverless::Function
     Properties:
