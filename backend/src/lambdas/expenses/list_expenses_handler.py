@@ -30,6 +30,65 @@ def handler(event, context):
     if user_type == 'child':
         child_user_id = user_id
 
+    # For parents, if no child specified, get all expenses for all children
+    if user_type == 'parent' and not child_user_id:
+        # Get all children in the family
+        children_items = db.query(
+            table_name=db.families_table,
+            key_condition_expression='familyId = :familyId AND begins_with(SK, :skPrefix)',
+            expression_attribute_values={
+                ':familyId': family_id,
+                ':skPrefix': 'CHILD#'
+            }
+        )
+        
+        # Get expenses for all children
+        all_expenses = []
+        for child_item in children_items:
+            child_id = child_item['userId']
+            child_name = child_item.get('displayName', 'Unknown')
+            
+            expenses_items = db.query(
+                table_name=db.transactions_table,
+                key_condition_expression='childUserId = :childUserId AND begins_with(SK, :skPrefix)',
+                expression_attribute_values={
+                    ':childUserId': child_id,
+                    ':skPrefix': 'EXPENSE#'
+                }
+            )
+            
+            for item in expenses_items:
+                expense = Expense.from_dict(item)
+                expense_dict = expense.to_dict()
+                expense_dict['childName'] = child_name  # Add child name for parent view
+                all_expenses.append(expense_dict)
+        
+        # Sort by date (most recent first)
+        all_expenses.sort(key=lambda x: x.get('expenseDate', ''), reverse=True)
+        
+        # Get optional query parameters
+        limit = int(get_query_parameter(event, 'limit', 50))
+        start_date = get_query_parameter(event, 'startDate')
+        end_date = get_query_parameter(event, 'endDate')
+        
+        # Apply date filters if provided
+        if start_date:
+            all_expenses = [e for e in all_expenses if e.get('expenseDate', '') >= start_date]
+        if end_date:
+            all_expenses = [e for e in all_expenses if e.get('expenseDate', '') <= end_date]
+        
+        # Apply limit
+        all_expenses = all_expenses[:limit]
+        
+        return create_response(
+            status_code=200,
+            body={
+                'expenses': all_expenses,
+                'count': len(all_expenses),
+            }
+        )
+
+    # For children or parents with specific child, childUserId is required
     if not child_user_id:
         raise LambdaError("Child user ID is required", 400)
 

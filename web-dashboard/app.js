@@ -473,12 +473,45 @@ function renderFamily() {
                 <div class="card-header">
                     <h2 class="card-title">Family Information</h2>
                 </div>
-                <div class="alert alert-success">
-                    <strong>Family ID:</strong> ${state.user.familyId}
-                </div>
                 <p>Your family is active and ready to manage allowances!</p>
                 <div style="margin-top: 16px;">
                     <button class="btn btn-primary" onclick="navigate('children')">Manage Children</button>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 24px;">
+                <div class="card-header">
+                    <h2 class="card-title">Parent Accounts</h2>
+                    <button class="btn btn-primary" onclick="showInviteParentModal()">
+                        ${icons.add} Invite Parent
+                    </button>
+                </div>
+                <div id="parentsList">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>Loading parents...</p>
+                    </div>
+                </div>
+            </div>
+
+            <div id="inviteParentModal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2 class="modal-title">Invite Parent</h2>
+                        <button class="close-btn" onclick="closeModal('inviteParentModal')">×</button>
+                    </div>
+                    <div id="inviteMessage"></div>
+                    <form id="inviteParentForm">
+                        <div class="form-group">
+                            <label>Parent Email</label>
+                            <input type="email" id="parentEmail" required placeholder="parent@example.com">
+                        </div>
+                        <div class="form-group">
+                            <label>Parent Name</label>
+                            <input type="text" id="parentName" required placeholder="Parent's full name">
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-block">Send Invite</button>
+                    </form>
                 </div>
             </div>
         `}
@@ -684,7 +717,27 @@ function renderAnalytics() {
 
 // Modal Functions
 function showAddChildModal() {
-    document.getElementById('addChildModal').classList.add('active');
+    const form = document.getElementById('addChildForm');
+    const modal = document.getElementById('addChildModal');
+    
+    // Reset form
+    form.reset();
+    delete form.dataset.editingChildId;
+    
+    // Reset modal title and button text
+    document.querySelector('#addChildModal .modal-title').textContent = 'Add Child';
+    document.querySelector('#addChildForm button[type="submit"]').textContent = 'Add Child';
+    
+    // Show password field
+    const passwordField = document.getElementById('childPassword').parentElement;
+    passwordField.style.display = 'block';
+    document.getElementById('childPassword').required = true;
+    
+    modal.classList.add('active');
+}
+
+function showInviteParentModal() {
+    document.getElementById('inviteParentModal').classList.add('active');
 }
 
 function showAddExpenseModal() {
@@ -693,6 +746,48 @@ function showAddExpenseModal() {
 
 function closeModal(modalId) {
     document.getElementById(modalId).classList.remove('active');
+}
+
+// Child Management Functions
+function editChild(userId) {
+    const child = state.children.find(c => c.userId === userId);
+    if (!child) return;
+    
+    // Populate modal with child data
+    document.getElementById('childName').value = child.displayName;
+    document.getElementById('childUsername').value = child.username || '';
+    document.getElementById('allowance').value = child.fundingPeriod?.amount || child.weeklyAllowance || 0;
+    document.getElementById('fundingPeriodType').value = child.fundingPeriod?.type || 'weekly';
+    document.getElementById('fundingStartDate').value = child.fundingPeriod?.startDate || '';
+    
+    // Store child ID for update
+    document.getElementById('addChildForm').dataset.editingChildId = userId;
+    
+    // Change modal title and button text
+    document.querySelector('#addChildModal .modal-title').textContent = 'Edit Child';
+    document.querySelector('#addChildForm button[type="submit"]').textContent = 'Update Child';
+    
+    // Hide password field for editing
+    const passwordField = document.getElementById('childPassword').parentElement;
+    passwordField.style.display = 'none';
+    
+    showAddChildModal();
+}
+
+async function deleteChild(userId) {
+    const child = state.children.find(c => c.userId === userId);
+    if (!child) return;
+    
+    if (!confirm(`Are you sure you want to delete ${child.displayName}'s account? This action cannot be undone.`)) {
+        return;
+    }
+    
+    try {
+        await apiCall(`/children/${userId}`, 'DELETE');
+        loadChildren();
+    } catch (error) {
+        alert(`Failed to delete child: ${error.message}`);
+    }
 }
 
 // Global Event Handlers
@@ -733,18 +828,36 @@ function attachGlobalHandlers() {
             const username = document.getElementById('childUsername').value;
             const password = document.getElementById('childPassword').value;
             const weeklyAllowance = document.getElementById('allowance').value;
+            const fundingPeriodType = document.getElementById('fundingPeriodType').value;
+            const fundingStartDate = document.getElementById('fundingStartDate').value;
             const messageDiv = document.getElementById('childMessage');
+            
+            const editingChildId = addChildForm.dataset.editingChildId;
+            const isEditing = !!editingChildId;
 
-            messageDiv.innerHTML = '<div class="alert alert-info">Adding child...</div>';
+            messageDiv.innerHTML = `<div class="alert alert-info">${isEditing ? 'Updating' : 'Adding'} child...</div>`;
 
             try {
-                await apiCall('/children', 'POST', {
+                const payload = {
                     displayName,
                     username,
-                    password,
-                    weeklyAllowance: parseFloat(weeklyAllowance)
-                });
-                messageDiv.innerHTML = '<div class="alert alert-success">Child added successfully!</div>';
+                    weeklyAllowance: parseFloat(weeklyAllowance),
+                    fundingPeriodType,
+                    fundingStartDate: fundingStartDate || undefined
+                };
+                
+                // Only include password for new children
+                if (!isEditing) {
+                    payload.password = password;
+                }
+                
+                if (isEditing) {
+                    await apiCall(`/children/${editingChildId}`, 'PUT', payload);
+                } else {
+                    await apiCall('/children', 'POST', payload);
+                }
+                
+                messageDiv.innerHTML = `<div class="alert alert-success">Child ${isEditing ? 'updated' : 'added'} successfully!</div>`;
                 closeModal('addChildModal');
                 loadChildren();
             } catch (error) {
@@ -829,17 +942,26 @@ async function loadChildren() {
                         <tr>
                             <th>Name</th>
                             <th>Username</th>
-                            <th>Weekly Allowance</th>
+                            <th>Allowance</th>
                             <th>Balance</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         ${state.children.map(child => `
                             <tr>
                                 <td><strong>${child.displayName}</strong></td>
-                                <td>${child.username || 'N/A'}</td>
-                                <td>${formatCurrency(child.weeklyAllowance, state.family?.currency)}/week</td>
+                                <td>${child.username || child.email || 'N/A'}</td>
+                                <td>${formatCurrency(child.weeklyAllowance || child.fundingPeriod?.amount || 0, state.family?.currency)}/${child.fundingPeriod?.type || 'week'}</td>
                                 <td>${formatCurrency(child.currentBalance, state.family?.currency)}</td>
+                                <td>
+                                    <button class="btn btn-sm btn-secondary" onclick="editChild('${child.userId}')" title="Edit">
+                                        ${icons.edit}
+                                    </button>
+                                    <button class="btn btn-sm btn-error" onclick="deleteChild('${child.userId}')" title="Delete" style="margin-left: 4px;">
+                                        ${icons.delete}
+                                    </button>
+                                </td>
                             </tr>
                         `).join('')}
                     </tbody>

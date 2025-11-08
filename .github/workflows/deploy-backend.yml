@@ -49,6 +49,17 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+          cache-dependency-path: 'backend/requirements.txt'
+      
+      - name: Cache SAM build
+        uses: actions/cache@v3
+        with:
+          path: |
+            backend/.aws-sam
+            ~/.aws-sam
+          key: ${{ runner.os }}-sam-${{ hashFiles('backend/infrastructure/complete-stack.yaml', 'backend/src/**/*.py') }}
+          restore-keys: |
+            ${{ runner.os }}-sam-
 
       - name: Install AWS SAM CLI
         run: |
