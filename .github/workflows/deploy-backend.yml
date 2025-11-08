@@ -70,19 +70,19 @@ jobs:
 
       - name: Create S3 deployment bucket if needed
         run: |
-          BUCKET_NAME="passbook-sam-deployments-${{ secrets.AWS_ACCOUNT_ID }}-us-west-2"
+          BUCKET_NAME="passbook-sam-deployments-338186951935-us-west-2"
           if ! aws s3 ls "s3://$BUCKET_NAME" 2>&1 > /dev/null; then
             echo "Creating S3 bucket: $BUCKET_NAME"
-            aws s3 mb "s3://$BUCKET_NAME" --region us-west-2 || echo "Bucket already exists or cannot be created"
+            aws s3 mb "s3://$BUCKET_NAME" --region us-west-2 || echo "Bucket creation failed, may already exist"
           else
             echo "S3 bucket already exists: $BUCKET_NAME"
           fi
 
       - name: Deploy with SAM
         env:
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          SMTP_USER: ${{ secrets.SMTP_USER || 'noreply@passbook.local' }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD || 'placeholder' }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM || 'noreply@passbook.local' }}
           SAM_CLI_TELEMETRY: 0
         run: |
           cd backend
