@@ -2,18 +2,26 @@
  * Floating Action Button component
  */
 import React from 'react';
-import { TouchableOpacity, Text, StyleSheet, ViewStyle } from 'react-native';
+import { TouchableOpacity, StyleSheet, ViewStyle } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
 
 interface FABProps {
   onPress: () => void;
-  icon?: string;
   style?: ViewStyle;
 }
 
-export const FAB: React.FC<FABProps> = ({ onPress, icon = '+', style }) => {
+export const FAB: React.FC<FABProps> = ({ onPress, style }) => {
   return (
     <TouchableOpacity style={[styles.fab, style]} onPress={onPress} activeOpacity={0.8}>
-      <Text style={styles.icon}>{icon}</Text>
+      <Svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <Path
+          d="M12 5V19M5 12H19"
+          stroke="#ffffff"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </Svg>
     </TouchableOpacity>
   );
 };
@@ -34,11 +42,5 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 4,
     elevation: 8,
-  },
-  icon: {
-    fontSize: 32,
-    color: '#fff',
-    fontWeight: '300',
-    lineHeight: 32,
   },
 });

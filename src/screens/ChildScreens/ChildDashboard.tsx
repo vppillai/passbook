@@ -143,7 +143,6 @@ export const ChildDashboardScreen: React.FC = () => {
 
       <FAB
         onPress={() => navigation.navigate('AddExpense')}
-        icon="+"
       />
     </View>
   );
