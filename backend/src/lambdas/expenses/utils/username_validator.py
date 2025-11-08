@@ -5,12 +5,11 @@ from typing import Optional
 from utils.db_client import DynamoDBClient
 
 
-def is_username_unique(family_id: str, username: str, exclude_user_id: Optional[str] = None) -> bool:
+def is_username_unique(username: str, exclude_user_id: Optional[str] = None) -> bool:
     """
-    Check if username is unique within a family.
+    Check if username is globally unique across all families.
 
     Args:
-        family_id: Family account ID
         username: Username to check
         exclude_user_id: User ID to exclude from check (for updates)
 
@@ -21,17 +20,17 @@ def is_username_unique(family_id: str, username: str, exclude_user_id: Optional[
         return False
 
     db = DynamoDBClient()
+    username_lower = username.strip().lower()
 
     try:
-        # Query username-family-index GSI
+        # Query username-global-index GSI to check across all families
         results = db.query(
             table_name=db.families_table,
-            key_condition_expression='familyId = :familyId AND username = :username',
+            key_condition_expression='username = :username',
             expression_attribute_values={
-                ':familyId': family_id,
-                ':username': username.strip().lower()
+                ':username': username_lower
             },
-            index_name='username-family-index'
+            index_name='username-global-index'
         )
 
         # Filter out the current user if updating
@@ -40,10 +39,26 @@ def is_username_unique(family_id: str, username: str, exclude_user_id: Optional[
 
         return len(results) == 0
 
-    except Exception:
-        # If index doesn't exist or query fails, fallback to scan (inefficient but works)
-        # This should be rare and only during development
-        return True
+    except Exception as e:
+        # If index doesn't exist, fallback to scan (inefficient)
+        print(f"Warning: username-global-index not available, falling back to scan: {e}")
+        try:
+            results = db.scan(
+                table_name=db.families_table,
+                filter_expression='username = :username AND begins_with(SK, :skPrefix)',
+                expression_attribute_values={
+                    ':username': username_lower,
+                    ':skPrefix': 'CHILD#'
+                }
+            )
+            
+            if exclude_user_id:
+                results = [r for r in results if r.get('userId') != exclude_user_id]
+            
+            return len(results) == 0
+        except Exception:
+            # If scan also fails, allow it (better than blocking)
+            return True
 
 
 def validate_username(username: str) -> tuple[bool, str]:

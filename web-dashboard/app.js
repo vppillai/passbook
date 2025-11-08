@@ -316,6 +316,16 @@ function switchLoginType(type) {
 
 function attachLoginHandlers() {
     const form = document.getElementById('loginForm');
+    const userTypeToggle = document.getElementById('userTypeToggle');
+
+    if (userTypeToggle) {
+        userTypeToggle.addEventListener('change', (e) => {
+            state.userType = e.target.checked ? 'child' : 'parent';
+            saveStateToStorage();
+            render(); // Re-render to update login form fields
+        });
+    }
+
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
 
@@ -326,11 +336,12 @@ function attachLoginHandlers() {
         messageDiv.innerHTML = '<div class="alert alert-info">Logging in...</div>';
 
         try {
-            const loginData = state.userType === 'parent'
-                ? { email: identifier, password }
-                : { username: identifier, password };
-
-            const data = await apiCall('/auth/login', 'POST', loginData);
+            let data;
+            if (state.userType === 'parent') {
+                data = await apiCall('/auth/login', 'POST', { email: identifier, password });
+            } else {
+                data = await apiCall('/auth/child-login', 'POST', { identifier, password });
+            }
 
             state.user = data.user;
             state.token = data.token;

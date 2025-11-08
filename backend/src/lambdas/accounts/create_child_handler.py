@@ -73,9 +73,9 @@ def handler(event, context):
         if not is_valid:
             raise LambdaError(error_msg, 400)
 
-        # Check uniqueness
-        if not is_username_unique(family_id, username):
-            raise LambdaError("Username already exists in this family", 409)
+        # Check uniqueness globally
+        if not is_username_unique(username):
+            raise LambdaError("Username already exists", 409)
 
     # Check email uniqueness if provided
     if email:

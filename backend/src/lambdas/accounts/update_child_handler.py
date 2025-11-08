@@ -78,9 +78,9 @@ def handler(event, context):
             if not is_valid:
                 raise LambdaError(error_msg, 400)
 
-            # Check uniqueness (excluding current user)
-            if not is_username_unique(family_id, username, exclude_user_id=child_user_id):
-                raise LambdaError("Username already exists in this family", 409)
+            # Check uniqueness globally (excluding current user)
+            if not is_username_unique(username, exclude_user_id=child_user_id):
+                raise LambdaError("Username already exists", 409)
 
             update_expressions.append('username = :username')
             expression_attribute_values[':username'] = username
