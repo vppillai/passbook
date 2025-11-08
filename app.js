@@ -1,7 +1,7 @@
 // Passbook Web Dashboard - Complete Application
 // API Configuration
 const API_URL = 'https://afbtrc48hc.execute-api.us-west-2.amazonaws.com/development';
-const VERSION = 'v1-legacy-37-g3d12e1e'; // Will be replaced during deployment
+const VERSION = 'v1-legacy-38-g18ba077'; // Will be replaced during deployment
 
 // Currency symbols
 const currencySymbols = {
@@ -179,7 +179,7 @@ function logoutAndCloseMobile() {
 // Render Sidebar
 function renderSidebar() {
     const isParent = state.userType === 'parent';
-    
+
     return `
         <div class="sidebar">
             <div class="sidebar-header">
