@@ -1,7 +1,7 @@
 /**
  * Modal component for inviting a parent
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -29,6 +29,24 @@ export const InviteParentModal: React.FC<InviteParentModalProps> = ({
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
+
+  // Handle Escape key press
+  useEffect(() => {
+    if (!visible) return;
+
+    const handleKeyPress = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        handleClose();
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      document.addEventListener('keydown', handleKeyPress);
+      return () => {
+        document.removeEventListener('keydown', handleKeyPress);
+      };
+    }
+  }, [visible]);
 
   const validate = (): boolean => {
     const newErrors: { [key: string]: string } = {};

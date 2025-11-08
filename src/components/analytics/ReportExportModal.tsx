@@ -1,7 +1,7 @@
 /**
  * Modal component for exporting reports
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -34,6 +34,24 @@ export const ReportExportModal: React.FC<ReportExportModalProps> = ({
 }) => {
   const [loading, setLoading] = useState(false);
   const [exportType, setExportType] = useState<'pdf' | 'excel' | null>(null);
+
+  // Handle Escape key press
+  useEffect(() => {
+    if (!visible) return;
+
+    const handleKeyPress = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      document.addEventListener('keydown', handleKeyPress);
+      return () => {
+        document.removeEventListener('keydown', handleKeyPress);
+      };
+    }
+  }, [visible, onClose]);
 
   const handleExport = async (type: 'pdf' | 'excel') => {
     setLoading(true);

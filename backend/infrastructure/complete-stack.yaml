@@ -444,6 +444,21 @@ Resources:
             Path: /children/{childId}
             Method: PUT
 
+  DeleteChildFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'passbook-${Environment}-delete-child'
+      CodeUri: ../src/lambdas/accounts/
+      Handler: delete_child_handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PassbookApi
+            Path: /children/{childId}
+            Method: DELETE
+
   ResetChildPasswordFunction:
     Type: AWS::Serverless::Function
     Properties:

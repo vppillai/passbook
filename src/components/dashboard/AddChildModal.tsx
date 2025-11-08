@@ -1,7 +1,7 @@
 /**
  * Modal component for adding a new child account
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -35,6 +35,24 @@ export const AddChildModal: React.FC<AddChildModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const { addChild } = useChildrenStore();
+
+  // Handle Escape key press
+  useEffect(() => {
+    if (!visible) return;
+
+    const handleKeyPress = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        handleClose();
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      document.addEventListener('keydown', handleKeyPress);
+      return () => {
+        document.removeEventListener('keydown', handleKeyPress);
+      };
+    }
+  }, [visible]);
 
   const validate = (): boolean => {
     const newErrors: { [key: string]: string } = {};

@@ -34,16 +34,13 @@ def handler(event, context):
 
     child_user_id = body.get('childUserId', '').strip()
     amount = body.get('amount')
-    reason = body.get('reason', '').strip()
+    reason = body.get('reason', '').strip() or 'Manual fund addition'
 
     if not child_user_id:
         raise LambdaError("Child user ID is required", 400)
 
     if amount is None or amount <= 0:
         raise LambdaError("Amount must be greater than 0", 400)
-
-    if not reason:
-        raise LambdaError("Reason is required", 400)
 
     db = DynamoDBClient()
 
