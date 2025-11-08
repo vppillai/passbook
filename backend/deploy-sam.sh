@@ -70,10 +70,12 @@ echo "📦 Building Lambda functions..."
 # Navigate to backend directory
 cd infrastructure
 
-# Build SAM application
+# Build SAM application with optimizations
 sam build --template complete-stack.yaml \
   --region ${REGION} \
-  --use-container
+  --use-container \
+  --parallel \
+  --cached
 
 echo ""
 echo "📤 Packaging application..."
