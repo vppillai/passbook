@@ -68,11 +68,22 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-west-2
 
+      - name: Create S3 deployment bucket if needed
+        run: |
+          BUCKET_NAME="passbook-sam-deployments-${{ secrets.AWS_ACCOUNT_ID }}-us-west-2"
+          if ! aws s3 ls "s3://$BUCKET_NAME" 2>&1 > /dev/null; then
+            echo "Creating S3 bucket: $BUCKET_NAME"
+            aws s3 mb "s3://$BUCKET_NAME" --region us-west-2 || echo "Bucket already exists or cannot be created"
+          else
+            echo "S3 bucket already exists: $BUCKET_NAME"
+          fi
+
       - name: Deploy with SAM
         env:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          SAM_CLI_TELEMETRY: 0
         run: |
           cd backend
           source venv/bin/activate

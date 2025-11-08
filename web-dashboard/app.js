@@ -164,7 +164,7 @@ function logoutAndCloseMobile() {
 // Render Sidebar
 function renderSidebar() {
     const isParent = state.userType === 'parent';
-    
+
     return `
         <div class="sidebar">
             <div class="sidebar-header">

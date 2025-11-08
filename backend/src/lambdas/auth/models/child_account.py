@@ -3,6 +3,7 @@ Child Account model for DynamoDB operations.
 """
 from typing import Optional, Literal
 from datetime import datetime
+from decimal import Decimal
 import uuid
 
 
@@ -20,8 +21,8 @@ class ChildAccount:
         user_id: Optional[str] = None,
         username: Optional[str] = None,
         email: Optional[str] = None,
-        current_balance: float = 0.0,
-        overdraft_limit: float = 0.0,
+        current_balance: Optional[Decimal] = None,
+        overdraft_limit: Optional[Decimal] = None,
         funding_period: Optional[dict] = None,
         notifications_enabled: bool = True,
         device_tokens: Optional[list] = None,
@@ -35,8 +36,8 @@ class ChildAccount:
         self.email = email.lower().strip() if email else None
         self.display_name = display_name
         self.password_hash = password_hash
-        self.current_balance = current_balance
-        self.overdraft_limit = overdraft_limit
+        self.current_balance = current_balance if current_balance is not None else Decimal('0.0')
+        self.overdraft_limit = overdraft_limit if overdraft_limit is not None else Decimal('0.0')
         self.funding_period = funding_period
         self.notifications_enabled = notifications_enabled
         self.device_tokens = device_tokens or []
@@ -77,6 +78,14 @@ class ChildAccount:
     @classmethod
     def from_dict(cls, data: dict) -> 'ChildAccount':
         """Create from DynamoDB item format."""
+        current_balance = data.get('currentBalance', Decimal('0.0'))
+        if isinstance(current_balance, (int, float)):
+            current_balance = Decimal(str(current_balance))
+        
+        overdraft_limit = data.get('overdraftLimit', Decimal('0.0'))
+        if isinstance(overdraft_limit, (int, float)):
+            overdraft_limit = Decimal(str(overdraft_limit))
+        
         return cls(
             user_id=data['userId'],
             family_id=data['familyId'],
@@ -84,8 +93,8 @@ class ChildAccount:
             email=data.get('email'),
             display_name=data['displayName'],
             password_hash=data['passwordHash'],
-            current_balance=data.get('currentBalance', 0.0),
-            overdraft_limit=data.get('overdraftLimit', 0.0),
+            current_balance=current_balance,
+            overdraft_limit=overdraft_limit,
             funding_period=data.get('fundingPeriod'),
             notifications_enabled=data.get('notificationsEnabled', True),
             device_tokens=data.get('deviceTokens', []),
@@ -99,11 +108,15 @@ class ChildAccount:
         """Check if account is active."""
         return self.status == 'active'
 
-    def can_spend(self, amount: float) -> bool:
+    def can_spend(self, amount: Decimal) -> bool:
         """Check if child can spend the given amount."""
+        if isinstance(amount, (int, float)):
+            amount = Decimal(str(amount))
         new_balance = self.current_balance - amount
         return new_balance >= -self.overdraft_limit
 
-    def update_balance(self, amount: float) -> None:
+    def update_balance(self, amount: Decimal) -> None:
         """Update the child's balance."""
+        if isinstance(amount, (int, float)):
+            amount = Decimal(str(amount))
         self.current_balance += amount

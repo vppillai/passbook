@@ -6,6 +6,9 @@
 
 set -e
 
+# Disable SAM telemetry
+export SAM_CLI_TELEMETRY=0
+
 ENVIRONMENT=${1:-development}
 REGION=${2:-us-west-2}
 STACK_NAME="passbook-${ENVIRONMENT}"
