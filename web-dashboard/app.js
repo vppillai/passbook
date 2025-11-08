@@ -304,7 +304,7 @@ function renderLoginPage() {
                     </div>
                     <button type="submit" class="btn btn-primary btn-block">Login</button>
                 </form>
-                
+
                 <div style="text-align: center; margin-top: 24px; font-size: 11px; color: #a0aec0;">
                     v${VERSION}
                 </div>

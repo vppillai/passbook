@@ -133,4 +133,3 @@ def handler(event, context):
             }
         }
     )
-
