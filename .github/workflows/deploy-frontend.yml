@@ -23,11 +23,16 @@ jobs:
         with:
           fetch-depth: 0  # Need full history for git describe
 
-      - name: Inject version into app.js
-        run: |
-          VERSION=$(git describe --tags --always --long | sed 's/-dirty$//')
-          sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" web-dashboard/app.js
-          echo "Version: $VERSION"
+        - name: Inject version into app.js
+          run: |
+            # Get the exact tag if we're on a tag, otherwise just the short commit hash
+            if git describe --tags --exact-match 2>/dev/null; then
+              VERSION=$(git describe --tags --exact-match)
+            else
+              VERSION="g$(git rev-parse --short HEAD)"
+            fi
+            sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" web-dashboard/app.js
+            echo "Version: $VERSION"
 
       - name: Deploy web dashboard to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
