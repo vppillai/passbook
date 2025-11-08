@@ -719,20 +719,20 @@ function renderAnalytics() {
 function showAddChildModal() {
     const form = document.getElementById('addChildForm');
     const modal = document.getElementById('addChildModal');
-    
+
     // Reset form
     form.reset();
     delete form.dataset.editingChildId;
-    
+
     // Reset modal title and button text
     document.querySelector('#addChildModal .modal-title').textContent = 'Add Child';
     document.querySelector('#addChildForm button[type="submit"]').textContent = 'Add Child';
-    
+
     // Show password field
     const passwordField = document.getElementById('childPassword').parentElement;
     passwordField.style.display = 'block';
     document.getElementById('childPassword').required = true;
-    
+
     modal.classList.add('active');
 }
 
@@ -752,36 +752,36 @@ function closeModal(modalId) {
 function editChild(userId) {
     const child = state.children.find(c => c.userId === userId);
     if (!child) return;
-    
+
     // Populate modal with child data
     document.getElementById('childName').value = child.displayName;
     document.getElementById('childUsername').value = child.username || '';
     document.getElementById('allowance').value = child.fundingPeriod?.amount || child.weeklyAllowance || 0;
     document.getElementById('fundingPeriodType').value = child.fundingPeriod?.type || 'weekly';
     document.getElementById('fundingStartDate').value = child.fundingPeriod?.startDate || '';
-    
+
     // Store child ID for update
     document.getElementById('addChildForm').dataset.editingChildId = userId;
-    
+
     // Change modal title and button text
     document.querySelector('#addChildModal .modal-title').textContent = 'Edit Child';
     document.querySelector('#addChildForm button[type="submit"]').textContent = 'Update Child';
-    
+
     // Hide password field for editing
     const passwordField = document.getElementById('childPassword').parentElement;
     passwordField.style.display = 'none';
-    
+
     showAddChildModal();
 }
 
 async function deleteChild(userId) {
     const child = state.children.find(c => c.userId === userId);
     if (!child) return;
-    
+
     if (!confirm(`Are you sure you want to delete ${child.displayName}'s account? This action cannot be undone.`)) {
         return;
     }
-    
+
     try {
         await apiCall(`/children/${userId}`, 'DELETE');
         loadChildren();
@@ -817,6 +817,31 @@ function attachGlobalHandlers() {
                 messageDiv.innerHTML = `<div class="alert alert-error">${error.message}</div>`;
             }
         });
+        
+        loadParents();
+    }
+    
+    // Invite Parent Form
+    const inviteParentForm = document.getElementById('inviteParentForm');
+    if (inviteParentForm) {
+        inviteParentForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('parentEmail').value;
+            const name = document.getElementById('parentName').value;
+            const messageDiv = document.getElementById('inviteMessage');
+
+            messageDiv.innerHTML = '<div class="alert alert-info">Sending invite...</div>';
+
+            try {
+                await apiCall('/parents/invite', 'POST', { email, name });
+                messageDiv.innerHTML = '<div class="alert alert-success">Invitation sent successfully!</div>';
+                closeModal('inviteParentModal');
+                inviteParentForm.reset();
+                loadParents();
+            } catch (error) {
+                messageDiv.innerHTML = `<div class="alert alert-error">${error.message}</div>`;
+            }
+        });
     }
 
     // Add Child Form
@@ -831,7 +856,7 @@ function attachGlobalHandlers() {
             const fundingPeriodType = document.getElementById('fundingPeriodType').value;
             const fundingStartDate = document.getElementById('fundingStartDate').value;
             const messageDiv = document.getElementById('childMessage');
-            
+
             const editingChildId = addChildForm.dataset.editingChildId;
             const isEditing = !!editingChildId;
 
@@ -845,18 +870,18 @@ function attachGlobalHandlers() {
                     fundingPeriodType,
                     fundingStartDate: fundingStartDate || undefined
                 };
-                
+
                 // Only include password for new children
                 if (!isEditing) {
                     payload.password = password;
                 }
-                
+
                 if (isEditing) {
                     await apiCall(`/children/${editingChildId}`, 'PUT', payload);
                 } else {
                     await apiCall('/children', 'POST', payload);
                 }
-                
+
                 messageDiv.innerHTML = `<div class="alert alert-success">Child ${isEditing ? 'updated' : 'added'} successfully!</div>`;
                 closeModal('addChildModal');
                 loadChildren();
@@ -904,7 +929,7 @@ function attachGlobalHandlers() {
     if (addFundsForm) {
         addFundsForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const childId = document.getElementById('fundChildId').value;
+            const childUserId = document.getElementById('fundChildId').value;
             const amount = document.getElementById('fundAmount').value;
             const notes = document.getElementById('fundNotes').value;
             const messageDiv = document.getElementById('fundsMessage');
@@ -913,12 +938,13 @@ function attachGlobalHandlers() {
 
             try {
                 await apiCall('/funds', 'POST', {
-                    childId,
+                    childUserId,
                     amount: parseFloat(amount),
-                    notes
+                    reason: notes
                 });
                 messageDiv.innerHTML = '<div class="alert alert-success">Funds added successfully!</div>';
                 addFundsForm.reset();
+                loadChildren(); // Refresh children to show updated balances
             } catch (error) {
                 messageDiv.innerHTML = `<div class="alert alert-error">${error.message}</div>`;
             }
@@ -971,6 +997,46 @@ async function loadChildren() {
     } catch (error) {
         document.getElementById('childrenList').innerHTML =
             `<div class="alert alert-error">Failed to load children: ${error.message}</div>`;
+    }
+}
+
+async function loadParents() {
+    const parentsList = document.getElementById('parentsList');
+    if (!parentsList) return;
+    
+    try {
+        const data = await apiCall('/parents');
+        const parents = data.parents || [];
+
+        if (parents.length === 0) {
+            parentsList.innerHTML = '<p style="padding: 20px; text-align: center; color: #a0aec0;">No other parents yet. Invite parents to help manage the family.</p>';
+        } else {
+            parentsList.innerHTML = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Status</th>
+                            <th>Joined</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${parents.map(parent => `
+                            <tr>
+                                <td><strong>${parent.displayName || parent.email}</strong></td>
+                                <td>${parent.email}</td>
+                                <td><span class="badge badge-${parent.status === 'active' ? 'success' : 'warning'}">${parent.status}</span></td>
+                                <td>${new Date(parent.createdAt).toLocaleDateString()}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+    } catch (error) {
+        parentsList.innerHTML =
+            `<div class="alert alert-error">Failed to load parents: ${error.message}</div>`;
     }
 }
 
