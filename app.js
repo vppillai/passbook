@@ -1,7 +1,7 @@
 // Passbook Web Dashboard - Complete Application
 // API Configuration
 const API_URL = 'https://afbtrc48hc.execute-api.us-west-2.amazonaws.com/development';
-const VERSION = 'ge420a8b'; // Will be replaced during deployment
+const VERSION = 'g989780f'; // Will be replaced during deployment
 
 // Currency symbols
 const currencySymbols = {
@@ -52,22 +52,22 @@ const state = {
 function addPasswordToggle(passwordFieldId) {
     const passwordField = document.getElementById(passwordFieldId);
     if (!passwordField || !passwordField.parentElement) return;
-    
+
     const formGroup = passwordField.parentElement;
     formGroup.classList.add('password-field');
-    
+
     const toggleBtn = document.createElement('button');
     toggleBtn.type = 'button';
     toggleBtn.className = 'password-toggle';
     toggleBtn.innerHTML = icons.eyeClosed;
     toggleBtn.setAttribute('aria-label', 'Toggle password visibility');
-    
+
     toggleBtn.addEventListener('click', () => {
         const isPassword = passwordField.type === 'password';
         passwordField.type = isPassword ? 'text' : 'password';
         toggleBtn.innerHTML = isPassword ? icons.eyeOpen : icons.eyeClosed;
     });
-    
+
     formGroup.appendChild(toggleBtn);
 }
 
@@ -414,7 +414,7 @@ function renderDashboard() {
                 <div class="stat-card">
                     <div class="stat-icon">${icons.funds}</div>
                     <div class="stat-label">Total Balance</div>
-                    <div class="stat-value">$0.00</div>
+                    <div class="stat-value">${formatCurrency(state.children.reduce((sum, child) => sum + (child.currentBalance || 0), 0), state.family?.currency)}</div>
                 </div>
             </div>
 
@@ -752,6 +752,9 @@ function showAddChildModal() {
     form.reset();
     delete form.dataset.editingChildId;
 
+    // Clear any previous messages
+    document.getElementById('childMessage').innerHTML = '';
+
     // Reset modal title and button text
     document.querySelector('#addChildModal .modal-title').textContent = 'Add Child';
     document.querySelector('#addChildForm button[type="submit"]').textContent = 'Add Child';
@@ -760,7 +763,7 @@ function showAddChildModal() {
     const passwordField = document.getElementById('childPassword').parentElement;
     passwordField.style.display = 'block';
     document.getElementById('childPassword').required = true;
-    
+
     // Add password toggle if not already present
     if (!passwordField.querySelector('.password-toggle')) {
         addPasswordToggle('childPassword');
@@ -770,15 +773,41 @@ function showAddChildModal() {
 }
 
 function showInviteParentModal() {
+    // Clear any previous messages
+    document.getElementById('inviteMessage').innerHTML = '';
+    // Reset form
+    const form = document.getElementById('inviteParentForm');
+    if (form) form.reset();
     document.getElementById('inviteParentModal').classList.add('active');
 }
 
 function showAddExpenseModal() {
+    // Clear any previous messages
+    document.getElementById('expenseMessage').innerHTML = '';
+    // Reset form
+    const form = document.getElementById('addExpenseForm');
+    if (form) form.reset();
     document.getElementById('addExpenseModal').classList.add('active');
 }
 
 function closeModal(modalId) {
-    document.getElementById(modalId).classList.remove('active');
+    const modal = document.getElementById(modalId);
+    modal.classList.remove('active');
+
+    // Clear message div when closing modal to prevent stale messages
+    const messageMap = {
+        'addChildModal': 'childMessage',
+        'inviteParentModal': 'inviteMessage',
+        'addExpenseModal': 'expenseMessage'
+    };
+
+    const messageId = messageMap[modalId];
+    if (messageId) {
+        const messageDiv = document.getElementById(messageId);
+        if (messageDiv) {
+            messageDiv.innerHTML = '';
+        }
+    }
 }
 
 // Child Management Functions
@@ -970,11 +999,17 @@ function attachGlobalHandlers() {
             messageDiv.innerHTML = '<div class="alert alert-info">Adding funds...</div>';
 
             try {
-                await apiCall('/funds', 'POST', {
+                const requestBody = {
                     childUserId,
-                    amount: parseFloat(amount),
-                    reason: notes
-                });
+                    amount: parseFloat(amount)
+                };
+
+                // Only include reason if notes is not empty
+                if (notes && notes.trim()) {
+                    requestBody.reason = notes.trim();
+                }
+
+                await apiCall('/funds', 'POST', requestBody);
                 messageDiv.innerHTML = '<div class="alert alert-success">Funds added successfully!</div>';
                 addFundsForm.reset();
                 loadChildren(); // Refresh children to show updated balances
@@ -992,6 +1027,8 @@ async function loadChildren() {
         state.children = data.children || [];
 
         const listDiv = document.getElementById('childrenList');
+        if (!listDiv) return; // Exit if element doesn't exist
+
         if (state.children.length === 0) {
             listDiv.innerHTML = '<p style="padding: 20px; text-align: center; color: #a0aec0;">No children added yet. Click "Add Child" to get started.</p>';
         } else {
@@ -1028,8 +1065,10 @@ async function loadChildren() {
             `;
         }
     } catch (error) {
-        document.getElementById('childrenList').innerHTML =
-            `<div class="alert alert-error">Failed to load children: ${error.message}</div>`;
+        const listDiv = document.getElementById('childrenList');
+        if (listDiv) {
+            listDiv.innerHTML = `<div class="alert alert-error">Failed to load children: ${error.message}</div>`;
+        }
     }
 }
 

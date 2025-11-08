@@ -146,16 +146,15 @@ body {
 .password-toggle {
     position: absolute;
     right: 12px;
-    top: 50%;
-    transform: translateY(-50%);
+    top: 38px;
     background: none;
     border: none;
     cursor: pointer;
-    padding: 4px;
+    padding: 8px;
     display: flex;
     align-items: center;
-    justify-center;
-    color: var(--text);
+    justify-content: center;
+    color: var(--gray);
     opacity: 0.6;
     transition: opacity 0.2s;
 }
@@ -200,7 +199,10 @@ input:focus, select:focus, textarea:focus {
     cursor: pointer;
     transition: all 0.3s;
     text-decoration: none;
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
     text-align: center;
 }
 
