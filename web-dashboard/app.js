@@ -47,28 +47,28 @@ async function apiCall(endpoint, method = 'GET', body = null) {
     const headers = {
         'Content-Type': 'application/json',
     };
-    
+
     if (state.token) {
         headers['Authorization'] = `Bearer ${state.token}`;
     }
-    
+
     const options = {
         method,
         headers,
     };
-    
+
     if (body) {
         options.body = JSON.stringify(body);
     }
-    
+
     try {
         const response = await fetch(`${API_URL}${endpoint}`, options);
         const data = await response.json();
-        
+
         if (!response.ok) {
             throw new Error(data.error || 'Request failed');
         }
-        
+
         return data;
     } catch (error) {
         throw error;
@@ -94,7 +94,7 @@ function logout() {
 // Render Main App
 function render() {
     const app = document.getElementById('app');
-    
+
     if (state.currentPage === 'login') {
         app.innerHTML = renderLoginPage();
         attachLoginHandlers();
@@ -194,9 +194,9 @@ function renderLoginPage() {
                 <div class="logo">🏦</div>
                 <h1>Passbook</h1>
                 <p class="subtitle">Family Allowance Manager</p>
-                
+
                 <div id="loginMessage"></div>
-                
+
                 <form id="loginForm">
                     <div class="form-group">
                         <label>Email</label>
@@ -208,7 +208,7 @@ function renderLoginPage() {
                     </div>
                     <button type="submit" class="btn btn-primary btn-block">Login</button>
                 </form>
-                
+
                 <div style="margin-top: 24px; padding: 16px; background: #f7fafc; border-radius: 8px;">
                     <p style="font-size: 14px; color: #4a5568;"><strong>Test Account:</strong></p>
                     <p style="font-size: 13px; color: #718096;">Email: support@embeddedinn.com</p>
@@ -223,20 +223,20 @@ function attachLoginHandlers() {
     const form = document.getElementById('loginForm');
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        
+
         const email = document.getElementById('email').value;
         const password = document.getElementById('password').value;
         const messageDiv = document.getElementById('loginMessage');
-        
+
         messageDiv.innerHTML = '<div class="alert alert-info">Logging in...</div>';
-        
+
         try {
             const data = await apiCall('/auth/login', 'POST', { email, password });
-            
+
             state.user = data.user;
             state.token = data.token;
             saveStateToStorage();
-            
+
             messageDiv.innerHTML = '<div class="alert alert-success">Login successful!</div>';
             setTimeout(() => navigate('dashboard'), 500);
         } catch (error) {
@@ -249,7 +249,7 @@ function attachLoginHandlers() {
 function renderDashboard() {
     return `
         <h1 style="margin-bottom: 24px;">Dashboard</h1>
-        
+
         <div class="stats-grid">
             <div class="stat-card">
                 <div class="stat-icon">👨‍👩‍👧‍👦</div>
@@ -272,7 +272,7 @@ function renderDashboard() {
                 <div class="stat-value">$0.00</div>
             </div>
         </div>
-        
+
         <div class="card">
             <div class="card-header">
                 <h2 class="card-title">Welcome to Passbook!</h2>
@@ -292,7 +292,7 @@ function renderDashboard() {
                 `}
             </div>
         </div>
-        
+
         <div class="card">
             <div class="card-header">
                 <h2 class="card-title">Quick Actions</h2>
@@ -311,7 +311,7 @@ function renderDashboard() {
 function renderFamily() {
     return `
         <h1 style="margin-bottom: 24px;">Family Management</h1>
-        
+
         ${state.user?.familyId === 'UNASSIGNED' ? `
             <div class="card">
                 <div class="card-header">
@@ -356,7 +356,7 @@ function renderFamily() {
 function renderChildren() {
     return `
         <h1 style="margin-bottom: 24px;">Child Management</h1>
-        
+
         <div class="card">
             <div class="card-header">
                 <h2 class="card-title">Children</h2>
@@ -369,7 +369,7 @@ function renderChildren() {
                 </div>
             </div>
         </div>
-        
+
         <div id="addChildModal" class="modal">
             <div class="modal-content">
                 <div class="modal-header">
@@ -401,7 +401,7 @@ function renderChildren() {
 function renderExpenses() {
     return `
         <h1 style="margin-bottom: 24px;">Expense Tracking</h1>
-        
+
         <div class="card">
             <div class="card-header">
                 <h2 class="card-title">Recent Expenses</h2>
@@ -414,7 +414,7 @@ function renderExpenses() {
                 </div>
             </div>
         </div>
-        
+
         <div id="addExpenseModal" class="modal">
             <div class="modal-content">
                 <div class="modal-header">
@@ -427,7 +427,7 @@ function renderExpenses() {
                         <label>Child</label>
                         <select id="childId" required>
                             <option value="">Select Child</option>
-                            ${state.children.map(child => 
+                            ${state.children.map(child =>
                                 `<option value="${child.userId}">${child.displayName}</option>`
                             ).join('')}
                         </select>
@@ -461,7 +461,7 @@ function renderExpenses() {
 function renderFunds() {
     return `
         <h1 style="margin-bottom: 24px;">Add Funds</h1>
-        
+
         <div class="card">
             <div class="card-header">
                 <h2 class="card-title">Add Funds to Child Account</h2>
@@ -472,7 +472,7 @@ function renderFunds() {
                     <label>Select Child</label>
                     <select id="fundChildId" required>
                         <option value="">Select Child</option>
-                        ${state.children.map(child => 
+                        ${state.children.map(child =>
                             `<option value="${child.userId}">${child.displayName}</option>`
                         ).join('')}
                     </select>
@@ -495,7 +495,7 @@ function renderFunds() {
 function renderAnalytics() {
     return `
         <h1 style="margin-bottom: 24px;">Analytics & Reports</h1>
-        
+
         <div class="card">
             <div class="card-header">
                 <h2 class="card-title">Spending Overview</h2>
@@ -510,7 +510,7 @@ function renderAnalytics() {
                 <li>Export to PDF/Excel</li>
             </ul>
         </div>
-        
+
         <div class="card">
             <div class="card-header">
                 <h2 class="card-title">Quick Stats</h2>
@@ -552,13 +552,13 @@ function attachGlobalHandlers() {
             const familyName = document.getElementById('familyName').value;
             const currency = document.getElementById('currency').value;
             const messageDiv = document.getElementById('familyMessage');
-            
+
             messageDiv.innerHTML = '<div class="alert alert-info">Creating family...</div>';
-            
+
             try {
                 await apiCall('/families', 'POST', { familyName, currency });
                 messageDiv.innerHTML = '<div class="alert alert-success">Family created successfully!</div>';
-                
+
                 // Reload user data
                 setTimeout(() => {
                     state.user.familyId = 'created';
@@ -570,7 +570,7 @@ function attachGlobalHandlers() {
             }
         });
     }
-    
+
     // Add Child Form
     const addChildForm = document.getElementById('addChildForm');
     if (addChildForm) {
@@ -580,12 +580,12 @@ function attachGlobalHandlers() {
             const age = document.getElementById('childAge').value;
             const weeklyAllowance = document.getElementById('allowance').value;
             const messageDiv = document.getElementById('childMessage');
-            
+
             messageDiv.innerHTML = '<div class="alert alert-info">Adding child...</div>';
-            
+
             try {
-                await apiCall('/children', 'POST', { 
-                    displayName, 
+                await apiCall('/children', 'POST', {
+                    displayName,
                     age: parseInt(age),
                     weeklyAllowance: parseFloat(weeklyAllowance)
                 });
@@ -596,10 +596,10 @@ function attachGlobalHandlers() {
                 messageDiv.innerHTML = `<div class="alert alert-error">${error.message}</div>`;
             }
         });
-        
+
         loadChildren();
     }
-    
+
     // Add Expense Form
     const addExpenseForm = document.getElementById('addExpenseForm');
     if (addExpenseForm) {
@@ -610,11 +610,11 @@ function attachGlobalHandlers() {
             const amount = document.getElementById('amount').value;
             const category = document.getElementById('category').value;
             const messageDiv = document.getElementById('expenseMessage');
-            
+
             messageDiv.innerHTML = '<div class="alert alert-info">Adding expense...</div>';
-            
+
             try {
-                await apiCall('/expenses', 'POST', { 
+                await apiCall('/expenses', 'POST', {
                     childId,
                     description,
                     amount: parseFloat(amount),
@@ -627,10 +627,10 @@ function attachGlobalHandlers() {
                 messageDiv.innerHTML = `<div class="alert alert-error">${error.message}</div>`;
             }
         });
-        
+
         loadExpenses();
     }
-    
+
     // Add Funds Form
     const addFundsForm = document.getElementById('addFundsForm');
     if (addFundsForm) {
@@ -640,11 +640,11 @@ function attachGlobalHandlers() {
             const amount = document.getElementById('fundAmount').value;
             const notes = document.getElementById('fundNotes').value;
             const messageDiv = document.getElementById('fundsMessage');
-            
+
             messageDiv.innerHTML = '<div class="alert alert-info">Adding funds...</div>';
-            
+
             try {
-                await apiCall('/funds', 'POST', { 
+                await apiCall('/funds', 'POST', {
                     childId,
                     amount: parseFloat(amount),
                     notes
@@ -663,7 +663,7 @@ async function loadChildren() {
     try {
         const data = await apiCall('/children');
         state.children = data.children || [];
-        
+
         const listDiv = document.getElementById('childrenList');
         if (state.children.length === 0) {
             listDiv.innerHTML = '<p style="padding: 20px; text-align: center; color: #a0aec0;">No children added yet. Click "Add Child" to get started.</p>';
@@ -692,7 +692,7 @@ async function loadChildren() {
             `;
         }
     } catch (error) {
-        document.getElementById('childrenList').innerHTML = 
+        document.getElementById('childrenList').innerHTML =
             `<div class="alert alert-error">Failed to load children: ${error.message}</div>`;
     }
 }
@@ -701,7 +701,7 @@ async function loadExpenses() {
     try {
         const data = await apiCall('/expenses');
         state.expenses = data.expenses || [];
-        
+
         const listDiv = document.getElementById('expensesList');
         if (state.expenses.length === 0) {
             listDiv.innerHTML = '<p style="padding: 20px; text-align: center; color: #a0aec0;">No expenses logged yet. Click "Add Expense" to get started.</p>';
@@ -732,8 +732,7 @@ async function loadExpenses() {
             `;
         }
     } catch (error) {
-        document.getElementById('expensesList').innerHTML = 
+        document.getElementById('expensesList').innerHTML =
             `<div class="alert alert-error">Failed to load expenses: ${error.message}</div>`;
     }
 }
-

@@ -407,15 +407,15 @@ tr:hover {
         transform: translateX(-100%);
         transition: transform 0.3s;
     }
-    
+
     .sidebar.mobile-open {
         transform: translateX(0);
     }
-    
+
     .main-content {
         margin-left: 0;
     }
-    
+
     .stats-grid {
         grid-template-columns: 1fr;
     }
@@ -435,4 +435,3 @@ tr:hover {
 .justify-between { justify-content: space-between; }
 .items-center { align-items: center; }
 .gap-2 { gap: 16px; }
-

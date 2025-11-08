@@ -15,10 +15,10 @@ export default function App() {
 
     setLoading(true);
     setMessage('Logging in...');
-    
+
     try {
       const API_URL = 'https://afbtrc48hc.execute-api.us-west-2.amazonaws.com/development';
-      
+
       const response = await fetch(`${API_URL}/auth/login`, {
         method: 'POST',
         headers: {
@@ -28,7 +28,7 @@ export default function App() {
       });
 
       const data = await response.json();
-      
+
       if (response.ok) {
         setMessage(`✅ Login successful! Welcome ${data.user?.displayName || 'User'}`);
       } else {
@@ -67,8 +67,8 @@ export default function App() {
             editable={!loading}
           />
 
-          <TouchableOpacity 
-            style={[styles.button, loading && styles.buttonDisabled]} 
+          <TouchableOpacity
+            style={[styles.button, loading && styles.buttonDisabled]}
             onPress={handleLogin}
             disabled={loading}
           >
