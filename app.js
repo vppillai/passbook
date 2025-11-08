@@ -1,7 +1,7 @@
 // Passbook Web Dashboard - Complete Application
 // API Configuration
 const API_URL = 'https://afbtrc48hc.execute-api.us-west-2.amazonaws.com/development';
-const VERSION = 'g989780f'; // Will be replaced during deployment
+const VERSION = 'g6428a65'; // Will be replaced during deployment
 
 // Currency symbols
 const currencySymbols = {
@@ -15,6 +15,20 @@ const currencySymbols = {
 function formatCurrency(amount, currency = 'CAD') {
     const symbol = currencySymbols[currency] || currency;
     return `${symbol}${parseFloat(amount || 0).toFixed(2)}`;
+}
+
+function getCategoryIcon(category) {
+    const icons = {
+        'Food': '🍔',
+        'Transport': '🚗',
+        'Entertainment': '🎮',
+        'Shopping': '🛍️',
+        'Education': '📚',
+        'Health': '💊',
+        'Sports': '⚽',
+        'Other': '💰'
+    };
+    return icons[category] || icons['Other'];
 }
 
 // SVG Icons
@@ -436,30 +450,123 @@ function renderDashboard() {
             </div>
         `;
     } else {
+        // Child Dashboard
+        const balance = state.user?.currentBalance || 0;
+        const expenseCount = state.expenses.length;
+        const recentExpenses = state.expenses.slice(0, 5);
+
         return `
-            <h1 style="margin-bottom: 24px;">My Dashboard</h1>
+            <div class="child-dashboard">
+                <div class="dashboard-header">
+                    <div>
+                        <h1 class="dashboard-title">My Dashboard</h1>
+                        <p class="dashboard-subtitle">Welcome back, ${state.user?.displayName || 'there'}! 👋</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="navigate('expenses')" style="height: fit-content;">
+                        ${icons.add} Add Expense
+                    </button>
+                </div>
 
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-icon">${icons.funds}</div>
-                    <div class="stat-label">Current Balance</div>
-                    <div class="stat-value">$${state.user?.currentBalance || '0.00'}</div>
+                <!-- Main Balance Card -->
+                <div class="balance-card-hero">
+                    <div class="balance-card-content">
+                        <div class="balance-header">
+                            <span class="balance-icon">${icons.funds}</span>
+                            <span class="balance-label">Current Balance</span>
+                        </div>
+                        <div class="balance-amount">$${balance.toFixed(2)}</div>
+                        <div class="balance-footer">
+                            <span class="balance-status ${balance >= 0 ? 'positive' : 'negative'}">
+                                ${balance >= 0 ? '✓ On track' : '⚠ Low balance'}
+                            </span>
+                        </div>
+                    </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-icon">${icons.expenses}</div>
-                    <div class="stat-label">Total Expenses</div>
-                    <div class="stat-value">${state.expenses.length}</div>
-                </div>
-            </div>
 
-            <div class="card">
-                <div class="card-header">
-                    <h2 class="card-title">Welcome ${state.user?.displayName}!</h2>
+                <!-- Stats Grid -->
+                <div class="stats-grid-compact">
+                    <div class="stat-card-compact">
+                        <div class="stat-compact-icon expenses-icon">${icons.expenses}</div>
+                        <div class="stat-compact-content">
+                            <div class="stat-compact-value">${expenseCount}</div>
+                            <div class="stat-compact-label">Total Expenses</div>
+                        </div>
+                    </div>
+                    <div class="stat-card-compact">
+                        <div class="stat-compact-icon spending-icon">📊</div>
+                        <div class="stat-compact-content">
+                            <div class="stat-compact-value">$${state.expenses.reduce((sum, exp) => sum + (exp.amount || 0), 0).toFixed(2)}</div>
+                            <div class="stat-compact-label">Total Spent</div>
+                        </div>
+                    </div>
+                    <div class="stat-card-compact">
+                        <div class="stat-compact-icon activity-icon">⚡</div>
+                        <div class="stat-compact-content">
+                            <div class="stat-compact-value">${expenseCount > 0 ? 'Active' : 'Inactive'}</div>
+                            <div class="stat-compact-label">Status</div>
+                        </div>
+                    </div>
                 </div>
-                <div class="card-body">
-                    <p>Track your expenses and manage your allowance.</p>
-                    <div style="margin-top: 16px;">
-                        <button class="btn btn-primary" onclick="navigate('expenses')">View My Expenses</button>
+
+                <!-- Recent Activity -->
+                <div class="card modern-card">
+                    <div class="card-header">
+                        <div>
+                            <h2 class="card-title">Recent Activity</h2>
+                            <p class="card-description">Your latest expenses at a glance</p>
+                        </div>
+                        <button class="btn btn-secondary" onclick="navigate('expenses')">View All</button>
+                    </div>
+                    <div class="card-body">
+                        ${recentExpenses.length > 0 ? `
+                            <div class="expense-list">
+                                ${recentExpenses.map(expense => `
+                                    <div class="expense-item">
+                                        <div class="expense-icon-wrapper">
+                                            <span class="expense-category-icon">${getCategoryIcon(expense.category)}</span>
+                                        </div>
+                                        <div class="expense-details">
+                                            <div class="expense-title">${expense.description || 'Untitled'}</div>
+                                            <div class="expense-meta">
+                                                <span class="expense-category">${expense.category || 'Other'}</span>
+                                                <span class="expense-date">${expense.timestamp ? new Date(expense.timestamp).toLocaleDateString() : 'N/A'}</span>
+                                            </div>
+                                        </div>
+                                        <div class="expense-amount">-$${(expense.amount || 0).toFixed(2)}</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : `
+                            <div class="empty-state">
+                                <div class="empty-state-icon">💰</div>
+                                <h3 class="empty-state-title">No expenses yet</h3>
+                                <p class="empty-state-text">Start tracking your expenses to see them here</p>
+                                <button class="btn btn-primary" onclick="navigate('expenses')">Add Your First Expense</button>
+                            </div>
+                        `}
+                    </div>
+                </div>
+
+                <!-- Quick Actions -->
+                <div class="card modern-card">
+                    <div class="card-header">
+                        <h2 class="card-title">Quick Actions</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="quick-actions-grid">
+                            <button class="quick-action-btn" onclick="navigate('expenses')">
+                                <span class="quick-action-icon">${icons.add}</span>
+                                <span class="quick-action-text">Add Expense</span>
+                            </button>
+                            <button class="quick-action-btn" onclick="navigate('expenses')">
+                                <span class="quick-action-icon">${icons.expenses}</span>
+                                <span class="quick-action-text">View History</span>
+                            </button>
+                            <button class="quick-action-btn" onclick="navigate('profile')">
+                                <span class="quick-action-icon">👤</span>
+                                <span class="quick-action-text">My Profile</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
