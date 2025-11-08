@@ -102,7 +102,6 @@ def handler(event, context):
         created_by=user_id,
         username=username if username else None,
         email=email if email else None,
-        weekly_allowance=weekly_allowance,
         funding_period=funding_period
     )
 
@@ -127,7 +126,6 @@ def handler(event, context):
                 'displayName': child.display_name,
                 'username': child.username,
                 'email': child.email,
-                'weeklyAllowance': str(child.weekly_allowance),
                 'fundingPeriod': child.funding_period
             }
         }

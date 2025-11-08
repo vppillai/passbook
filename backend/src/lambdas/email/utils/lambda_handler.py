@@ -6,9 +6,18 @@ import logging
 import traceback
 from typing import Any, Dict, Optional, Callable
 from functools import wraps
+from decimal import Decimal
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+
+class DecimalEncoder(json.JSONEncoder):
+    """JSON encoder that handles Decimal types."""
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super(DecimalEncoder, self).default(obj)
 
 
 class LambdaError(Exception):
@@ -48,7 +57,7 @@ def create_response(
     return {
         'statusCode': status_code,
         'headers': default_headers,
-        'body': json.dumps(body) if body else json.dumps({}),
+        'body': json.dumps(body, cls=DecimalEncoder) if body else json.dumps({}),
     }
 
 
