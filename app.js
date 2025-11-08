@@ -1,7 +1,7 @@
 // Passbook Web Dashboard - Complete Application
 // API Configuration
 const API_URL = 'https://afbtrc48hc.execute-api.us-west-2.amazonaws.com/development';
-const VERSION = 'v1-legacy-38-g18ba077'; // Will be replaced during deployment
+const VERSION = 'v1.0.0-1-g0d5da08'; // Will be replaced during deployment
 
 // Currency symbols
 const currencySymbols = {
@@ -524,8 +524,20 @@ function renderChildren() {
                         <input type="password" id="childPassword" required minlength="6">
                     </div>
                     <div class="form-group">
-                        <label>Weekly Allowance</label>
-                        <input type="number" id="allowance" required step="0.01" min="0">
+                        <label>Allowance Amount</label>
+                        <input type="number" id="allowance" required step="0.01" min="0" placeholder="10.00">
+                    </div>
+                    <div class="form-group">
+                        <label>Allowance Frequency</label>
+                        <select id="fundingPeriodType" required>
+                            <option value="weekly">Weekly</option>
+                            <option value="biweekly">Bi-weekly</option>
+                            <option value="monthly">Monthly</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Start Date (optional)</label>
+                        <input type="date" id="fundingStartDate">
                     </div>
                     <button type="submit" class="btn btn-primary btn-block">Add Child</button>
                 </form>
