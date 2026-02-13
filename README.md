@@ -57,10 +57,12 @@ Actions:
   1) Add/Update month
   2) Add expense (historic)
   3) Add funds
-  4) Set total balance
-  5) View month expenses
-  6) Reset PIN
-  7) Clear all sessions
+  4) Remove funds
+  5) Delete month
+  6) Set total balance
+  7) View month expenses
+  8) Reset PIN
+  9) Clear all sessions
   q) Quit
 ```
 
@@ -82,6 +84,12 @@ For scripting or batch operations:
 
 # Add extra funds to a month (updates allowance + balances)
 ./scripts/add-data.sh funds 2026-02 50
+
+# Remove funds from a month
+./scripts/add-data.sh rmfunds 2026-02 20
+
+# Delete a month and ALL its expenses
+./scripts/add-data.sh rmmonth 2026-01
 
 # Set total balance directly
 ./scripts/add-data.sh balance 170
