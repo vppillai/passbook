@@ -3,7 +3,6 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/vppillai/passbook/backend/internal/model"
@@ -73,7 +72,8 @@ func (rt *Router) handleAddExpense(w http.ResponseWriter, r *http.Request) {
 }
 
 func (rt *Router) handleDeleteExpense(w http.ResponseWriter, r *http.Request) {
-	// Extract expense ID from path: /api/expense/MONTH#2026-02/EXP#...
+	// Extract expense ID from path: /api/expense/2026-02/EXP#...
+	// Note: Path is already URL-decoded by API Gateway
 	path := r.URL.Path
 	parts := strings.TrimPrefix(path, "/api/expense/")
 
@@ -85,11 +85,7 @@ func (rt *Router) handleDeleteExpense(w http.ResponseWriter, r *http.Request) {
 	}
 
 	month := segments[0]
-	expenseID, err := url.PathUnescape(segments[1])
-	if err != nil {
-		http.Error(w, `{"error":"Invalid expense ID"}`, http.StatusBadRequest)
-		return
-	}
+	expenseID := segments[1]
 
 	if err := rt.expenseService.DeleteExpense(r.Context(), month, expenseID); err != nil {
 		switch err {

@@ -85,12 +85,15 @@ func handleRequest(ctx context.Context, event events.APIGatewayV2HTTPRequest) (e
 }
 
 func convertToHTTPRequest(ctx context.Context, event events.APIGatewayV2HTTPRequest) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, event.RequestContext.HTTP.Method, event.RawPath, nil)
+	// Create request with a placeholder path first
+	req, err := http.NewRequestWithContext(ctx, event.RequestContext.HTTP.Method, "/", nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// Set query parameters
+	// Set the path directly - RawPath from API Gateway is already decoded,
+	// but we need to set it without going through URL parsing which treats # as fragment
+	req.URL.Path = event.RawPath
 	req.URL.RawQuery = event.RawQueryString
 
 	// Set headers
