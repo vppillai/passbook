@@ -82,6 +82,7 @@ Resources:
                   - cloudformation:DescribeStackEvents
                   - cloudformation:DescribeStackResources
                   - cloudformation:GetTemplate
+                  - cloudformation:GetTemplateSummary
                   - cloudformation:ValidateTemplate
                   - cloudformation:CreateChangeSet
                   - cloudformation:DescribeChangeSet
@@ -89,6 +90,7 @@ Resources:
                   - cloudformation:DeleteChangeSet
                 Resource:
                   - !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/passbook-*/*'
+                  - '*'
 
               # S3 permissions for Lambda deployment
               - Effect: Allow
