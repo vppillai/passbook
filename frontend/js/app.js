@@ -5,7 +5,7 @@ import * as ui from './ui.js';
 
 class App {
     constructor() {
-        this.currentMonth = ui.getCurrentMonthKey();
+        this.currentMonth = null;
         this.monthData = null;
     }
 
@@ -20,7 +20,7 @@ class App {
             } else if (api.hasSession()) {
                 // Try to use existing session
                 try {
-                    await this.loadCurrentMonth();
+                    await this.loadInitialData();
                     ui.showScreen('main-screen');
                     auth.init(() => this.onAuthSuccess());
                 } catch (e) {
@@ -45,8 +45,24 @@ class App {
 
     async onAuthSuccess() {
         ui.showScreen('main-screen');
-        await this.loadCurrentMonth();
-        await this.loadMonthsList();
+        await this.loadInitialData();
+    }
+
+    async loadInitialData() {
+        // First, get the list of months to find the latest one
+        const { months } = await api.getMonths();
+
+        if (months && months.length > 0) {
+            // Use the latest month (list is sorted descending)
+            this.currentMonth = months[0].month;
+            await this.loadCurrentMonth();
+        } else {
+            // No months exist - show empty state
+            this.currentMonth = null;
+            ui.showEmptyState();
+        }
+
+        ui.renderMonthsList(months, this.currentMonth, (month) => this.selectMonth(month));
     }
 
     bindEvents() {
@@ -198,8 +214,8 @@ class App {
             document.getElementById('expense-form').reset();
             ui.showToast('Expense added!', 'success');
 
-            // Reload current month
-            await this.loadCurrentMonth();
+            // Reload data (in case a new month was created)
+            await this.loadInitialData();
         } catch (error) {
             ui.showError('expense-error', error.message);
         }

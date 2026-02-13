@@ -193,6 +193,16 @@ export function updateDashboard(data) {
     document.getElementById('expenses-total').textContent = `${formatCurrency(totalExpenses)} spent`;
 }
 
+export function showEmptyState() {
+    // Show empty state when no months exist
+    document.getElementById('month-title').textContent = 'No Data Yet';
+    document.getElementById('month-balance').textContent = formatCurrency(0);
+    document.getElementById('total-balance').textContent = formatCurrency(0);
+    document.getElementById('expenses-total').textContent = '$0.00 spent';
+    document.getElementById('expenses-list').innerHTML =
+        '<p class="no-expenses">No entries yet. Use admin tools to add monthly data.</p>';
+}
+
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
