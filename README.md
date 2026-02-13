@@ -304,8 +304,8 @@ Actions:
   2) Add expense           7) View month expenses
   3) Add funds             8) Export data
   4) Remove funds          9) Import data
-  5) Delete month          0) Reset PIN / Clear sessions
-  q) Quit
+  5) Delete month          r) Recalculate balance
+  0) Admin (PIN/Sessions)  q) Quit
 ```
 
 ### CLI Commands
@@ -335,6 +335,9 @@ For scripting or batch operations:
 
 # Set total balance directly
 ./scripts/add-data.sh balance 170
+
+# Recalculate total balance from all months
+./scripts/add-data.sh recalc
 
 # Export all data to JSON backup
 ./scripts/add-data.sh export                    # Auto-named: passbook-backup-YYYYMMDD-HHMMSS.json
