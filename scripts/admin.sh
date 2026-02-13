@@ -126,6 +126,26 @@ prompt() {
     fi
 }
 
+# Recalculate total balance from all months
+recalc_balance() {
+    local months_data=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
+        --filter-expression "begins_with(PK, :pk) AND SK = :sk" \
+        --expression-attribute-values '{":pk": {"S": "MONTH#"}, ":sk": {"S": "SUMMARY"}}' \
+        --output json 2>/dev/null)
+
+    # Sum up (allowance_added - total_expenses) for all months
+    local total=$(echo "$months_data" | jq -r '[.Items[] | ((.allowance_added.N // "0") | tonumber) - ((.total_expenses.N // "0") | tonumber)] | add // 0')
+
+    aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
+        \"PK\": {\"S\": \"BALANCE\"},
+        \"SK\": {\"S\": \"BALANCE\"},
+        \"total_balance\": {\"N\": \"$total\"},
+        \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
+    }"
+
+    echo "  Total balance recalculated: \$$total"
+}
+
 # Add a new month
 action_add_month() {
     show_header
@@ -159,6 +179,9 @@ action_add_month() {
         \"created_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"},
         \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
     }"
+
+    # Recalculate total balance
+    recalc_balance
 
     echo -e "${GREEN}✓ Month $month added/updated${NC}"
     pause

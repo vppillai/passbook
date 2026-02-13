@@ -16,6 +16,7 @@ Commands:
   funds YYYY-MM <amount>                     Add funds to a month
   rmfunds YYYY-MM <amount>                   Remove funds from a month
   rmmonth YYYY-MM                            Delete a month and all its expenses
+  recalc                                     Recalculate total balance from all months
   export [filename]                          Export all data to JSON
   import <filename>                          Import data from JSON backup
   show                                       Show all data in the table
@@ -48,6 +49,30 @@ fi
 TABLE_NAME="passbook-prod"
 REGION="us-west-2"
 
+# Recalculate total balance from all months
+recalc_balance() {
+    echo "Recalculating total balance from all months..."
+
+    local months_data=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
+        --filter-expression "begins_with(PK, :pk) AND SK = :sk" \
+        --expression-attribute-values '{":pk": {"S": "MONTH#"}, ":sk": {"S": "SUMMARY"}}' \
+        --output json 2>/dev/null)
+
+    # Sum up (allowance_added - total_expenses) for all months
+    local total=$(echo "$months_data" | jq -r '[.Items[] | ((.allowance_added.N // "0") | tonumber) - ((.total_expenses.N // "0") | tonumber)] | add // 0')
+
+    echo "  Calculated total balance: $total"
+
+    aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
+        \"PK\": {\"S\": \"BALANCE\"},
+        \"SK\": {\"S\": \"BALANCE\"},
+        \"total_balance\": {\"N\": \"$total\"},
+        \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
+    }"
+
+    echo "  Total balance updated to: $total"
+}
+
 # Add or update a month summary
 add_month() {
     local month="$1"
@@ -69,6 +94,9 @@ add_month() {
         \"created_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"},
         \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
     }"
+
+    # Recalculate total balance
+    recalc_balance
 }
 
 # Add an expense to a month
@@ -440,6 +468,9 @@ case "$1" in
         fi
         import_data "$2"
         ;;
+    recalc)
+        recalc_balance
+        ;;
     *)
         echo "Passbook Data Helper"
         echo ""
@@ -452,6 +483,7 @@ case "$1" in
         echo "  funds YYYY-MM amount           - Add funds to a month"
         echo "  rmfunds YYYY-MM amount         - Remove funds from a month"
         echo "  rmmonth YYYY-MM                - Delete a month and all its expenses"
+        echo "  recalc                         - Recalculate total balance from all months"
         echo "  show                           - Show all data in the table"
         echo "  export [file]                  - Export all data to JSON (default: timestamped file)"
         echo "  import <file>                  - Import data from JSON backup"
