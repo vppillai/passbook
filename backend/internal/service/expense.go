@@ -237,8 +237,8 @@ func (s *ExpenseService) ListMonths(ctx context.Context) (*model.MonthsResponse,
 	items := make([]model.MonthListItem, len(months))
 	for i, m := range months {
 		items[i] = model.MonthListItem{
-			Month:         m.Month,
-			EndingBalance: m.EndingBalance,
+			Month:        m.Month,
+			MonthlySaved: m.AllowanceAdded - m.TotalExpenses, // What was saved that month
 		}
 	}
 

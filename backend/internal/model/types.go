@@ -111,8 +111,8 @@ type ExpenseItem struct {
 }
 
 type MonthListItem struct {
-	Month         string  `json:"month"`
-	EndingBalance float64 `json:"ending_balance"`
+	Month        string  `json:"month"`
+	MonthlySaved float64 `json:"monthly_saved"` // allowance_added - total_expenses
 }
 
 type MonthsResponse struct {

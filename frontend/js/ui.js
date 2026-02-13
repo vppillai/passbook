@@ -168,7 +168,7 @@ export function renderMonthsList(months, currentMonth, onSelect) {
     container.innerHTML = months.map(month => `
         <li class="month-item ${month.month === currentMonth ? 'active' : ''}" data-month="${month.month}">
             <span class="month-name">${formatMonthName(month.month)}</span>
-            <span class="month-balance">${formatCurrency(month.ending_balance)}</span>
+            <span class="month-balance">${formatCurrency(month.monthly_saved)}</span>
         </li>
     `).join('');
 
