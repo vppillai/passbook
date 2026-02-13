@@ -206,7 +206,7 @@ action_add_month() {
             \"PK\": {\"S\": \"MONTH#$month\"},
             \"SK\": {\"S\": \"$expense_id\"},
             \"amount\": {\"N\": \"$expenses\"},
-            \"description\": {\"S\": \"Previous expenses\"},
+            \"description\": {\"S\": \"Total Expenses\"},
             \"created_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
         }"
     fi
