@@ -49,11 +49,38 @@ add_expense() {
     local month="$1"
     local amount="$2"
     local description="$3"
+
+    echo "Adding expense to $month: amount=$amount, description=$description"
+
+    # Check if month exists, create if not
+    local month_data=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+        --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
+        --output json 2>/dev/null)
+
+    local month_exists=$(echo "$month_data" | jq -r '.Item.month.S // empty')
+
+    if [ -z "$month_exists" ]; then
+        echo "  Month $month doesn't exist, creating with \$0 allowance..."
+        aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
+            \"PK\": {\"S\": \"MONTH#$month\"},
+            \"SK\": {\"S\": \"SUMMARY\"},
+            \"month\": {\"S\": \"$month\"},
+            \"starting_balance\": {\"N\": \"0\"},
+            \"allowance_added\": {\"N\": \"0\"},
+            \"total_expenses\": {\"N\": \"0\"},
+            \"ending_balance\": {\"N\": \"0\"},
+            \"created_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"},
+            \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
+        }"
+        month_data=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+            --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
+            --output json 2>/dev/null)
+    fi
+
+    # Add the expense
     local timestamp=$(date +%s%N | cut -b1-13)
     local random_id=$(head -c 8 /dev/urandom | xxd -p)
     local expense_id="EXP#${timestamp}#${random_id}"
-
-    echo "Adding expense to $month: amount=$amount, description=$description"
 
     aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
         \"PK\": {\"S\": \"MONTH#$month\"},
@@ -63,6 +90,37 @@ add_expense() {
         \"created_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
     }"
 
+    # Update month summary
+    local current_expenses=$(echo "$month_data" | jq -r '.Item.total_expenses.N // "0"')
+    local current_ending=$(echo "$month_data" | jq -r '.Item.ending_balance.N // "0"')
+    local new_expenses=$(echo "$current_expenses + $amount" | bc)
+    local new_ending=$(echo "$current_ending - $amount" | bc)
+
+    aws dynamodb update-item --table-name "$TABLE_NAME" --region "$REGION" \
+        --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
+        --update-expression "SET total_expenses = :e, ending_balance = :b, updated_at = :u" \
+        --expression-attribute-values "{
+            \":e\": {\"N\": \"$new_expenses\"},
+            \":b\": {\"N\": \"$new_ending\"},
+            \":u\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
+        }"
+
+    # Update total balance
+    local balance_item=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+        --key '{"PK": {"S": "BALANCE"}, "SK": {"S": "BALANCE"}}' \
+        --output json 2>/dev/null)
+    local current_total=$(echo "$balance_item" | jq -r '.Item.total_balance.N // "0"')
+    local new_total=$(echo "$current_total - $amount" | bc)
+
+    aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
+        \"PK\": {\"S\": \"BALANCE\"},
+        \"SK\": {\"S\": \"BALANCE\"},
+        \"total_balance\": {\"N\": \"$new_total\"},
+        \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
+    }"
+
+    echo "  Month expenses: $current_expenses -> $new_expenses"
+    echo "  Total balance: $current_total -> $new_total"
     echo "  Created expense ID: $expense_id"
 }
 
