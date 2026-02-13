@@ -130,7 +130,7 @@ export function renderExpenses(expenses, onDelete) {
     }
 
     container.innerHTML = expenses.map(expense => `
-        <div class="expense-item" data-id="${expense.id}">
+        <div class="expense-item" data-id="${encodeURIComponent(expense.id)}">
             <div class="expense-info">
                 <div class="expense-desc">${escapeHtml(expense.description)}</div>
                 <div class="expense-date">${formatDate(expense.created_at)}</div>
@@ -149,7 +149,7 @@ export function renderExpenses(expenses, onDelete) {
     container.querySelectorAll('.expense-delete').forEach(btn => {
         btn.addEventListener('click', (e) => {
             const item = e.target.closest('.expense-item');
-            const id = item.dataset.id;
+            const id = decodeURIComponent(item.dataset.id);
             if (confirm('Delete this expense?')) {
                 onDelete(id);
             }
