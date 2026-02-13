@@ -300,15 +300,11 @@ Monthly History:
 
 Actions:
 ─────────────────────────────────────────────
-  1) Add/Update month
-  2) Add expense (historic)
-  3) Add funds
-  4) Remove funds
-  5) Delete month
-  6) Set total balance
-  7) View month expenses
-  8) Reset PIN
-  9) Clear all sessions
+  1) Add/Update month      6) Set total balance
+  2) Add expense           7) View month expenses
+  3) Add funds             8) Export data
+  4) Remove funds          9) Import data
+  5) Delete month          0) Reset PIN / Clear sessions
   q) Quit
 ```
 
@@ -339,6 +335,13 @@ For scripting or batch operations:
 
 # Set total balance directly
 ./scripts/add-data.sh balance 170
+
+# Export all data to JSON backup
+./scripts/add-data.sh export                    # Auto-named: passbook-backup-YYYYMMDD-HHMMSS.json
+./scripts/add-data.sh export mybackup.json      # Custom filename
+
+# Import data from JSON backup
+./scripts/add-data.sh import mybackup.json
 
 # View all data in DynamoDB
 ./scripts/add-data.sh show

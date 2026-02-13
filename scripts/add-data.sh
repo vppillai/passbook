@@ -283,6 +283,79 @@ show_data() {
         --output json | jq -r '.Items[] | "\(.PK.S)/\(.SK.S): \(del(.PK, .SK) | to_entries | map("\(.key)=\(.value.N // .value.S)") | join(", "))"' | sort
 }
 
+# Export all data to JSON file
+export_data() {
+    local output_file="$1"
+
+    if [ -z "$output_file" ]; then
+        output_file="passbook-backup-$(date +%Y%m%d-%H%M%S).json"
+    fi
+
+    echo "Exporting data to $output_file..."
+
+    local data=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
+        --output json 2>/dev/null)
+
+    if [ -z "$data" ]; then
+        echo "Error: Failed to export data"
+        exit 1
+    fi
+
+    # Save with metadata
+    cat <<EOF | jq '.' > "$output_file"
+{
+  "export_info": {
+    "table_name": "$TABLE_NAME",
+    "region": "$REGION",
+    "exported_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+    "item_count": $(echo "$data" | jq '.Count')
+  },
+  "items": $(echo "$data" | jq '.Items')
+}
+EOF
+
+    local count=$(echo "$data" | jq '.Count')
+    echo "Exported $count items to $output_file"
+}
+
+# Import data from JSON file
+import_data() {
+    local input_file="$1"
+
+    if [ -z "$input_file" ]; then
+        echo "Error: Input file required"
+        exit 1
+    fi
+
+    if [ ! -f "$input_file" ]; then
+        echo "Error: File not found: $input_file"
+        exit 1
+    fi
+
+    local item_count=$(jq -r '.items | length' "$input_file" 2>/dev/null)
+    if [ -z "$item_count" ] || [ "$item_count" = "null" ]; then
+        echo "Error: Invalid backup file format"
+        exit 1
+    fi
+
+    echo "Importing $item_count items from $input_file..."
+
+    local success=0
+    local failed=0
+
+    jq -c '.items[]' "$input_file" | while read -r item; do
+        if aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" \
+            --item "$item" 2>/dev/null; then
+            ((success++))
+        else
+            ((failed++))
+            echo "  Failed to import: $(echo "$item" | jq -r '.PK.S + "/" + .SK.S')"
+        fi
+    done
+
+    echo "Import complete"
+}
+
 # Main command dispatch
 case "$1" in
     month)
@@ -330,6 +403,16 @@ case "$1" in
     show)
         show_data
         ;;
+    export)
+        export_data "$2"
+        ;;
+    import)
+        if [ $# -ne 2 ]; then
+            echo "Usage: $0 import <file.json>"
+            exit 1
+        fi
+        import_data "$2"
+        ;;
     *)
         echo "Passbook Data Helper"
         echo ""
@@ -343,6 +426,8 @@ case "$1" in
         echo "  rmfunds YYYY-MM amount         - Remove funds from a month"
         echo "  rmmonth YYYY-MM                - Delete a month and all its expenses"
         echo "  show                           - Show all data in the table"
+        echo "  export [file]                  - Export all data to JSON (default: timestamped file)"
+        echo "  import <file>                  - Import data from JSON backup"
         echo ""
         echo "Examples:"
         echo "  $0 month 2026-01 0 100 30       # January: started 0, got 100, spent 30 = 70"
@@ -351,6 +436,9 @@ case "$1" in
         echo "  $0 rmfunds 2026-02 20           # Remove \$20 from February"
         echo "  $0 rmmonth 2026-01              # Delete January and all its data"
         echo "  $0 balance 170                  # Set total balance to \$170"
+        echo "  $0 export                       # Export to passbook-backup-YYYYMMDD-HHMMSS.json"
+        echo "  $0 export backup.json           # Export to backup.json"
+        echo "  $0 import backup.json           # Import from backup.json"
         echo "  $0 show                         # Display all data"
         ;;
 esac

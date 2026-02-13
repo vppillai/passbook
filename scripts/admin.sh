@@ -585,6 +585,134 @@ action_remove_funds() {
     pause
 }
 
+# Admin submenu for PIN and sessions
+action_admin_menu() {
+    show_header
+    echo -e "${BOLD}Admin Options${NC}"
+    echo "─────────────────────────────────────────────"
+    echo ""
+    echo "  1) Reset PIN"
+    echo "  2) Clear all sessions"
+    echo "  b) Back to main menu"
+    echo ""
+    echo -ne "${YELLOW}Select option:${NC} "
+    read choice
+
+    case "$choice" in
+        1) action_reset_pin ;;
+        2) action_clear_sessions ;;
+        b|B) return ;;
+        *) echo -e "${RED}Invalid option${NC}"; sleep 1 ;;
+    esac
+}
+
+# Export all data to JSON file
+action_export_data() {
+    show_header
+    echo -e "${BOLD}Export Data${NC}"
+    echo "─────────────────────────────────────────────"
+    echo ""
+
+    local default_file="passbook-backup-$(date +%Y%m%d-%H%M%S).json"
+    prompt "Output file" output_file "$default_file"
+
+    echo ""
+    echo -e "${CYAN}Exporting data...${NC}"
+
+    # Scan all items from the table
+    local data=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
+        --output json 2>/dev/null)
+
+    if [ -z "$data" ]; then
+        echo -e "${RED}Error: Failed to export data${NC}"
+        pause
+        return
+    fi
+
+    # Save to file with metadata
+    local export_data=$(cat <<EOF
+{
+  "export_info": {
+    "table_name": "$TABLE_NAME",
+    "region": "$REGION",
+    "exported_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+    "item_count": $(echo "$data" | jq '.Count')
+  },
+  "items": $(echo "$data" | jq '.Items')
+}
+EOF
+)
+    echo "$export_data" | jq '.' > "$output_file"
+
+    local count=$(echo "$data" | jq '.Count')
+    echo -e "${GREEN}✓ Exported $count items to $output_file${NC}"
+    pause
+}
+
+# Import data from JSON file
+action_import_data() {
+    show_header
+    echo -e "${BOLD}${YELLOW}Import Data${NC}"
+    echo "─────────────────────────────────────────────"
+    echo ""
+    echo -e "${RED}Warning: This will ADD items to the database.${NC}"
+    echo -e "${RED}Existing items with the same keys will be OVERWRITTEN.${NC}"
+    echo ""
+
+    prompt "Input file" input_file ""
+
+    if [ -z "$input_file" ]; then
+        echo -e "${RED}Error: File path is required${NC}"
+        pause
+        return
+    fi
+
+    if [ ! -f "$input_file" ]; then
+        echo -e "${RED}Error: File not found: $input_file${NC}"
+        pause
+        return
+    fi
+
+    # Validate JSON structure
+    local item_count=$(jq -r '.items | length' "$input_file" 2>/dev/null)
+    if [ -z "$item_count" ] || [ "$item_count" = "null" ]; then
+        echo -e "${RED}Error: Invalid backup file format${NC}"
+        pause
+        return
+    fi
+
+    echo ""
+    echo "File contains $item_count items"
+    echo ""
+    prompt "Type 'IMPORT' to confirm" confirm ""
+
+    if [ "$confirm" != "IMPORT" ]; then
+        echo "Cancelled."
+        pause
+        return
+    fi
+
+    echo ""
+    echo -e "${CYAN}Importing data...${NC}"
+
+    local success=0
+    local failed=0
+
+    # Import each item
+    jq -c '.items[]' "$input_file" | while read -r item; do
+        if aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" \
+            --item "$item" 2>/dev/null; then
+            ((success++))
+        else
+            ((failed++))
+        fi
+    done
+
+    echo -e "${GREEN}✓ Import complete${NC}"
+    echo "  Note: Check the data to verify import was successful"
+    pause
+}
+
 # Pause and wait for key
 pause() {
     echo ""
@@ -599,15 +727,11 @@ main_menu() {
 
         echo -e "${BOLD}Actions:${NC}"
         echo "─────────────────────────────────────────────"
-        echo "  1) Add/Update month"
-        echo "  2) Add expense (historic)"
-        echo "  3) Add funds"
-        echo "  4) Remove funds"
-        echo "  5) Delete month"
-        echo "  6) Set total balance"
-        echo "  7) View month expenses"
-        echo "  8) Reset PIN"
-        echo "  9) Clear all sessions"
+        echo "  1) Add/Update month      6) Set total balance"
+        echo "  2) Add expense           7) View month expenses"
+        echo "  3) Add funds             8) Export data"
+        echo "  4) Remove funds          9) Import data"
+        echo "  5) Delete month          0) Reset PIN / Clear sessions"
         echo "  q) Quit"
         echo ""
         echo -ne "${YELLOW}Select option:${NC} "
@@ -621,8 +745,9 @@ main_menu() {
             5) action_delete_month ;;
             6) action_set_balance ;;
             7) action_view_expenses ;;
-            8) action_reset_pin ;;
-            9) action_clear_sessions ;;
+            8) action_export_data ;;
+            9) action_import_data ;;
+            0) action_admin_menu ;;
             q|Q)
                 clear
                 echo "Goodbye!"
