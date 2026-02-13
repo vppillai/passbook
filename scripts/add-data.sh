@@ -80,11 +80,25 @@ add_month() {
     local expenses="$3"
 
     # Auto-calculate starting balance from previous month
-    local prev_month=$(date -d "$month-01 -1 month" +%Y-%m 2>/dev/null || date -v-1m -j -f "%Y-%m-%d" "$month-01" +%Y-%m 2>/dev/null)
+    # Calculate previous month (works on both Linux and macOS)
+    local year=${month%-*}
+    local mon=${month#*-}
+    mon=$((10#$mon - 1))  # Remove leading zero and subtract 1
+    if [ "$mon" -eq 0 ]; then
+        mon=12
+        year=$((year - 1))
+    fi
+    local prev_month=$(printf "%04d-%02d" "$year" "$mon")
+
     local prev_data=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
         --key "{\"PK\": {\"S\": \"MONTH#$prev_month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
         --output json 2>/dev/null)
     local starting_balance=$(echo "$prev_data" | jq -r '.Item.ending_balance.N // "0"')
+
+    # Ensure starting_balance is a number
+    if [ -z "$starting_balance" ] || [ "$starting_balance" = "null" ]; then
+        starting_balance="0"
+    fi
 
     local ending_balance=$(echo "$starting_balance + $allowance - $expenses" | bc)
 
