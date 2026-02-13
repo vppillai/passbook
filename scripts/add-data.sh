@@ -331,15 +331,8 @@ delete_month() {
             --key "{\"PK\": {\"S\": \"$pk\"}, \"SK\": {\"S\": \"$sk\"}}"
     done
 
-    # Update total balance
-    local balance_item=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
-        --key '{"PK": {"S": "BALANCE"}, "SK": {"S": "BALANCE"}}' \
-        --output json 2>/dev/null)
-
-    local current_total=$(echo "$balance_item" | jq -r '.Item.total_balance.N // "0"')
-    local new_total=$(echo "$current_total - $ending_balance" | bc)
-    echo "  Total balance: $current_total -> $new_total"
-    set_balance "$new_total"
+    # Recalculate total balance
+    recalc_balance
 
     echo "Month $month deleted"
 }

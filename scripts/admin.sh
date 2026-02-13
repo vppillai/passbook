@@ -559,21 +559,9 @@ action_delete_month() {
                 --key "{\"PK\": {\"S\": \"$pk\"}, \"SK\": {\"S\": \"$sk\"}}"
         done
 
-        # Update total balance (subtract this month's ending balance)
-        local balance_item=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
-            --key '{"PK": {"S": "BALANCE"}, "SK": {"S": "BALANCE"}}' \
-            --output json 2>/dev/null)
-        local current_total=$(echo "$balance_item" | jq -r '.Item.total_balance.N // "0"')
-        local new_total=$(echo "$current_total - $ending_balance" | bc)
+        # Recalculate total balance
+        recalc_balance
 
-        aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
-            \"PK\": {\"S\": \"BALANCE\"},
-            \"SK\": {\"S\": \"BALANCE\"},
-            \"total_balance\": {\"N\": \"$new_total\"},
-            \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
-        }"
-
-        echo "  Total balance: \$$current_total → \$$new_total"
         echo -e "${GREEN}✓ Month $month deleted${NC}"
     else
         echo "Cancelled."
