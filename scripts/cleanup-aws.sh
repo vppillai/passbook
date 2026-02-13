@@ -1,0 +1,126 @@
+#!/bin/bash
+# Cleanup script to remove all AWS backend resources for passbook
+# Use this to completely remove the backend or before rehoming to another account
+
+set -e
+
+REGION="us-west-2"
+MAIN_STACK="passbook-prod"
+BOOTSTRAP_STACK="passbook-bootstrap"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${YELLOW}╔════════════════════════════════════════════════════╗${NC}"
+echo -e "${YELLOW}║     Passbook AWS Cleanup                           ║${NC}"
+echo -e "${YELLOW}╚════════════════════════════════════════════════════╝${NC}"
+echo
+
+# Check AWS CLI
+if ! command -v aws &> /dev/null; then
+    echo -e "${RED}Error: AWS CLI not found. Please install it first.${NC}"
+    exit 1
+fi
+
+# Verify AWS credentials
+if ! aws sts get-caller-identity &> /dev/null; then
+    echo -e "${RED}Error: AWS credentials not configured. Run 'aws configure' first.${NC}"
+    exit 1
+fi
+
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+BUCKET_NAME="passbook-lambda-deployments-${ACCOUNT_ID}"
+
+echo -e "AWS Account: ${GREEN}${ACCOUNT_ID}${NC}"
+echo -e "Region: ${GREEN}${REGION}${NC}"
+echo
+echo "This will delete:"
+echo "  - CloudFormation stack: ${MAIN_STACK}"
+echo "  - CloudFormation stack: ${BOOTSTRAP_STACK}"
+echo "  - S3 bucket: ${BUCKET_NAME}"
+echo "  - All data in DynamoDB table"
+echo
+echo -e "${RED}WARNING: This action is irreversible!${NC}"
+echo
+
+# Offer to export data first
+read -p "Do you want to export data before deleting? (y/N): " export_first
+if [[ "$export_first" =~ ^[Yy]$ ]]; then
+    BACKUP_FILE="passbook-backup-$(date +%Y%m%d-%H%M%S).json"
+    echo "Exporting data to ${BACKUP_FILE}..."
+    if ./scripts/add-data.sh export "$BACKUP_FILE" 2>/dev/null; then
+        echo -e "${GREEN}Data exported to ${BACKUP_FILE}${NC}"
+    else
+        echo -e "${YELLOW}Warning: Could not export data (table may not exist)${NC}"
+    fi
+    echo
+fi
+
+read -p "Are you sure you want to delete all AWS resources? (yes/no): " confirm
+if [[ "$confirm" != "yes" ]]; then
+    echo "Aborted."
+    exit 0
+fi
+
+echo
+echo "Starting cleanup..."
+echo
+
+# Step 1: Delete main stack
+echo -e "${YELLOW}[1/4] Deleting main stack (${MAIN_STACK})...${NC}"
+if aws cloudformation describe-stacks --stack-name "$MAIN_STACK" --region "$REGION" &> /dev/null; then
+    aws cloudformation delete-stack --stack-name "$MAIN_STACK" --region "$REGION"
+    echo "Waiting for stack deletion..."
+    aws cloudformation wait stack-delete-complete --stack-name "$MAIN_STACK" --region "$REGION"
+    echo -e "${GREEN}Main stack deleted.${NC}"
+else
+    echo "Stack not found, skipping."
+fi
+
+# Step 2: Empty S3 bucket
+echo -e "${YELLOW}[2/4] Emptying S3 bucket (${BUCKET_NAME})...${NC}"
+if aws s3 ls "s3://${BUCKET_NAME}" &> /dev/null; then
+    aws s3 rm "s3://${BUCKET_NAME}" --recursive
+    echo -e "${GREEN}Bucket emptied.${NC}"
+else
+    echo "Bucket not found, skipping."
+fi
+
+# Step 3: Delete S3 bucket
+echo -e "${YELLOW}[3/4] Deleting S3 bucket...${NC}"
+if aws s3 ls "s3://${BUCKET_NAME}" &> /dev/null; then
+    aws s3 rb "s3://${BUCKET_NAME}"
+    echo -e "${GREEN}Bucket deleted.${NC}"
+else
+    echo "Bucket not found, skipping."
+fi
+
+# Step 4: Delete bootstrap stack
+echo -e "${YELLOW}[4/4] Deleting bootstrap stack (${BOOTSTRAP_STACK})...${NC}"
+if aws cloudformation describe-stacks --stack-name "$BOOTSTRAP_STACK" --region "$REGION" &> /dev/null; then
+    aws cloudformation delete-stack --stack-name "$BOOTSTRAP_STACK" --region "$REGION"
+    echo "Waiting for stack deletion..."
+    aws cloudformation wait stack-delete-complete --stack-name "$BOOTSTRAP_STACK" --region "$REGION"
+    echo -e "${GREEN}Bootstrap stack deleted.${NC}"
+else
+    echo "Stack not found, skipping."
+fi
+
+echo
+echo -e "${GREEN}╔════════════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║     Cleanup Complete!                              ║${NC}"
+echo -e "${GREEN}╚════════════════════════════════════════════════════╝${NC}"
+echo
+echo "All passbook AWS resources have been deleted."
+echo
+echo "To rehome to another account:"
+echo "  1. Configure AWS CLI for new account: aws configure"
+echo "  2. Deploy bootstrap: aws cloudformation deploy --template-file infrastructure/bootstrap.yaml --stack-name passbook-bootstrap --capabilities CAPABILITY_NAMED_IAM --region us-west-2"
+echo "  3. Update GitHub secret AWS_ACCOUNT_ID"
+echo "  4. Push to trigger deployment"
+if [[ -n "$BACKUP_FILE" ]]; then
+    echo "  5. Import data: ./scripts/add-data.sh import ${BACKUP_FILE}"
+fi

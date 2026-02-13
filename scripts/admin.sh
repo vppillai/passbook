@@ -1,8 +1,47 @@
 #!/bin/bash
 # Passbook Admin TUI
 # Interactive terminal interface for managing passbook data
-#
-# Usage: ./scripts/admin.sh
+
+show_help() {
+    cat << 'EOF'
+Passbook Admin TUI - Interactive data management
+
+Usage: ./scripts/admin.sh [options]
+
+Options:
+  -h, --help    Show this help message
+
+Description:
+  Interactive terminal interface for managing passbook data in DynamoDB.
+  Provides a menu-driven interface for common operations.
+
+Features:
+  - View total balance and monthly history
+  - Add/update months with allowance
+  - Add expenses to any month
+  - Add or remove funds
+  - Delete months and all associated expenses
+  - Set total balance directly
+  - View detailed expenses for any month
+  - Export all data to JSON backup
+  - Import data from JSON backup
+  - Reset PIN / Clear sessions
+
+Prerequisites:
+  - AWS CLI v2 configured with credentials
+  - jq (JSON processor)
+  - bc (calculator)
+
+For non-interactive CLI operations, use:
+  ./scripts/add-data.sh --help
+EOF
+}
+
+# Show help if requested
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    show_help
+    exit 0
+fi
 
 TABLE_NAME="passbook-prod"
 REGION="us-west-2"

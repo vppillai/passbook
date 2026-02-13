@@ -1,22 +1,49 @@
 #!/bin/bash
 # Helper script to add data to the passbook app
-# Usage: ./scripts/add-data.sh [command] [args...]
-#
-# Commands:
-#   month YYYY-MM starting_balance allowance expenses  - Add/update a month summary
-#   expense YYYY-MM amount description                 - Add an expense to a month
-#   balance amount                                     - Set total balance
-#   funds YYYY-MM amount                               - Add funds to a month (updates allowance_added)
-#   show                                               - Show all data in the table
-#
-# Examples:
-#   ./scripts/add-data.sh month 2026-01 0 100 30
-#   ./scripts/add-data.sh expense 2026-01 15 "Book purchase"
-#   ./scripts/add-data.sh balance 170
-#   ./scripts/add-data.sh funds 2026-02 50
-#   ./scripts/add-data.sh show
 
 set -e
+
+show_help() {
+    cat << 'EOF'
+Passbook CLI - Data management for passbook app
+
+Usage: ./scripts/add-data.sh <command> [args...]
+
+Commands:
+  month YYYY-MM starting allowance expenses  Add/update a month summary
+  expense YYYY-MM amount "description"       Add an expense to a month
+  balance <amount>                           Set total balance
+  funds YYYY-MM <amount>                     Add funds to a month
+  rmfunds YYYY-MM <amount>                   Remove funds from a month
+  rmmonth YYYY-MM                            Delete a month and all its expenses
+  export [filename]                          Export all data to JSON
+  import <filename>                          Import data from JSON backup
+  show                                       Show all data in the table
+  help, --help, -h                           Show this help message
+
+Examples:
+  ./scripts/add-data.sh month 2026-01 0 100 30
+  ./scripts/add-data.sh expense 2026-01 15 "Book purchase"
+  ./scripts/add-data.sh balance 170
+  ./scripts/add-data.sh funds 2026-02 50
+  ./scripts/add-data.sh rmfunds 2026-02 20
+  ./scripts/add-data.sh rmmonth 2026-01
+  ./scripts/add-data.sh export mybackup.json
+  ./scripts/add-data.sh import mybackup.json
+  ./scripts/add-data.sh show
+
+Prerequisites:
+  - AWS CLI v2 configured with credentials
+  - jq (JSON processor)
+  - bc (calculator)
+EOF
+}
+
+# Show help if requested
+if [[ "$1" == "help" || "$1" == "--help" || "$1" == "-h" || -z "$1" ]]; then
+    show_help
+    exit 0
+fi
 
 TABLE_NAME="passbook-prod"
 REGION="us-west-2"

@@ -374,6 +374,51 @@ Open `frontend/index.html` directly in browser. API calls will fail without back
 
 ---
 
+## Cleanup / Rehoming
+
+To completely remove all AWS backend resources (for cleanup or migrating to another account):
+
+### Using the Cleanup Script
+
+```bash
+./scripts/cleanup-aws.sh
+```
+
+This interactive script will:
+1. Optionally export your data first
+2. Delete the main CloudFormation stack (DynamoDB, Lambda, API Gateway)
+3. Empty and delete the S3 deployment bucket
+4. Delete the bootstrap stack (OIDC provider, IAM role)
+
+### Manual Cleanup
+
+```bash
+# Delete main stack
+aws cloudformation delete-stack --stack-name passbook-prod --region us-west-2
+aws cloudformation wait stack-delete-complete --stack-name passbook-prod --region us-west-2
+
+# Empty and delete S3 bucket
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+aws s3 rm s3://passbook-lambda-deployments-${ACCOUNT_ID} --recursive
+aws s3 rb s3://passbook-lambda-deployments-${ACCOUNT_ID}
+
+# Delete bootstrap stack
+aws cloudformation delete-stack --stack-name passbook-bootstrap --region us-west-2
+aws cloudformation wait stack-delete-complete --stack-name passbook-bootstrap --region us-west-2
+```
+
+### Rehoming to Another AWS Account
+
+1. Export data: `./scripts/add-data.sh export backup.json`
+2. Run cleanup script on old account
+3. Configure AWS CLI for new account: `aws configure`
+4. Deploy bootstrap stack (see Deployment section)
+5. Update GitHub secret `AWS_ACCOUNT_ID` with new account
+6. Push to trigger deployment
+7. Import data: `./scripts/add-data.sh import backup.json`
+
+---
+
 ## Troubleshooting
 
 ### PIN Setup Fails
