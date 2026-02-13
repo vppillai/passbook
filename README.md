@@ -8,6 +8,30 @@ A simple, secure passbook app for tracking a child's allowance and expenses.
 
 ## Admin Tools
 
+### Prerequisites
+
+The admin scripts require the following tools to be installed and configured:
+
+| Tool | Purpose | Installation |
+|------|---------|--------------|
+| **AWS CLI v2** | DynamoDB access | [Install guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) |
+| **jq** | JSON parsing | `sudo apt install jq` / `brew install jq` |
+| **bc** | Arithmetic calculations | `sudo apt install bc` / `brew install bc` |
+| **xxd** | Random ID generation | Usually pre-installed (part of vim) |
+
+**AWS CLI Configuration:**
+
+```bash
+# Configure credentials (one-time setup)
+aws configure
+# Enter: AWS Access Key ID, Secret Access Key, Region (us-west-2)
+
+# Verify access to the DynamoDB table
+aws dynamodb describe-table --table-name passbook-prod --region us-west-2
+```
+
+The AWS credentials must have permissions to read/write to the `passbook-prod` DynamoDB table.
+
 ### Interactive TUI
 
 ```bash
