@@ -444,3 +444,7 @@ aws cloudformation wait stack-delete-complete --stack-name passbook-bootstrap --
 ## License
 
 MIT
+
+---
+
+<sub>Built with [Claude Code](https://claude.ai/code)</sub>
