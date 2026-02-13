@@ -125,6 +125,99 @@ add_funds() {
     set_balance "$new_total"
 }
 
+# Remove funds from a month
+remove_funds() {
+    local month="$1"
+    local amount="$2"
+
+    echo "Removing $amount from month $month"
+
+    # Get current month data
+    local current=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+        --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
+        --output json 2>/dev/null)
+
+    if [ -z "$current" ] || [ "$current" = "{}" ] || [ "$(echo "$current" | jq -r '.Item // empty')" = "" ]; then
+        echo "Error: Month $month not found"
+        exit 1
+    fi
+
+    local current_allowance=$(echo "$current" | jq -r '.Item.allowance_added.N // "0"')
+    local current_ending=$(echo "$current" | jq -r '.Item.ending_balance.N // "0"')
+    local new_allowance=$(echo "$current_allowance - $amount" | bc)
+    local new_ending=$(echo "$current_ending - $amount" | bc)
+
+    echo "  Allowance: $current_allowance -> $new_allowance"
+    echo "  Ending balance: $current_ending -> $new_ending"
+
+    aws dynamodb update-item --table-name "$TABLE_NAME" --region "$REGION" \
+        --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
+        --update-expression "SET allowance_added = :a, ending_balance = :e, updated_at = :u" \
+        --expression-attribute-values "{
+            \":a\": {\"N\": \"$new_allowance\"},
+            \":e\": {\"N\": \"$new_ending\"},
+            \":u\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
+        }"
+
+    # Update total balance
+    local balance_item=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+        --key '{"PK": {"S": "BALANCE"}, "SK": {"S": "BALANCE"}}' \
+        --output json 2>/dev/null)
+
+    local current_total=$(echo "$balance_item" | jq -r '.Item.total_balance.N // "0"')
+    local new_total=$(echo "$current_total - $amount" | bc)
+    echo "  Total balance: $current_total -> $new_total"
+    set_balance "$new_total"
+}
+
+# Delete a month and all its data
+delete_month() {
+    local month="$1"
+
+    echo "Deleting month $month and all its expenses"
+
+    # Get month data first to know the ending balance
+    local month_data=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+        --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
+        --output json 2>/dev/null)
+
+    if [ -z "$month_data" ] || [ "$(echo "$month_data" | jq -r '.Item // empty')" = "" ]; then
+        echo "Error: Month $month not found"
+        exit 1
+    fi
+
+    local ending_balance=$(echo "$month_data" | jq -r '.Item.ending_balance.N // "0"')
+
+    # Delete all items for this month (summary + expenses)
+    local items=$(aws dynamodb query --table-name "$TABLE_NAME" --region "$REGION" \
+        --key-condition-expression "PK = :pk" \
+        --expression-attribute-values "{\":pk\": {\"S\": \"MONTH#$month\"}}" \
+        --projection-expression "PK, SK" \
+        --output json 2>/dev/null)
+
+    local count=$(echo "$items" | jq -r '.Items | length')
+    echo "  Deleting $count item(s)..."
+
+    echo "$items" | jq -c '.Items[]' | while read item; do
+        local pk=$(echo "$item" | jq -r '.PK.S')
+        local sk=$(echo "$item" | jq -r '.SK.S')
+        aws dynamodb delete-item --table-name "$TABLE_NAME" --region "$REGION" \
+            --key "{\"PK\": {\"S\": \"$pk\"}, \"SK\": {\"S\": \"$sk\"}}"
+    done
+
+    # Update total balance
+    local balance_item=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+        --key '{"PK": {"S": "BALANCE"}, "SK": {"S": "BALANCE"}}' \
+        --output json 2>/dev/null)
+
+    local current_total=$(echo "$balance_item" | jq -r '.Item.total_balance.N // "0"')
+    local new_total=$(echo "$current_total - $ending_balance" | bc)
+    echo "  Total balance: $current_total -> $new_total"
+    set_balance "$new_total"
+
+    echo "Month $month deleted"
+}
+
 # Show all data
 show_data() {
     echo "=== All Data in $TABLE_NAME ==="
@@ -162,6 +255,20 @@ case "$1" in
         fi
         add_funds "$2" "$3"
         ;;
+    rmfunds)
+        if [ $# -ne 3 ]; then
+            echo "Usage: $0 rmfunds YYYY-MM amount"
+            exit 1
+        fi
+        remove_funds "$2" "$3"
+        ;;
+    rmmonth)
+        if [ $# -ne 2 ]; then
+            echo "Usage: $0 rmmonth YYYY-MM"
+            exit 1
+        fi
+        delete_month "$2"
+        ;;
     show)
         show_data
         ;;
@@ -174,14 +281,17 @@ case "$1" in
         echo "  month YYYY-MM start allow exp  - Add/update a month (calculates ending balance)"
         echo "  expense YYYY-MM amount desc    - Add an expense to a month"
         echo "  balance amount                 - Set total balance directly"
-        echo "  funds YYYY-MM amount           - Add funds to a month (updates allowance & balances)"
+        echo "  funds YYYY-MM amount           - Add funds to a month"
+        echo "  rmfunds YYYY-MM amount         - Remove funds from a month"
+        echo "  rmmonth YYYY-MM                - Delete a month and all its expenses"
         echo "  show                           - Show all data in the table"
         echo ""
         echo "Examples:"
         echo "  $0 month 2026-01 0 100 30       # January: started 0, got 100, spent 30 = 70"
-        echo "  $0 month 2026-02 70 100 0       # February: started 70, got 100, spent 0 = 170"
         echo "  $0 expense 2026-01 15 Book      # Add \$15 expense for 'Book' in January"
         echo "  $0 funds 2026-02 50             # Add \$50 extra funds to February"
+        echo "  $0 rmfunds 2026-02 20           # Remove \$20 from February"
+        echo "  $0 rmmonth 2026-01              # Delete January and all its data"
         echo "  $0 balance 170                  # Set total balance to \$170"
         echo "  $0 show                         # Display all data"
         ;;

@@ -411,6 +411,160 @@ action_clear_sessions() {
     pause
 }
 
+# Delete a month and all its expenses
+action_delete_month() {
+    show_header
+    echo -e "${BOLD}${RED}Delete Month${NC}"
+    echo "─────────────────────────────────────────────"
+    echo ""
+    echo -e "${YELLOW}Warning: This will delete the month summary and ALL expenses for that month.${NC}"
+    echo ""
+
+    prompt "Month to delete (YYYY-MM)" month ""
+
+    if [ -z "$month" ]; then
+        echo -e "${RED}Error: Month is required${NC}"
+        pause
+        return
+    fi
+
+    # Check if month exists
+    local month_data=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+        --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
+        --output json 2>/dev/null)
+
+    if [ -z "$month_data" ] || [ "$(echo "$month_data" | jq -r '.Item // empty')" = "" ]; then
+        echo -e "${RED}Month $month not found${NC}"
+        pause
+        return
+    fi
+
+    local ending_balance=$(echo "$month_data" | jq -r '.Item.ending_balance.N // "0"')
+    echo ""
+    echo "Month $month has ending balance: \$$ending_balance"
+    prompt "Type 'DELETE' to confirm" confirm ""
+
+    if [ "$confirm" = "DELETE" ]; then
+        echo -e "${CYAN}Deleting month data...${NC}"
+
+        # Delete all expenses for this month
+        local expenses=$(aws dynamodb query --table-name "$TABLE_NAME" --region "$REGION" \
+            --key-condition-expression "PK = :pk" \
+            --expression-attribute-values "{\":pk\": {\"S\": \"MONTH#$month\"}}" \
+            --projection-expression "PK, SK" \
+            --output json 2>/dev/null)
+
+        local count=$(echo "$expenses" | jq -r '.Items | length')
+        echo "Deleting $count item(s)..."
+
+        echo "$expenses" | jq -c '.Items[]' | while read item; do
+            local pk=$(echo "$item" | jq -r '.PK.S')
+            local sk=$(echo "$item" | jq -r '.SK.S')
+            aws dynamodb delete-item --table-name "$TABLE_NAME" --region "$REGION" \
+                --key "{\"PK\": {\"S\": \"$pk\"}, \"SK\": {\"S\": \"$sk\"}}"
+        done
+
+        # Update total balance (subtract this month's ending balance)
+        local balance_item=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+            --key '{"PK": {"S": "BALANCE"}, "SK": {"S": "BALANCE"}}' \
+            --output json 2>/dev/null)
+        local current_total=$(echo "$balance_item" | jq -r '.Item.total_balance.N // "0"')
+        local new_total=$(echo "$current_total - $ending_balance" | bc)
+
+        aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
+            \"PK\": {\"S\": \"BALANCE\"},
+            \"SK\": {\"S\": \"BALANCE\"},
+            \"total_balance\": {\"N\": \"$new_total\"},
+            \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
+        }"
+
+        echo "  Total balance: \$$current_total → \$$new_total"
+        echo -e "${GREEN}✓ Month $month deleted${NC}"
+    else
+        echo "Cancelled."
+    fi
+    pause
+}
+
+# Remove funds from a month
+action_remove_funds() {
+    show_header
+    echo -e "${BOLD}Remove Funds${NC}"
+    echo "─────────────────────────────────────────────"
+    echo ""
+
+    local current_month=$(date +%Y-%m)
+    prompt "Month (YYYY-MM)" month "$current_month"
+
+    # Get current month data
+    local month_data=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+        --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
+        --output json 2>/dev/null)
+
+    if [ -z "$month_data" ] || [ "$(echo "$month_data" | jq -r '.Item // empty')" = "" ]; then
+        echo -e "${RED}Month $month not found${NC}"
+        pause
+        return
+    fi
+
+    local current_allowance=$(echo "$month_data" | jq -r '.Item.allowance_added.N // "0"')
+    local current_ending=$(echo "$month_data" | jq -r '.Item.ending_balance.N // "0"')
+
+    echo ""
+    echo -e "Current allowance: ${GREEN}\$$current_allowance${NC}"
+    echo -e "Current ending balance: ${GREEN}\$$current_ending${NC}"
+    echo ""
+    prompt "Amount to remove" amount ""
+
+    if [ -z "$amount" ]; then
+        echo -e "${RED}Error: Amount is required${NC}"
+        pause
+        return
+    fi
+
+    local new_allowance=$(echo "$current_allowance - $amount" | bc)
+    local new_ending=$(echo "$current_ending - $amount" | bc)
+
+    if [ "$(echo "$new_allowance < 0" | bc)" -eq 1 ]; then
+        echo -e "${RED}Error: Cannot remove more than current allowance (\$$current_allowance)${NC}"
+        pause
+        return
+    fi
+
+    echo ""
+    echo -e "${CYAN}Removing funds...${NC}"
+
+    aws dynamodb update-item --table-name "$TABLE_NAME" --region "$REGION" \
+        --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
+        --update-expression "SET allowance_added = :a, ending_balance = :e, updated_at = :u" \
+        --expression-attribute-values "{
+            \":a\": {\"N\": \"$new_allowance\"},
+            \":e\": {\"N\": \"$new_ending\"},
+            \":u\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
+        }"
+
+    echo "  Allowance: \$$current_allowance → \$$new_allowance"
+    echo "  Ending balance: \$$current_ending → \$$new_ending"
+
+    # Update total balance
+    local balance_item=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+        --key '{"PK": {"S": "BALANCE"}, "SK": {"S": "BALANCE"}}' \
+        --output json 2>/dev/null)
+    local current_total=$(echo "$balance_item" | jq -r '.Item.total_balance.N // "0"')
+    local new_total=$(echo "$current_total - $amount" | bc)
+
+    aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
+        \"PK\": {\"S\": \"BALANCE\"},
+        \"SK\": {\"S\": \"BALANCE\"},
+        \"total_balance\": {\"N\": \"$new_total\"},
+        \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
+    }"
+
+    echo "  Total balance: \$$current_total → \$$new_total"
+    echo -e "${GREEN}✓ Removed \$$amount from $month${NC}"
+    pause
+}
+
 # Pause and wait for key
 pause() {
     echo ""
@@ -428,10 +582,12 @@ main_menu() {
         echo "  1) Add/Update month"
         echo "  2) Add expense (historic)"
         echo "  3) Add funds"
-        echo "  4) Set total balance"
-        echo "  5) View month expenses"
-        echo "  6) Reset PIN"
-        echo "  7) Clear all sessions"
+        echo "  4) Remove funds"
+        echo "  5) Delete month"
+        echo "  6) Set total balance"
+        echo "  7) View month expenses"
+        echo "  8) Reset PIN"
+        echo "  9) Clear all sessions"
         echo "  q) Quit"
         echo ""
         echo -ne "${YELLOW}Select option:${NC} "
@@ -441,10 +597,12 @@ main_menu() {
             1) action_add_month ;;
             2) action_add_expense ;;
             3) action_add_funds ;;
-            4) action_set_balance ;;
-            5) action_view_expenses ;;
-            6) action_reset_pin ;;
-            7) action_clear_sessions ;;
+            4) action_remove_funds ;;
+            5) action_delete_month ;;
+            6) action_set_balance ;;
+            7) action_view_expenses ;;
+            8) action_reset_pin ;;
+            9) action_clear_sessions ;;
             q|Q)
                 clear
                 echo "Goodbye!"
