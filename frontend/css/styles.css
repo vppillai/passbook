@@ -186,21 +186,16 @@ body {
 }
 
 .key-letters {
-    font-size: 0.5rem;
-    font-weight: 400;
-    letter-spacing: 1px;
+    font-size: 0.55rem;
+    font-weight: 500;
+    letter-spacing: 1.5px;
     margin-top: 2px;
-    opacity: 0.7;
 }
 
 .pin-key:active {
     background: var(--primary-color);
     color: white;
     transform: scale(0.95);
-}
-
-.pin-key:active .key-letters {
-    opacity: 1;
 }
 
 .pin-key[data-value="clear"],
