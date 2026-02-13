@@ -6,103 +6,9 @@ A simple, secure passbook app for tracking a child's allowance and expenses.
 
 ---
 
-## Admin Tools
-
-### Prerequisites
-
-The admin scripts require the following tools to be installed and configured:
-
-| Tool | Purpose | Installation |
-|------|---------|--------------|
-| **AWS CLI v2** | DynamoDB access | [Install guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) |
-| **jq** | JSON parsing | `sudo apt install jq` / `brew install jq` |
-| **bc** | Arithmetic calculations | `sudo apt install bc` / `brew install bc` |
-| **xxd** | Random ID generation | Usually pre-installed (part of vim) |
-
-**AWS CLI Configuration:**
-
-```bash
-# Configure credentials (one-time setup)
-aws configure
-# Enter: AWS Access Key ID, Secret Access Key, Region (us-west-2)
-
-# Verify access to the DynamoDB table
-aws dynamodb describe-table --table-name passbook-prod --region us-west-2
-```
-
-The AWS credentials must have permissions to read/write to the `passbook-prod` DynamoDB table.
-
-### Interactive TUI
-
-```bash
-./scripts/admin.sh
-```
-
-Provides a menu-driven interface:
-
-```
-╔════════════════════════════════════════════╗
-║     Passbook Admin Console                 ║
-╚════════════════════════════════════════════╝
-
-Total Balance: $170
-
-Monthly History:
-─────────────────────────────────────────────
-  2026-02  │  Start: $70  │  +$100  │  -$0  │  End: $170
-  2026-01  │  Start: $0   │  +$100  │  -$30 │  End: $70
-
-Actions:
-─────────────────────────────────────────────
-  1) Add/Update month
-  2) Add expense (historic)
-  3) Add funds
-  4) Remove funds
-  5) Delete month
-  6) Set total balance
-  7) View month expenses
-  8) Reset PIN
-  9) Clear all sessions
-  q) Quit
-```
-
-### CLI Commands
-
-For scripting or batch operations:
-
-```bash
-# Add a month summary (auto-calculates ending balance)
-./scripts/add-data.sh month 2026-01 0 100 30
-#                      ^     ^  ^   ^
-#                      |     |  |   └── expenses
-#                      |     |  └────── allowance
-#                      |     └───────── starting balance
-#                      └─────────────── YYYY-MM
-
-# Add a historic expense
-./scripts/add-data.sh expense 2026-01 15 "Book purchase"
-
-# Add extra funds to a month (updates allowance + balances)
-./scripts/add-data.sh funds 2026-02 50
-
-# Remove funds from a month
-./scripts/add-data.sh rmfunds 2026-02 20
-
-# Delete a month and ALL its expenses
-./scripts/add-data.sh rmmonth 2026-01
-
-# Set total balance directly
-./scripts/add-data.sh balance 170
-
-# View all data in DynamoDB
-./scripts/add-data.sh show
-```
-
----
-
 ## Features
 
-- $100 monthly allowance (configurable)
+- Monthly allowance tracking (configurable, default $100)
 - Expense tracking with descriptions
 - Running balance calculation
 - Monthly history view
@@ -253,39 +159,6 @@ This app is hosted in a **public GitHub repository**. Below is a comprehensive s
 
 ---
 
-## Project Structure
-
-```
-passbook/
-├── .github/workflows/
-│   ├── deploy-frontend.yaml    # GitHub Pages deployment
-│   └── deploy-backend.yaml     # Lambda build, test, deploy
-├── frontend/
-│   ├── index.html              # Single page application
-│   ├── css/styles.css          # Mobile-first responsive design
-│   └── js/
-│       ├── app.js              # Main application logic
-│       ├── api.js              # HTTP client with session handling
-│       ├── auth.js             # PIN entry UI and logic
-│       └── ui.js               # Rendering and helpers
-├── backend/
-│   ├── cmd/api/main.go         # Lambda entry point
-│   └── internal/
-│       ├── handler/            # HTTP route handlers
-│       ├── service/            # Business logic (auth, expenses)
-│       ├── repository/         # DynamoDB operations
-│       ├── middleware/         # CORS, authentication
-│       └── model/              # Data structures
-├── infrastructure/
-│   ├── bootstrap.yaml          # One-time: OIDC provider, S3 bucket
-│   └── template.yaml           # Main: DynamoDB, Lambda, API Gateway
-└── scripts/
-    ├── admin.sh                # Interactive TUI
-    └── add-data.sh             # CLI batch operations
-```
-
----
-
 ## Deployment
 
 ### Prerequisites
@@ -331,6 +204,39 @@ Workflows will:
 
 ---
 
+## Project Structure
+
+```
+passbook/
+├── .github/workflows/
+│   ├── deploy-frontend.yaml    # GitHub Pages deployment
+│   └── deploy-backend.yaml     # Lambda build, test, deploy
+├── frontend/
+│   ├── index.html              # Single page application
+│   ├── css/styles.css          # Mobile-first responsive design
+│   └── js/
+│       ├── app.js              # Main application logic
+│       ├── api.js              # HTTP client with session handling
+│       ├── auth.js             # PIN entry UI and logic
+│       └── ui.js               # Rendering and helpers
+├── backend/
+│   ├── cmd/api/main.go         # Lambda entry point
+│   └── internal/
+│       ├── handler/            # HTTP route handlers
+│       ├── service/            # Business logic (auth, expenses)
+│       ├── repository/         # DynamoDB operations
+│       ├── middleware/         # CORS, authentication
+│       └── model/              # Data structures
+├── infrastructure/
+│   ├── bootstrap.yaml          # One-time: OIDC provider, S3 bucket
+│   └── template.yaml           # Main: DynamoDB, Lambda, API Gateway
+└── scripts/
+    ├── admin.sh                # Interactive TUI
+    └── add-data.sh             # CLI batch operations
+```
+
+---
+
 ## Cost Estimate
 
 | Service | Expected Usage | Monthly Cost |
@@ -343,6 +249,100 @@ Workflows will:
 | **Total** | | **~$0.01/month** |
 
 All services within AWS Free Tier for typical usage.
+
+---
+
+## Admin Tools
+
+Scripts for managing data directly in DynamoDB.
+
+### Prerequisites
+
+| Tool | Purpose | Installation |
+|------|---------|--------------|
+| **AWS CLI v2** | DynamoDB access | [Install guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) |
+| **jq** | JSON parsing | `sudo apt install jq` / `brew install jq` |
+| **bc** | Arithmetic calculations | `sudo apt install bc` / `brew install bc` |
+| **xxd** | Random ID generation | Usually pre-installed (part of vim) |
+
+**AWS CLI Configuration:**
+
+```bash
+# Configure credentials (one-time setup)
+aws configure
+# Enter: AWS Access Key ID, Secret Access Key, Region (us-west-2)
+
+# Verify access to the DynamoDB table
+aws dynamodb describe-table --table-name passbook-prod --region us-west-2
+```
+
+### Interactive TUI
+
+```bash
+./scripts/admin.sh
+```
+
+Provides a menu-driven interface:
+
+```
+╔════════════════════════════════════════════╗
+║     Passbook Admin Console                 ║
+╚════════════════════════════════════════════╝
+
+Total Balance: $148
+
+Monthly History:
+
+  Month      │   Starting │  Allowance │   Expenses │     Ending │      Saved
+  ───────────┼────────────┼────────────┼────────────┼────────────┼────────────
+  2026-02    │         $0 │      +$100 │        -$1 │        $99 │        $99
+  2026-01    │         $0 │       +$50 │        -$1 │        $49 │        $49
+
+Actions:
+─────────────────────────────────────────────
+  1) Add/Update month
+  2) Add expense (historic)
+  3) Add funds
+  4) Remove funds
+  5) Delete month
+  6) Set total balance
+  7) View month expenses
+  8) Reset PIN
+  9) Clear all sessions
+  q) Quit
+```
+
+### CLI Commands
+
+For scripting or batch operations:
+
+```bash
+# Add a month summary (auto-calculates ending balance)
+./scripts/add-data.sh month 2026-01 0 100 30
+#                      ^     ^  ^   ^
+#                      |     |  |   └── expenses
+#                      |     |  └────── allowance
+#                      |     └───────── starting balance
+#                      └─────────────── YYYY-MM
+
+# Add a historic expense (auto-creates month if needed)
+./scripts/add-data.sh expense 2026-01 15 "Book purchase"
+
+# Add extra funds to a month
+./scripts/add-data.sh funds 2026-02 50
+
+# Remove funds from a month
+./scripts/add-data.sh rmfunds 2026-02 20
+
+# Delete a month and ALL its expenses
+./scripts/add-data.sh rmmonth 2026-01
+
+# Set total balance directly
+./scripts/add-data.sh balance 170
+
+# View all data in DynamoDB
+./scripts/add-data.sh show
+```
 
 ---
 
