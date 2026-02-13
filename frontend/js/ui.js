@@ -183,9 +183,11 @@ export function updateDashboard(data) {
     // Update month title
     document.getElementById('month-title').textContent = formatMonthName(data.month);
 
-    // Update balances
-    const monthBalance = data.summary ? data.summary.ending_balance : 0;
-    document.getElementById('month-balance').textContent = formatCurrency(monthBalance);
+    // Update balances - show this month's savings (allowance - expenses)
+    const monthlySaved = data.summary
+        ? (data.summary.allowance_added || 0) - (data.summary.total_expenses || 0)
+        : 0;
+    document.getElementById('month-balance').textContent = formatCurrency(monthlySaved);
     document.getElementById('total-balance').textContent = formatCurrency(data.total_balance);
 
     // Update expenses total
