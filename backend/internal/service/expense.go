@@ -44,12 +44,23 @@ func GetPreviousMonth(month string) string {
 	return fmt.Sprintf("%04d-%02d", prev.Year(), prev.Month())
 }
 
-// GetMonthData retrieves month summary and expenses, creating if necessary
+// GetMonthData retrieves month summary and expenses (does NOT auto-create)
 func (s *ExpenseService) GetMonthData(ctx context.Context, month string) (*model.MonthDataResponse, error) {
-	// Get or create month summary
-	summary, err := s.getOrCreateMonthSummary(ctx, month)
+	// Get month summary (don't auto-create)
+	summary, err := s.repo.GetMonthSummary(ctx, month)
 	if err != nil {
 		return nil, err
+	}
+
+	// If month doesn't exist, return empty summary
+	if summary == nil {
+		summary = &model.MonthSummary{
+			Month:           month,
+			StartingBalance: 0,
+			AllowanceAdded:  0,
+			TotalExpenses:   0,
+			EndingBalance:   0,
+		}
 	}
 
 	// Get expenses for the month
@@ -83,8 +94,9 @@ func (s *ExpenseService) GetMonthData(ctx context.Context, month string) (*model
 	}, nil
 }
 
-// getOrCreateMonthSummary gets or creates a month summary with allowance
-func (s *ExpenseService) getOrCreateMonthSummary(ctx context.Context, month string) (*model.MonthSummary, error) {
+// ensureMonthExists gets or creates a month summary WITHOUT adding allowance
+// Allowance should be added manually via admin scripts
+func (s *ExpenseService) ensureMonthExists(ctx context.Context, month string) (*model.MonthSummary, error) {
 	summary, err := s.repo.GetMonthSummary(ctx, month)
 	if err != nil {
 		return nil, err
@@ -94,34 +106,16 @@ func (s *ExpenseService) getOrCreateMonthSummary(ctx context.Context, month stri
 		return summary, nil
 	}
 
-	// Create new month summary
-	// Get previous month's ending balance as starting balance
-	prevMonth := GetPreviousMonth(month)
-	prevSummary, err := s.repo.GetMonthSummary(ctx, prevMonth)
-	if err != nil {
-		return nil, err
-	}
-
-	startingBalance := 0.0
-	if prevSummary != nil {
-		startingBalance = prevSummary.EndingBalance
-	}
-
-	// Create new summary with allowance
+	// Create new month summary with $0 allowance
 	summary = &model.MonthSummary{
 		Month:           month,
-		StartingBalance: startingBalance,
-		AllowanceAdded:  s.monthlyAllowance,
+		StartingBalance: 0,
+		AllowanceAdded:  0,
 		TotalExpenses:   0,
-		EndingBalance:   startingBalance + s.monthlyAllowance,
+		EndingBalance:   0,
 	}
 
 	if err := s.repo.SaveMonthSummary(ctx, summary); err != nil {
-		return nil, err
-	}
-
-	// Update total balance with the allowance
-	if _, err := s.repo.UpdateBalance(ctx, s.monthlyAllowance); err != nil {
 		return nil, err
 	}
 
@@ -143,8 +137,8 @@ func (s *ExpenseService) AddExpense(ctx context.Context, req *model.AddExpenseRe
 
 	month := GetCurrentMonth()
 
-	// Ensure month summary exists
-	summary, err := s.getOrCreateMonthSummary(ctx, month)
+	// Ensure month summary exists (created with $0 allowance if new)
+	summary, err := s.ensureMonthExists(ctx, month)
 	if err != nil {
 		return nil, err
 	}
