@@ -219,6 +219,8 @@ class App {
         const currentPin = document.getElementById('current-pin').value;
         const newPin = document.getElementById('new-pin').value;
         const confirmPin = document.getElementById('confirm-pin').value;
+        const submitBtn = document.querySelector('#change-pin-form button[type="submit"]');
+        const originalText = submitBtn.textContent;
 
         ui.hideError('change-pin-error');
 
@@ -231,6 +233,10 @@ class App {
             ui.showError('change-pin-error', 'New PINs do not match');
             return;
         }
+
+        // Show loading state
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Changing...';
 
         try {
             await api.changePin(currentPin, newPin);
@@ -246,6 +252,10 @@ class App {
             ui.showToast('PIN changed successfully!', 'success');
         } catch (error) {
             ui.showError('change-pin-error', error.message);
+        } finally {
+            // Reset button state
+            submitBtn.disabled = false;
+            submitBtn.textContent = originalText;
         }
     }
 }
