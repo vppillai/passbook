@@ -41,6 +41,7 @@ echo "This will delete:"
 echo "  - CloudFormation stack: ${MAIN_STACK}"
 echo "  - CloudFormation stack: ${BOOTSTRAP_STACK}"
 echo "  - S3 bucket: ${BUCKET_NAME}"
+echo "  - CloudWatch logs: /aws/lambda/passbook-api"
 echo "  - All data in DynamoDB table"
 echo
 echo -e "${RED}WARNING: This action is irreversible!${NC}"
@@ -70,7 +71,7 @@ echo "Starting cleanup..."
 echo
 
 # Step 1: Delete main stack
-echo -e "${YELLOW}[1/4] Deleting main stack (${MAIN_STACK})...${NC}"
+echo -e "${YELLOW}[1/5] Deleting main stack (${MAIN_STACK})...${NC}"
 if aws cloudformation describe-stacks --stack-name "$MAIN_STACK" --region "$REGION" &> /dev/null; then
     aws cloudformation delete-stack --stack-name "$MAIN_STACK" --region "$REGION"
     echo "Waiting for stack deletion..."
@@ -81,7 +82,7 @@ else
 fi
 
 # Step 2: Empty S3 bucket
-echo -e "${YELLOW}[2/4] Emptying S3 bucket (${BUCKET_NAME})...${NC}"
+echo -e "${YELLOW}[2/5] Emptying S3 bucket (${BUCKET_NAME})...${NC}"
 if aws s3 ls "s3://${BUCKET_NAME}" &> /dev/null; then
     aws s3 rm "s3://${BUCKET_NAME}" --recursive
     echo -e "${GREEN}Bucket emptied.${NC}"
@@ -90,7 +91,7 @@ else
 fi
 
 # Step 3: Delete S3 bucket
-echo -e "${YELLOW}[3/4] Deleting S3 bucket...${NC}"
+echo -e "${YELLOW}[3/5] Deleting S3 bucket...${NC}"
 if aws s3 ls "s3://${BUCKET_NAME}" &> /dev/null; then
     aws s3 rb "s3://${BUCKET_NAME}"
     echo -e "${GREEN}Bucket deleted.${NC}"
@@ -98,8 +99,18 @@ else
     echo "Bucket not found, skipping."
 fi
 
-# Step 4: Delete bootstrap stack
-echo -e "${YELLOW}[4/4] Deleting bootstrap stack (${BOOTSTRAP_STACK})...${NC}"
+# Step 4: Delete CloudWatch logs
+echo -e "${YELLOW}[4/5] Deleting CloudWatch log group...${NC}"
+LOG_GROUP="/aws/lambda/passbook-api"
+if aws logs describe-log-groups --log-group-name-prefix "$LOG_GROUP" --region "$REGION" --query "logGroups[?logGroupName=='$LOG_GROUP']" --output text 2>/dev/null | grep -q "$LOG_GROUP"; then
+    aws logs delete-log-group --log-group-name "$LOG_GROUP" --region "$REGION"
+    echo -e "${GREEN}Log group deleted.${NC}"
+else
+    echo "Log group not found, skipping."
+fi
+
+# Step 5: Delete bootstrap stack
+echo -e "${YELLOW}[5/5] Deleting bootstrap stack (${BOOTSTRAP_STACK})...${NC}"
 if aws cloudformation describe-stacks --stack-name "$BOOTSTRAP_STACK" --region "$REGION" &> /dev/null; then
     aws cloudformation delete-stack --stack-name "$BOOTSTRAP_STACK" --region "$REGION"
     echo "Waiting for stack deletion..."
