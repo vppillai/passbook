@@ -144,9 +144,12 @@ Resources:
                   - apigateway:PUT
                   - apigateway:DELETE
                   - apigateway:PATCH
+                  - apigateway:TagResource
+                  - apigateway:UntagResource
                 Resource:
                   - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis/*'
                   - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis'
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/tags/*'
 
               # IAM permissions for Lambda execution role
               - Effect: Allow
