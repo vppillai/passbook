@@ -95,6 +95,19 @@ add_month() {
         \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
     }"
 
+    # If expenses > 0, create an expense record so it shows in the frontend
+    if [ "$(echo "$expenses > 0" | bc)" -eq 1 ]; then
+        local expense_id="EXP#$(date +%s)000000000#$(head -c 4 /dev/urandom | xxd -p)"
+        echo "  Creating expense record for \$$expenses..."
+        aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
+            \"PK\": {\"S\": \"MONTH#$month\"},
+            \"SK\": {\"S\": \"$expense_id\"},
+            \"amount\": {\"N\": \"$expenses\"},
+            \"description\": {\"S\": \"Previous expenses\"},
+            \"created_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
+        }"
+    fi
+
     # Recalculate total balance
     recalc_balance
 }
