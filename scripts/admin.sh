@@ -319,7 +319,7 @@ action_add_funds() {
         --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
         --output json 2>/dev/null)
 
-    if [ -z "$month_data" ] || [ "$month_data" = "{}" ]; then
+    if [ -z "$month_data" ] || [ "$month_data" = "{}" ] || [ "$(echo "$month_data" | jq -r '.Item // empty')" = "" ]; then
         echo "  Month $month not found, creating it..."
         aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
             \"PK\": {\"S\": \"MONTH#$month\"},
@@ -332,6 +332,11 @@ action_add_funds() {
             \"created_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"},
             \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
         }"
+        # Recalculate total balance after creating new month
+        recalc_balance
+        echo -e "${GREEN}✓ Created month $month with \$$amount${NC}"
+        pause
+        return
     else
         local current_allowance=$(echo "$month_data" | jq -r '.Item.allowance_added.N // "0"')
         local current_ending=$(echo "$month_data" | jq -r '.Item.ending_balance.N // "0"')
@@ -794,8 +799,8 @@ main_menu() {
         echo "  2) Add expense           7) View month expenses"
         echo "  3) Add funds             8) Export data"
         echo "  4) Remove funds          9) Import data"
-        echo "  5) Delete month          0) Reset PIN / Clear sessions"
-        echo "  q) Quit"
+        echo "  5) Delete month          r) Recalculate balance"
+        echo "  0) Admin (PIN/Sessions)  q) Quit"
         echo ""
         echo -ne "${YELLOW}Select option:${NC} "
         read choice
@@ -810,6 +815,7 @@ main_menu() {
             7) action_view_expenses ;;
             8) action_export_data ;;
             9) action_import_data ;;
+            r|R) echo ""; recalc_balance; pause ;;
             0) action_admin_menu ;;
             q|Q)
                 clear
