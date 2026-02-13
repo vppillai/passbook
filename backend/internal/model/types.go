@@ -21,15 +21,15 @@ type Balance struct {
 
 // MonthSummary holds the summary for a specific month
 type MonthSummary struct {
-	PK              string    `dynamodbav:"PK"`
-	SK              string    `dynamodbav:"SK"`
-	Month           string    `dynamodbav:"month"`
-	StartingBalance float64   `dynamodbav:"starting_balance"`
-	AllowanceAdded  float64   `dynamodbav:"allowance_added"`
-	TotalExpenses   float64   `dynamodbav:"total_expenses"`
-	EndingBalance   float64   `dynamodbav:"ending_balance"`
-	CreatedAt       time.Time `dynamodbav:"created_at"`
-	UpdatedAt       time.Time `dynamodbav:"updated_at"`
+	PK              string    `dynamodbav:"PK" json:"-"`
+	SK              string    `dynamodbav:"SK" json:"-"`
+	Month           string    `dynamodbav:"month" json:"month"`
+	StartingBalance float64   `dynamodbav:"starting_balance" json:"starting_balance"`
+	AllowanceAdded  float64   `dynamodbav:"allowance_added" json:"allowance_added"`
+	TotalExpenses   float64   `dynamodbav:"total_expenses" json:"total_expenses"`
+	EndingBalance   float64   `dynamodbav:"ending_balance" json:"ending_balance"`
+	CreatedAt       time.Time `dynamodbav:"created_at" json:"created_at"`
+	UpdatedAt       time.Time `dynamodbav:"updated_at" json:"updated_at"`
 }
 
 // Expense represents a single expense entry
