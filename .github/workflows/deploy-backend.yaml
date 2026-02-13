@@ -26,11 +26,11 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-          cache-dependency-path: backend/go.sum
+          cache: false
 
       - name: Download dependencies
         working-directory: backend
-        run: go mod download
+        run: go mod tidy
 
       - name: Run tests
         working-directory: backend
@@ -52,11 +52,12 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-          cache-dependency-path: backend/go.sum
+          cache: false
 
       - name: Build Lambda
         working-directory: backend
         run: |
+          go mod tidy
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags lambda.norpc -o bootstrap ./cmd/api
           zip function.zip bootstrap
 
