@@ -155,15 +155,21 @@ action_add_month() {
 
     local current_month=$(date +%Y-%m)
     prompt "Month (YYYY-MM)" month "$current_month"
-    prompt "Starting balance" starting_balance "0"
     prompt "Allowance added" allowance "100"
     prompt "Total expenses" expenses "0"
+
+    # Auto-calculate starting balance from previous month
+    local prev_month=$(date -d "$month-01 -1 month" +%Y-%m 2>/dev/null || date -v-1m -j -f "%Y-%m-%d" "$month-01" +%Y-%m 2>/dev/null)
+    local prev_data=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+        --key "{\"PK\": {\"S\": \"MONTH#$prev_month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
+        --output json 2>/dev/null)
+    local starting_balance=$(echo "$prev_data" | jq -r '.Item.ending_balance.N // "0"')
 
     local ending_balance=$(echo "$starting_balance + $allowance - $expenses" | bc)
 
     echo ""
     echo -e "${CYAN}Creating month summary...${NC}"
-    echo "  Starting: \$$starting_balance"
+    echo "  Starting: \$$starting_balance (from $prev_month)"
     echo "  Allowance: +\$$allowance"
     echo "  Expenses: -\$$expenses"
     echo "  Ending: \$$ending_balance"

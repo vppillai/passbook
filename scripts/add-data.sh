@@ -10,7 +10,7 @@ Passbook CLI - Data management for passbook app
 Usage: ./scripts/add-data.sh <command> [args...]
 
 Commands:
-  month YYYY-MM starting allowance expenses  Add/update a month summary
+  month YYYY-MM allowance expenses           Add/update a month (starting balance auto-calculated)
   expense YYYY-MM amount "description"       Add an expense to a month
   balance <amount>                           Set total balance
   funds YYYY-MM <amount>                     Add funds to a month
@@ -23,7 +23,7 @@ Commands:
   help, --help, -h                           Show this help message
 
 Examples:
-  ./scripts/add-data.sh month 2026-01 0 100 30
+  ./scripts/add-data.sh month 2026-01 100 30    # January: allowance $100, spent $30
   ./scripts/add-data.sh expense 2026-01 15 "Book purchase"
   ./scripts/add-data.sh balance 170
   ./scripts/add-data.sh funds 2026-02 50
@@ -76,12 +76,19 @@ recalc_balance() {
 # Add or update a month summary
 add_month() {
     local month="$1"
-    local starting_balance="$2"
-    local allowance="$3"
-    local expenses="$4"
+    local allowance="$2"
+    local expenses="$3"
+
+    # Auto-calculate starting balance from previous month
+    local prev_month=$(date -d "$month-01 -1 month" +%Y-%m 2>/dev/null || date -v-1m -j -f "%Y-%m-%d" "$month-01" +%Y-%m 2>/dev/null)
+    local prev_data=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+        --key "{\"PK\": {\"S\": \"MONTH#$prev_month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
+        --output json 2>/dev/null)
+    local starting_balance=$(echo "$prev_data" | jq -r '.Item.ending_balance.N // "0"')
+
     local ending_balance=$(echo "$starting_balance + $allowance - $expenses" | bc)
 
-    echo "Adding month $month: starting=$starting_balance, allowance=$allowance, expenses=$expenses, ending=$ending_balance"
+    echo "Adding month $month: starting=$starting_balance (from $prev_month), allowance=$allowance, expenses=$expenses, ending=$ending_balance"
 
     aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
         \"PK\": {\"S\": \"MONTH#$month\"},
@@ -420,11 +427,12 @@ import_data() {
 # Main command dispatch
 case "$1" in
     month)
-        if [ $# -ne 5 ]; then
-            echo "Usage: $0 month YYYY-MM starting_balance allowance expenses"
+        if [ $# -ne 4 ]; then
+            echo "Usage: $0 month YYYY-MM allowance expenses"
+            echo "  Starting balance is auto-calculated from previous month"
             exit 1
         fi
-        add_month "$2" "$3" "$4" "$5"
+        add_month "$2" "$3" "$4"
         ;;
     expense)
         if [ $# -lt 4 ]; then
@@ -483,7 +491,7 @@ case "$1" in
         echo "Usage: $0 <command> [args...]"
         echo ""
         echo "Commands:"
-        echo "  month YYYY-MM start allow exp  - Add/update a month (calculates ending balance)"
+        echo "  month YYYY-MM allowance exp    - Add/update a month (starting balance auto-calculated)"
         echo "  expense YYYY-MM amount desc    - Add an expense to a month"
         echo "  balance amount                 - Set total balance directly"
         echo "  funds YYYY-MM amount           - Add funds to a month"
@@ -495,7 +503,7 @@ case "$1" in
         echo "  import <file>                  - Import data from JSON backup"
         echo ""
         echo "Examples:"
-        echo "  $0 month 2026-01 0 100 30       # January: started 0, got 100, spent 30 = 70"
+        echo "  $0 month 2026-01 100 30         # January: allowance 100, spent 30"
         echo "  $0 expense 2026-01 15 Book      # Add \$15 expense for 'Book' in January"
         echo "  $0 funds 2026-02 50             # Add \$50 extra funds to February"
         echo "  $0 rmfunds 2026-02 20           # Remove \$20 from February"

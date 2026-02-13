@@ -313,13 +313,12 @@ Actions:
 For scripting or batch operations:
 
 ```bash
-# Add a month summary (auto-calculates ending balance)
-./scripts/add-data.sh month 2026-01 0 100 30
-#                      ^     ^  ^   ^
-#                      |     |  |   └── expenses
-#                      |     |  └────── allowance
-#                      |     └───────── starting balance
-#                      └─────────────── YYYY-MM
+# Add a month summary (starting balance auto-calculated from previous month)
+./scripts/add-data.sh month 2026-01 100 30
+#                      ^     ^   ^
+#                      |     |   └── expenses
+#                      |     └────── allowance
+#                      └──────────── YYYY-MM
 
 # Add a historic expense (auto-creates month if needed)
 ./scripts/add-data.sh expense 2026-01 15 "Book purchase"
