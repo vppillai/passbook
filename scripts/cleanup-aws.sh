@@ -7,6 +7,8 @@ set -e
 REGION="us-west-2"
 MAIN_STACK="passbook-prod"
 BOOTSTRAP_STACK="passbook-bootstrap"
+TABLE_NAME="passbook-prod"
+LOG_GROUP="/aws/lambda/passbook-api-prod"
 
 # Colors
 RED='\033[0;31m'
@@ -32,7 +34,8 @@ if ! aws sts get-caller-identity &> /dev/null; then
 fi
 
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-BUCKET_NAME="passbook-lambda-deployments-${ACCOUNT_ID}"
+# S3 bucket name matches bootstrap.yaml: passbook-lambda-{account}-{region}
+BUCKET_NAME="passbook-lambda-${ACCOUNT_ID}-${REGION}"
 
 echo -e "AWS Account: ${GREEN}${ACCOUNT_ID}${NC}"
 echo -e "Region: ${GREEN}${REGION}${NC}"
@@ -40,9 +43,9 @@ echo
 echo "This will delete:"
 echo "  - CloudFormation stack: ${MAIN_STACK}"
 echo "  - CloudFormation stack: ${BOOTSTRAP_STACK}"
+echo "  - DynamoDB table: ${TABLE_NAME} (retained by CloudFormation)"
 echo "  - S3 bucket: ${BUCKET_NAME}"
-echo "  - CloudWatch logs: /aws/lambda/passbook-api"
-echo "  - All data in DynamoDB table"
+echo "  - CloudWatch logs: ${LOG_GROUP}"
 echo
 echo -e "${RED}WARNING: This action is irreversible!${NC}"
 echo
@@ -70,8 +73,8 @@ echo
 echo "Starting cleanup..."
 echo
 
-# Step 1: Delete main stack
-echo -e "${YELLOW}[1/5] Deleting main stack (${MAIN_STACK})...${NC}"
+# Step 1: Delete main stack (Note: DynamoDB table is retained due to DeletionPolicy)
+echo -e "${YELLOW}[1/6] Deleting main stack (${MAIN_STACK})...${NC}"
 if aws cloudformation describe-stacks --stack-name "$MAIN_STACK" --region "$REGION" &> /dev/null; then
     aws cloudformation delete-stack --stack-name "$MAIN_STACK" --region "$REGION"
     echo "Waiting for stack deletion..."
@@ -81,36 +84,63 @@ else
     echo "Stack not found, skipping."
 fi
 
-# Step 2: Empty S3 bucket
-echo -e "${YELLOW}[2/5] Emptying S3 bucket (${BUCKET_NAME})...${NC}"
-if aws s3 ls "s3://${BUCKET_NAME}" &> /dev/null; then
-    aws s3 rm "s3://${BUCKET_NAME}" --recursive
+# Step 2: Delete DynamoDB table (retained by CloudFormation due to DeletionPolicy: Retain)
+echo -e "${YELLOW}[2/6] Deleting DynamoDB table (${TABLE_NAME})...${NC}"
+if aws dynamodb describe-table --table-name "$TABLE_NAME" --region "$REGION" &> /dev/null; then
+    aws dynamodb delete-table --table-name "$TABLE_NAME" --region "$REGION" > /dev/null
+    echo "Waiting for table deletion..."
+    aws dynamodb wait table-not-exists --table-name "$TABLE_NAME" --region "$REGION"
+    echo -e "${GREEN}DynamoDB table deleted.${NC}"
+else
+    echo "Table not found, skipping."
+fi
+
+# Step 3: Empty S3 bucket (including versioned objects)
+echo -e "${YELLOW}[3/6] Emptying S3 bucket (${BUCKET_NAME})...${NC}"
+if aws s3api head-bucket --bucket "$BUCKET_NAME" &> /dev/null; then
+    # Delete all object versions (bucket has versioning enabled)
+    echo "Deleting all object versions..."
+    aws s3api list-object-versions --bucket "$BUCKET_NAME" --output json 2>/dev/null | \
+        jq -r '.Versions[]? | "--key \"\(.Key)\" --version-id \(.VersionId)"' | \
+        while read -r line; do
+            if [ -n "$line" ]; then
+                eval "aws s3api delete-object --bucket \"$BUCKET_NAME\" $line" 2>/dev/null || true
+            fi
+        done
+    # Delete all delete markers
+    aws s3api list-object-versions --bucket "$BUCKET_NAME" --output json 2>/dev/null | \
+        jq -r '.DeleteMarkers[]? | "--key \"\(.Key)\" --version-id \(.VersionId)"' | \
+        while read -r line; do
+            if [ -n "$line" ]; then
+                eval "aws s3api delete-object --bucket \"$BUCKET_NAME\" $line" 2>/dev/null || true
+            fi
+        done
     echo -e "${GREEN}Bucket emptied.${NC}"
 else
     echo "Bucket not found, skipping."
 fi
 
-# Step 3: Delete S3 bucket
-echo -e "${YELLOW}[3/5] Deleting S3 bucket...${NC}"
-if aws s3 ls "s3://${BUCKET_NAME}" &> /dev/null; then
+# Step 4: Delete S3 bucket
+echo -e "${YELLOW}[4/6] Deleting S3 bucket...${NC}"
+if aws s3api head-bucket --bucket "$BUCKET_NAME" &> /dev/null; then
     aws s3 rb "s3://${BUCKET_NAME}"
     echo -e "${GREEN}Bucket deleted.${NC}"
 else
     echo "Bucket not found, skipping."
 fi
 
-# Step 4: Delete CloudWatch logs
-echo -e "${YELLOW}[4/5] Deleting CloudWatch log group...${NC}"
-LOG_GROUP="/aws/lambda/passbook-api"
-if aws logs describe-log-groups --log-group-name-prefix "$LOG_GROUP" --region "$REGION" --query "logGroups[?logGroupName=='$LOG_GROUP']" --output text 2>/dev/null | grep -q "$LOG_GROUP"; then
+# Step 5: Delete CloudWatch logs
+echo -e "${YELLOW}[5/6] Deleting CloudWatch log group...${NC}"
+if aws logs describe-log-groups --log-group-name-prefix "$LOG_GROUP" --region "$REGION" \
+    --query "logGroups[?logGroupName=='$LOG_GROUP'].logGroupName" --output text 2>/dev/null | grep -q "$LOG_GROUP"; then
     aws logs delete-log-group --log-group-name "$LOG_GROUP" --region "$REGION"
     echo -e "${GREEN}Log group deleted.${NC}"
 else
     echo "Log group not found, skipping."
 fi
 
-# Step 5: Delete bootstrap stack
-echo -e "${YELLOW}[5/5] Deleting bootstrap stack (${BOOTSTRAP_STACK})...${NC}"
+# Step 6: Delete bootstrap stack
+echo -e "${YELLOW}[6/6] Deleting bootstrap stack (${BOOTSTRAP_STACK})...${NC}"
 if aws cloudformation describe-stacks --stack-name "$BOOTSTRAP_STACK" --region "$REGION" &> /dev/null; then
     aws cloudformation delete-stack --stack-name "$BOOTSTRAP_STACK" --region "$REGION"
     echo "Waiting for stack deletion..."
