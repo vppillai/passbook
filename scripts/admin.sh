@@ -44,13 +44,25 @@ show_summary() {
     echo -e "${GREEN}Total Balance: \$${total_balance}${NC}"
     echo ""
     echo -e "${BOLD}Monthly History:${NC}"
-    echo "─────────────────────────────────────────────"
+    echo ""
 
-    if [ -n "$months_data" ]; then
-        echo "$months_data" | jq -r '.Items | sort_by(.month.S) | reverse | .[] |
-            "  \(.month.S)  │  Start: $\(.starting_balance.N)  │  +$\(.allowance_added.N)  │  -$\(.total_expenses.N)  │  End: $\(.ending_balance.N)"' 2>/dev/null
-    else
+    local count=$(echo "$months_data" | jq -r '.Items | length' 2>/dev/null)
+    if [ -z "$count" ] || [ "$count" = "0" ]; then
         echo "  No months found"
+    else
+        # Print table header
+        printf "${BOLD}  %-10s │ %10s │ %10s │ %10s │ %10s │ %10s${NC}\n" \
+            "Month" "Starting" "Allowance" "Expenses" "Ending" "Saved"
+        echo "  ───────────┼────────────┼────────────┼────────────┼────────────┼────────────"
+
+        # Print each month row
+        echo "$months_data" | jq -r '.Items | sort_by(.month.S) | reverse | .[] |
+            "\(.month.S)|\(.starting_balance.N)|\(.allowance_added.N)|\(.total_expenses.N)|\(.ending_balance.N)"' 2>/dev/null | \
+        while IFS='|' read -r month start allow exp ending; do
+            saved=$(echo "$allow - $exp" | bc)
+            printf "  %-10s │ %10s │ %10s │ %10s │ %10s │ ${GREEN}%10s${NC}\n" \
+                "$month" "\$$start" "+\$$allow" "-\$$exp" "\$$ending" "\$$saved"
+        done
     fi
     echo ""
 }
