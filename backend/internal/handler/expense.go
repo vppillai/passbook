@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/vppillai/passbook/backend/internal/model"
@@ -84,7 +85,11 @@ func (rt *Router) handleDeleteExpense(w http.ResponseWriter, r *http.Request) {
 	}
 
 	month := segments[0]
-	expenseID := segments[1]
+	expenseID, err := url.PathUnescape(segments[1])
+	if err != nil {
+		http.Error(w, `{"error":"Invalid expense ID"}`, http.StatusBadRequest)
+		return
+	}
 
 	if err := rt.expenseService.DeleteExpense(r.Context(), month, expenseID); err != nil {
 		switch err {

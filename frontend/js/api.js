@@ -109,7 +109,8 @@ class Api {
     }
 
     async deleteExpense(month, expenseId) {
-        return this.request('DELETE', `/api/expense/${month}/${expenseId}`);
+        // URL-encode the expense ID since it contains # characters
+        return this.request('DELETE', `/api/expense/${month}/${encodeURIComponent(expenseId)}`);
     }
 }
 
