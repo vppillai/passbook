@@ -478,6 +478,38 @@ header h1 {
     box-shadow: 0 0 0 3px rgba(74, 144, 164, 0.1);
 }
 
+.pin-input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.pin-input-wrapper input {
+    padding-right: 44px;
+}
+
+.btn-show-pin {
+    position: absolute;
+    right: 8px;
+    background: none;
+    border: none;
+    padding: 8px;
+    cursor: pointer;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition);
+}
+
+.btn-show-pin:hover {
+    color: var(--text-secondary);
+}
+
+.btn-show-pin:active {
+    color: var(--primary-color);
+}
+
 .modal-actions {
     display: flex;
     gap: var(--spacing-sm);

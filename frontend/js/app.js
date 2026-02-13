@@ -112,6 +112,26 @@ class App {
             ui.hideModal('change-pin-modal');
             document.getElementById('change-pin-form').reset();
             ui.hideError('change-pin-error');
+            // Reset all PIN visibility to hidden
+            document.querySelectorAll('.btn-show-pin').forEach(btn => {
+                const input = document.getElementById(btn.dataset.target);
+                if (input) input.type = 'password';
+                btn.querySelector('.icon-eye').classList.remove('hidden');
+                btn.querySelector('.icon-eye-off').classList.add('hidden');
+            });
+        });
+
+        // Show/hide PIN toggle buttons
+        document.querySelectorAll('.btn-show-pin').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const input = document.getElementById(btn.dataset.target);
+                if (input) {
+                    const isPassword = input.type === 'password';
+                    input.type = isPassword ? 'text' : 'password';
+                    btn.querySelector('.icon-eye').classList.toggle('hidden', isPassword);
+                    btn.querySelector('.icon-eye-off').classList.toggle('hidden', !isPassword);
+                }
+            });
         });
 
         // Session expired
@@ -198,6 +218,7 @@ class App {
     async handleChangePin() {
         const currentPin = document.getElementById('current-pin').value;
         const newPin = document.getElementById('new-pin').value;
+        const confirmPin = document.getElementById('confirm-pin').value;
 
         ui.hideError('change-pin-error');
 
@@ -206,10 +227,22 @@ class App {
             return;
         }
 
+        if (newPin !== confirmPin) {
+            ui.showError('change-pin-error', 'New PINs do not match');
+            return;
+        }
+
         try {
             await api.changePin(currentPin, newPin);
             ui.hideModal('change-pin-modal');
             document.getElementById('change-pin-form').reset();
+            // Reset PIN visibility
+            document.querySelectorAll('.btn-show-pin').forEach(btn => {
+                const input = document.getElementById(btn.dataset.target);
+                if (input) input.type = 'password';
+                btn.querySelector('.icon-eye').classList.remove('hidden');
+                btn.querySelector('.icon-eye-off').classList.add('hidden');
+            });
             ui.showToast('PIN changed successfully!', 'success');
         } catch (error) {
             ui.showError('change-pin-error', error.message);
