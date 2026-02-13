@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#4A90A4">
+    <meta name="description" content="Kids Passbook - Track allowance and expenses">
+    <title>My Passbook</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="assets/icon-192.png">
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div id="loading-screen" class="screen">
+        <div class="loading-content">
+            <div class="spinner"></div>
+            <p>Loading...</p>
+        </div>
+    </div>
+
+    <!-- PIN Setup Screen -->
+    <div id="setup-screen" class="screen hidden">
+        <div class="pin-container">
+            <h1>My Passbook</h1>
+            <p id="setup-message">Create your PIN</p>
+            <div class="pin-display">
+                <span class="pin-dot"></span>
+                <span class="pin-dot"></span>
+                <span class="pin-dot"></span>
+                <span class="pin-dot"></span>
+                <span class="pin-dot"></span>
+                <span class="pin-dot"></span>
+            </div>
+            <div class="pin-pad" id="setup-pin-pad">
+                <button class="pin-key" data-value="1">1</button>
+                <button class="pin-key" data-value="2">2</button>
+                <button class="pin-key" data-value="3">3</button>
+                <button class="pin-key" data-value="4">4</button>
+                <button class="pin-key" data-value="5">5</button>
+                <button class="pin-key" data-value="6">6</button>
+                <button class="pin-key" data-value="7">7</button>
+                <button class="pin-key" data-value="8">8</button>
+                <button class="pin-key" data-value="9">9</button>
+                <button class="pin-key" data-value="clear">C</button>
+                <button class="pin-key" data-value="0">0</button>
+                <button class="pin-key" data-value="back">&larr;</button>
+            </div>
+            <p id="setup-error" class="error hidden"></p>
+            <p class="pin-hint">PIN must be 4-6 digits</p>
+        </div>
+    </div>
+
+    <!-- PIN Entry Screen -->
+    <div id="auth-screen" class="screen hidden">
+        <div class="pin-container">
+            <h1>My Passbook</h1>
+            <p id="auth-message">Enter your PIN</p>
+            <div class="pin-display" id="auth-pin-display">
+                <span class="pin-dot"></span>
+                <span class="pin-dot"></span>
+                <span class="pin-dot"></span>
+                <span class="pin-dot"></span>
+                <span class="pin-dot"></span>
+                <span class="pin-dot"></span>
+            </div>
+            <div class="pin-pad" id="auth-pin-pad">
+                <button class="pin-key" data-value="1">1</button>
+                <button class="pin-key" data-value="2">2</button>
+                <button class="pin-key" data-value="3">3</button>
+                <button class="pin-key" data-value="4">4</button>
+                <button class="pin-key" data-value="5">5</button>
+                <button class="pin-key" data-value="6">6</button>
+                <button class="pin-key" data-value="7">7</button>
+                <button class="pin-key" data-value="8">8</button>
+                <button class="pin-key" data-value="9">9</button>
+                <button class="pin-key" data-value="clear">C</button>
+                <button class="pin-key" data-value="0">0</button>
+                <button class="pin-key" data-value="back">&larr;</button>
+            </div>
+            <p id="auth-error" class="error hidden"></p>
+        </div>
+    </div>
+
+    <!-- Main Dashboard -->
+    <div id="main-screen" class="screen hidden">
+        <header>
+            <h1>My Passbook</h1>
+            <button id="menu-btn" class="icon-btn" aria-label="Menu">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="3" y1="6" x2="21" y2="6"></line>
+                    <line x1="3" y1="12" x2="21" y2="12"></line>
+                    <line x1="3" y1="18" x2="21" y2="18"></line>
+                </svg>
+            </button>
+        </header>
+
+        <div class="balance-card">
+            <div class="balance-row">
+                <div class="balance-item">
+                    <span class="label">This Month</span>
+                    <span id="month-balance" class="amount">$0.00</span>
+                </div>
+                <div class="balance-divider"></div>
+                <div class="balance-item highlight">
+                    <span class="label">Total Savings</span>
+                    <span id="total-balance" class="amount">$0.00</span>
+                </div>
+            </div>
+        </div>
+
+        <section class="expenses-section">
+            <div class="section-header">
+                <h2 id="month-title">February 2026</h2>
+                <span id="expenses-total" class="expenses-total">$0.00 spent</span>
+            </div>
+            <div id="expenses-list" class="expenses-list">
+                <p class="no-expenses">No expenses yet this month</p>
+            </div>
+        </section>
+
+        <button id="add-expense-btn" class="fab" aria-label="Add expense">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+        </button>
+    </div>
+
+    <!-- Add Expense Modal -->
+    <div id="expense-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <h2>Add Expense</h2>
+            <form id="expense-form">
+                <div class="form-group">
+                    <label for="expense-amount">Amount ($)</label>
+                    <input type="number" id="expense-amount" placeholder="0.00" step="0.01" min="0.01" required inputmode="decimal">
+                </div>
+                <div class="form-group">
+                    <label for="expense-desc">What did you buy?</label>
+                    <input type="text" id="expense-desc" placeholder="e.g., Ice cream" maxlength="100" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" id="cancel-expense" class="btn btn-secondary">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add</button>
+                </div>
+            </form>
+            <p id="expense-error" class="error hidden"></p>
+        </div>
+    </div>
+
+    <!-- History Menu (Slide-out) -->
+    <div id="menu-overlay" class="overlay hidden"></div>
+    <div id="history-menu" class="menu hidden">
+        <div class="menu-header">
+            <h2>History</h2>
+            <button id="close-menu" class="icon-btn" aria-label="Close">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            </button>
+        </div>
+        <ul id="months-list" class="months-list">
+            <!-- Month items rendered here -->
+        </ul>
+        <div class="menu-footer">
+            <button id="change-pin-btn" class="btn btn-secondary btn-full">Change PIN</button>
+            <button id="logout-btn" class="btn btn-outline btn-full">Lock</button>
+        </div>
+    </div>
+
+    <!-- Change PIN Modal -->
+    <div id="change-pin-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <h2>Change PIN</h2>
+            <form id="change-pin-form">
+                <div class="form-group">
+                    <label for="current-pin">Current PIN</label>
+                    <input type="password" id="current-pin" placeholder="Enter current PIN" pattern="\d{4,6}" inputmode="numeric" required>
+                </div>
+                <div class="form-group">
+                    <label for="new-pin">New PIN (4-6 digits)</label>
+                    <input type="password" id="new-pin" placeholder="Enter new PIN" pattern="\d{4,6}" inputmode="numeric" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" id="cancel-change-pin" class="btn btn-secondary">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Change</button>
+                </div>
+            </form>
+            <p id="change-pin-error" class="error hidden"></p>
+        </div>
+    </div>
+
+    <!-- Toast notification -->
+    <div id="toast" class="toast hidden"></div>
+
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>

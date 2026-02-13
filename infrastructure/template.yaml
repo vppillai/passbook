@@ -1,0 +1,206 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Kids Passbook App - Serverless Backend Infrastructure
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues:
+      - prod
+
+  AllowedOrigin:
+    Type: String
+    Default: https://vppillai.github.io
+    Description: CORS allowed origin (GitHub Pages URL)
+
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket containing Lambda code
+
+  LambdaCodeKey:
+    Type: String
+    Description: S3 key for Lambda zip file
+
+  MonthlyAllowance:
+    Type: Number
+    Default: 100
+    Description: Monthly allowance amount in dollars
+
+Resources:
+  #===========================================
+  # DynamoDB Table
+  #===========================================
+  PassbookTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub 'passbook-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Application
+          Value: Passbook
+        - Key: Environment
+          Value: !Ref Environment
+
+  #===========================================
+  # Lambda Execution Role
+  #===========================================
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'passbook-lambda-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt PassbookTable.Arn
+
+  #===========================================
+  # Lambda Function
+  #===========================================
+  PassbookFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'passbook-api-${Environment}'
+      Runtime: provided.al2023
+      Handler: bootstrap
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref LambdaCodeKey
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 10
+      MemorySize: 128
+      Architectures:
+        - arm64
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref PassbookTable
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+          ENVIRONMENT: !Ref Environment
+          MONTHLY_ALLOWANCE: !Ref MonthlyAllowance
+      Tags:
+        - Key: Application
+          Value: Passbook
+
+  # Lambda Log Group with retention
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${PassbookFunction}'
+      RetentionInDays: 14
+
+  #===========================================
+  # API Gateway (HTTP API v2 - cheaper)
+  #===========================================
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub 'passbook-api-${Environment}'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref AllowedOrigin
+        AllowMethods:
+          - GET
+          - POST
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - X-Session-Token
+        AllowCredentials: false
+        MaxAge: 86400
+      Tags:
+        Application: Passbook
+
+  HttpApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: '$default'
+      AutoDeploy: true
+      # Tight rate limits - this is a single-user app
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 10    # Max 10 concurrent requests
+        ThrottlingRateLimit: 5      # Max 5 requests per second
+
+  LambdaIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt PassbookFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  # Route all requests to Lambda
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: '$default'
+      Target: !Sub 'integrations/${LambdaIntegration}'
+
+  # Permission for API Gateway to invoke Lambda
+  LambdaApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PassbookFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !GetAtt HttpApi.ApiEndpoint
+    Export:
+      Name: !Sub 'PassbookApiEndpoint-${Environment}'
+
+  TableName:
+    Description: DynamoDB table name
+    Value: !Ref PassbookTable
+
+  LambdaFunctionName:
+    Description: Lambda function name
+    Value: !Ref PassbookFunction
+
+  LambdaFunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt PassbookFunction.Arn

@@ -1,0 +1,30 @@
+# Go
+backend/bootstrap
+backend/function.zip
+backend/*.test
+
+# Dependencies
+backend/vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local config
+frontend/js/config.js
+
+# Logs
+*.log
+
+# Test coverage
+coverage.out
+
+#AI
+.claude/

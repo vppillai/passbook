@@ -1,0 +1,119 @@
+name: Deploy Backend to AWS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'infrastructure/**'
+      - '.github/workflows/deploy-backend.yaml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-west-2
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: backend/go.sum
+
+      - name: Download dependencies
+        working-directory: backend
+        run: go mod download
+
+      - name: Run tests
+        working-directory: backend
+        run: go test -v -race ./...
+
+      - name: Run vet
+        working-directory: backend
+        run: go vet ./...
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: backend/go.sum
+
+      - name: Build Lambda
+        working-directory: backend
+        run: |
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags lambda.norpc -o bootstrap ./cmd/api
+          zip function.zip bootstrap
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/passbook-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get S3 bucket name
+        id: get-bucket
+        run: |
+          BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name passbook-bootstrap \
+            --query "Stacks[0].Outputs[?OutputKey=='LambdaDeploymentBucketName'].OutputValue" \
+            --output text)
+          echo "bucket=$BUCKET" >> $GITHUB_OUTPUT
+
+      - name: Upload to S3
+        run: |
+          aws s3 cp backend/function.zip s3://${{ steps.get-bucket.outputs.bucket }}/function-${{ github.sha }}.zip
+
+      - name: Deploy CloudFormation
+        run: |
+          aws cloudformation deploy \
+            --template-file infrastructure/template.yaml \
+            --stack-name passbook-prod \
+            --parameter-overrides \
+              Environment=prod \
+              LambdaCodeBucket=${{ steps.get-bucket.outputs.bucket }} \
+              LambdaCodeKey=function-${{ github.sha }}.zip \
+              AllowedOrigin=https://vppillai.github.io \
+              MonthlyAllowance=100 \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+      - name: Update Lambda code
+        run: |
+          aws lambda update-function-code \
+            --function-name passbook-api-prod \
+            --s3-bucket ${{ steps.get-bucket.outputs.bucket }} \
+            --s3-key function-${{ github.sha }}.zip
+
+      - name: Get API endpoint
+        id: get-api
+        run: |
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name passbook-prod \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" \
+            --output text)
+          echo "api_url=$API_URL" >> $GITHUB_OUTPUT
+          echo "API Endpoint: $API_URL"
+
+      - name: Output deployment info
+        run: |
+          echo "## Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**API Endpoint:** ${{ steps.get-api.outputs.api_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** Set this as \`API_ENDPOINT\` repository variable for frontend deployment." >> $GITHUB_STEP_SUMMARY

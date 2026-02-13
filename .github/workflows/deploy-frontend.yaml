@@ -1,0 +1,52 @@
+name: Deploy Frontend to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-frontend.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: 'pages'
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Inject API URL
+        run: |
+          # Get the API endpoint from AWS (requires backend to be deployed first)
+          # This is injected as a global variable in the frontend
+          API_URL="${{ vars.API_ENDPOINT }}"
+          if [ -n "$API_URL" ]; then
+            echo "window.PASSBOOK_API_URL = '$API_URL';" > frontend/js/config.js
+            # Add config.js to index.html before app.js
+            sed -i 's|<script type="module" src="js/app.js"></script>|<script src="js/config.js"></script>\n    <script type="module" src="js/app.js"></script>|' frontend/index.html
+          fi
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: 'frontend'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

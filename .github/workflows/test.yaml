@@ -1,0 +1,60 @@
+name: Test
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: backend/go.sum
+
+      - name: Download dependencies
+        working-directory: backend
+        run: go mod download
+
+      - name: Run tests
+        working-directory: backend
+        run: |
+          go test -v -race -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out
+
+      - name: Run vet
+        working-directory: backend
+        run: go vet ./...
+
+  lint-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check HTML syntax
+        run: |
+          # Basic HTML validation
+          for file in frontend/*.html; do
+            if grep -q "<html" "$file"; then
+              echo "Checking $file..."
+              # Check for unclosed tags (basic check)
+              if ! grep -q "</html>" "$file"; then
+                echo "Error: Missing </html> in $file"
+                exit 1
+              fi
+            fi
+          done
+          echo "HTML check passed"
+
+      - name: Check JavaScript syntax
+        run: |
+          # Install Node for basic JS validation
+          for file in frontend/js/*.js; do
+            echo "Checking $file..."
+            node --check "$file" || exit 1
+          done
+          echo "JavaScript syntax check passed"
