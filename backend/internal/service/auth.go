@@ -18,10 +18,10 @@ import (
 )
 
 const (
-	// Argon2 parameters
+	// Argon2 parameters - reduced memory for Lambda compatibility
 	argonTime    = 3
-	argonMemory  = 64 * 1024 // 64MB
-	argonThreads = 2
+	argonMemory  = 16 * 1024 // 16MB (fits in 128MB Lambda)
+	argonThreads = 1
 	argonKeyLen  = 32
 	saltLen      = 16
 

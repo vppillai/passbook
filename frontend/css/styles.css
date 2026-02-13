@@ -189,6 +189,34 @@ body {
     font-size: 1.25rem;
 }
 
+.pin-key-submit {
+    background: var(--primary-color);
+    color: white;
+    font-size: 1rem;
+}
+
+.pin-key-submit:active {
+    background: var(--primary-dark);
+}
+
+.pin-key:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Loading animation */
+.loading-dots::after {
+    content: '';
+    animation: dots 1.5s infinite;
+}
+
+@keyframes dots {
+    0%, 20% { content: ''; }
+    40% { content: '.'; }
+    60% { content: '..'; }
+    80%, 100% { content: '...'; }
+}
+
 /* Main Screen Header */
 header {
     display: flex;

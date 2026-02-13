@@ -8,7 +8,8 @@
     <title>My Passbook</title>
     <link rel="stylesheet" href="css/styles.css">
     <link rel="manifest" href="manifest.json">
-    <link rel="apple-touch-icon" href="assets/icon-192.png">
+    <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
+    <link rel="apple-touch-icon" href="assets/icon.svg">
 </head>
 <body>
     <!-- Loading Screen -->
@@ -23,7 +24,7 @@
     <div id="setup-screen" class="screen hidden">
         <div class="pin-container">
             <h1>My Passbook</h1>
-            <p id="setup-message">Create your PIN</p>
+            <p id="setup-message">Create your PIN (4-6 digits)</p>
             <div class="pin-display">
                 <span class="pin-dot"></span>
                 <span class="pin-dot"></span>
@@ -42,12 +43,11 @@
                 <button class="pin-key" data-value="7">7</button>
                 <button class="pin-key" data-value="8">8</button>
                 <button class="pin-key" data-value="9">9</button>
-                <button class="pin-key" data-value="clear">C</button>
+                <button class="pin-key pin-key-action" data-value="back">&larr;</button>
                 <button class="pin-key" data-value="0">0</button>
-                <button class="pin-key" data-value="back">&larr;</button>
+                <button class="pin-key pin-key-submit" data-value="submit">OK</button>
             </div>
             <p id="setup-error" class="error hidden"></p>
-            <p class="pin-hint">PIN must be 4-6 digits</p>
         </div>
     </div>
 
@@ -74,9 +74,9 @@
                 <button class="pin-key" data-value="7">7</button>
                 <button class="pin-key" data-value="8">8</button>
                 <button class="pin-key" data-value="9">9</button>
-                <button class="pin-key" data-value="clear">C</button>
+                <button class="pin-key pin-key-action" data-value="back">&larr;</button>
                 <button class="pin-key" data-value="0">0</button>
-                <button class="pin-key" data-value="back">&larr;</button>
+                <button class="pin-key pin-key-submit" data-value="submit">OK</button>
             </div>
             <p id="auth-error" class="error hidden"></p>
         </div>
