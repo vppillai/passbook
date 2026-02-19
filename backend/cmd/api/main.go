@@ -27,7 +27,7 @@ func init() {
 
 	allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
 	if allowedOrigin == "" {
-		allowedOrigin = "https://vppillai.github.io"
+		log.Fatal("ALLOWED_ORIGIN environment variable is required")
 	}
 
 	monthlyAllowance := 100.0
@@ -58,6 +58,15 @@ func init() {
 }
 
 func handleRequest(ctx context.Context, event events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+	// Reject oversized request bodies (32 KB limit)
+	if len(event.Body) > 32*1024 {
+		return events.APIGatewayV2HTTPResponse{
+			StatusCode: http.StatusRequestEntityTooLarge,
+			Body:       `{"error":"Request body too large"}`,
+			Headers:    map[string]string{"Content-Type": "application/json"},
+		}, nil
+	}
+
 	// Convert API Gateway event to http.Request
 	req, err := convertToHTTPRequest(ctx, event)
 	if err != nil {

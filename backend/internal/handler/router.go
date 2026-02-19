@@ -33,6 +33,10 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (rt *Router) route(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Referrer-Policy", "strict-origin")
+	w.Header().Set("Cache-Control", "no-store")
 
 	path := r.URL.Path
 	method := r.Method

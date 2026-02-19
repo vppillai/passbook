@@ -65,14 +65,14 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-              StringLike:
-                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOrg}/${GitHubRepo}:*'
+              StringEquals:
+                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/main'
       Policies:
         - PolicyName: PassbookDeploymentPolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # CloudFormation permissions
+              # CloudFormation permissions - stack operations scoped to passbook stacks
               - Effect: Allow
                 Action:
                   - cloudformation:CreateStack
@@ -82,14 +82,19 @@ Resources:
                   - cloudformation:DescribeStackEvents
                   - cloudformation:DescribeStackResources
                   - cloudformation:GetTemplate
-                  - cloudformation:GetTemplateSummary
-                  - cloudformation:ValidateTemplate
                   - cloudformation:CreateChangeSet
                   - cloudformation:DescribeChangeSet
                   - cloudformation:ExecuteChangeSet
                   - cloudformation:DeleteChangeSet
                 Resource:
                   - !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/passbook-*/*'
+
+              # CloudFormation validation actions that require wildcard resource per AWS API restrictions
+              - Effect: Allow
+                Action:
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:ValidateTemplate
+                Resource:
                   - '*'
 
               # S3 permissions for Lambda deployment
@@ -183,6 +188,7 @@ Resources:
                   - logs:ListTagsLogGroup
                 Resource:
                   - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/passbook-*'
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/passbook-*'
 
 Outputs:
   LambdaDeploymentBucketName:
