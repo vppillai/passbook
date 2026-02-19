@@ -123,6 +123,9 @@ Resources:
                   - lambda:ListTags
                   - lambda:TagResource
                   - lambda:UntagResource
+                  - lambda:PutFunctionConcurrency
+                  - lambda:DeleteFunctionConcurrency
+                  - lambda:GetFunctionConcurrency
                 Resource:
                   - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:passbook-*'
 
