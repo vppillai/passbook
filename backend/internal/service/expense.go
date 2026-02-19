@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -206,9 +207,13 @@ func (s *ExpenseService) AddExpense(ctx context.Context, req *model.AddExpenseRe
 	if req.Amount <= 0 {
 		return nil, ErrInvalidAmount
 	}
+	if req.Amount > 99999.99 {
+		return nil, ErrInvalidAmount
+	}
 	if len(req.Description) > 100 {
 		return nil, ErrDescriptionTooLong
 	}
+	req.Description = strings.TrimSpace(req.Description)
 	if req.Description == "" {
 		req.Description = "Expense"
 	}
@@ -276,12 +281,18 @@ func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expens
 		return nil, ErrNoChanges
 	}
 
-	if req.Amount != nil && *req.Amount <= 0 {
-		return nil, ErrInvalidAmount
+	if req.Amount != nil {
+		if *req.Amount <= 0 || *req.Amount > 99999.99 {
+			return nil, ErrInvalidAmount
+		}
 	}
 
-	if req.Description != nil && len(*req.Description) > 100 {
-		return nil, ErrDescriptionTooLong
+	if req.Description != nil {
+		trimmed := strings.TrimSpace(*req.Description)
+		req.Description = &trimmed
+		if len(*req.Description) > 100 {
+			return nil, ErrDescriptionTooLong
+		}
 	}
 
 	// Get current expense to compute delta and fill unchanged fields

@@ -218,6 +218,14 @@ class App {
             });
         });
 
+        // Auto-clear form errors when user starts typing
+        ['expense-amount', 'expense-desc'].forEach(id =>
+            document.getElementById(id).addEventListener('input', () => ui.hideError('expense-error')));
+        ['edit-expense-amount', 'edit-expense-desc'].forEach(id =>
+            document.getElementById(id).addEventListener('input', () => ui.hideError('edit-expense-error')));
+        document.getElementById('new-month-input').addEventListener('input', () => ui.hideError('create-month-error'));
+        document.getElementById('funds-amount').addEventListener('input', () => ui.hideError('add-funds-error'));
+
         // Session expired
         window.addEventListener('session-expired', () => {
             ui.showToast('Session expired. Please log in again.', 'error');
@@ -257,6 +265,7 @@ class App {
             );
         } catch (error) {
             console.error('Failed to load months list:', error);
+            ui.showToast('Failed to load history', 'error');
         }
     }
 
@@ -344,10 +353,20 @@ class App {
             return;
         }
 
+        if (amount > 99999.99) {
+            ui.showError('expense-error', 'Amount cannot exceed $99,999.99');
+            return;
+        }
+
         if (!description) {
             ui.showError('expense-error', 'Please enter a description');
             return;
         }
+
+        const submitBtn = document.querySelector('#expense-form button[type="submit"]');
+        const origText = submitBtn.textContent;
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Saving...';
 
         try {
             await api.addExpense(amount, description);
@@ -359,6 +378,9 @@ class App {
             await this.loadInitialData();
         } catch (error) {
             ui.showError('expense-error', error.message);
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = origText;
         }
     }
 
@@ -380,10 +402,20 @@ class App {
             return;
         }
 
+        if (amount > 99999.99) {
+            ui.showError('edit-expense-error', 'Amount cannot exceed $99,999.99');
+            return;
+        }
+
         if (!description) {
             ui.showError('edit-expense-error', 'Please enter a description');
             return;
         }
+
+        const submitBtn = document.querySelector('#edit-expense-form button[type="submit"]');
+        const origText = submitBtn.textContent;
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Saving...';
 
         try {
             await api.updateExpense(this.currentMonth, this.editingExpenseId, amount, description);
@@ -394,6 +426,9 @@ class App {
             await this.loadCurrentMonth();
         } catch (error) {
             ui.showError('edit-expense-error', error.message);
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = origText;
         }
     }
 
@@ -420,6 +455,11 @@ class App {
             return;
         }
 
+        const submitBtn = document.querySelector('#create-month-form button[type="submit"]');
+        const origText = submitBtn.textContent;
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Creating...';
+
         try {
             await api.createMonth(month);
             ui.hideModal('create-month-modal');
@@ -428,6 +468,9 @@ class App {
             await this.loadInitialData();
         } catch (error) {
             ui.showError('create-month-error', error.message);
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = origText;
         }
     }
 
@@ -442,10 +485,20 @@ class App {
             return;
         }
 
+        if (amount > 99999.99) {
+            ui.showError('add-funds-error', 'Amount cannot exceed $99,999.99');
+            return;
+        }
+
         if (!this.currentMonth) {
             ui.showError('add-funds-error', 'No month selected');
             return;
         }
+
+        const submitBtn = document.querySelector('#add-funds-form button[type="submit"]');
+        const origText = submitBtn.textContent;
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Adding...';
 
         try {
             await api.addFunds(this.currentMonth, amount);
@@ -456,6 +509,9 @@ class App {
             this.loadMonthsList();
         } catch (error) {
             ui.showError('add-funds-error', error.message);
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = origText;
         }
     }
 

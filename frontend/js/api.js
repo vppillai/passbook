@@ -14,7 +14,7 @@ const API_BASE = window.PASSBOOK_API_URL || '';
 class Api {
     constructor() {
         /** @type {string|null} Session token for authenticated requests, persisted in sessionStorage */
-        this.sessionToken = sessionStorage.getItem('session') || null;
+        this.sessionToken = localStorage.getItem('session') || null;
     }
 
     /**
@@ -73,7 +73,7 @@ class Api {
      */
     setSession(token) {
         this.sessionToken = token;
-        sessionStorage.setItem('session', token);
+        localStorage.setItem('session', token);
     }
 
     /**
@@ -81,7 +81,7 @@ class Api {
      */
     clearSession() {
         this.sessionToken = null;
-        sessionStorage.removeItem('session');
+        localStorage.removeItem('session');
     }
 
     /**
