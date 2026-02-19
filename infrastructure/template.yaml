@@ -167,7 +167,7 @@ Resources:
       AutoDeploy: true
       AccessLogSettings:
         DestinationArn: !GetAtt ApiGatewayLogGroup.Arn
-        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","method":"$context.http.method","path":"$context.http.path","status":"$context.status","responseLength":"$context.responseLength","responseTime":"$context.responseLatency"}'
+        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","method":"$context.httpMethod","path":"$context.path","status":"$context.status","responseLength":"$context.responseLength","responseTime":"$context.responseLatency"}'
       # Tight rate limits - this is a single-user app
       DefaultRouteSettings:
         ThrottlingBurstLimit: 10    # Max 10 concurrent requests
