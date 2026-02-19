@@ -9,9 +9,10 @@ A simple, secure passbook app for tracking a child's allowance and expenses.
 ## Features
 
 - Monthly allowance tracking (configurable, default $100)
-- Expense tracking with descriptions
-- Running balance calculation
-- Monthly history view
+- Expense tracking with descriptions (add, edit, delete)
+- Running balance calculation (monthly and total)
+- Monthly history view with pagination
+- Month management from the UI (create months, add funds)
 - PIN-protected access (4-6 digits)
 - Mobile-first responsive design
 - Automatic session expiry (24h)
@@ -70,9 +71,12 @@ A simple, secure passbook app for tracking a child's allowance and expenses.
 | POST | `/api/auth/change` | Yes | Change PIN (requires current PIN) |
 | POST | `/api/auth/logout` | Yes | Invalidate session |
 | GET | `/api/balance` | Yes | Get total balance |
-| GET | `/api/months` | Yes | List all months with balances |
-| GET | `/api/month/{yyyy-mm}` | Yes | Get month summary + expenses |
+| GET | `/api/months?limit=50&cursor=` | Yes | List months with balances (paginated) |
+| GET | `/api/month/{yyyy-mm}?limit=50&cursor=` | Yes | Get month summary + expenses (paginated) |
+| POST | `/api/month` | Yes | Create a new month with allowance |
+| POST | `/api/month/{yyyy-mm}/funds` | Yes | Add funds to an existing month |
 | POST | `/api/expense` | Yes | Add new expense |
+| PUT | `/api/expense/{month}/{id}` | Yes | Edit expense amount and/or description |
 | DELETE | `/api/expense/{month}/{id}` | Yes | Delete expense (refunds balance) |
 
 ---

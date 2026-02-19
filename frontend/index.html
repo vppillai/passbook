@@ -112,7 +112,10 @@
         <section class="expenses-section">
             <div class="section-header">
                 <h2 id="month-title">February 2026</h2>
-                <span id="expenses-total" class="expenses-total">$0.00 spent</span>
+                <div class="section-actions">
+                    <button id="add-funds-btn" class="btn-text" title="Add funds to this month">+ Funds</button>
+                    <span id="expenses-total" class="expenses-total">$0.00 spent</span>
+                </div>
             </div>
             <div id="expenses-list" class="expenses-list">
                 <p class="no-expenses">No expenses yet this month</p>
@@ -155,12 +158,20 @@
     <div id="history-menu" class="menu hidden">
         <div class="menu-header">
             <h2>History</h2>
-            <button id="close-menu" class="icon-btn" aria-label="Close">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-            </button>
+            <div class="menu-header-actions">
+                <button id="new-month-btn" class="icon-btn" aria-label="New Month" title="New Month">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                </button>
+                <button id="close-menu" class="icon-btn" aria-label="Close">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
         </div>
         <ul id="months-list" class="months-list">
             <!-- Month items rendered here -->
@@ -169,6 +180,68 @@
             <button id="change-pin-btn" class="btn btn-secondary btn-full">Change PIN</button>
             <button id="logout-btn" class="btn btn-outline btn-full">Lock</button>
             <span class="app-version">dev</span>
+        </div>
+    </div>
+
+    <!-- Edit Expense Modal -->
+    <div id="edit-expense-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <h2>Edit Expense</h2>
+            <form id="edit-expense-form">
+                <div class="form-group">
+                    <label for="edit-expense-amount">Amount ($)</label>
+                    <input type="number" id="edit-expense-amount" placeholder="0.00" step="0.01" min="0.01" required inputmode="decimal">
+                </div>
+                <div class="form-group">
+                    <label for="edit-expense-desc">Description</label>
+                    <input type="text" id="edit-expense-desc" placeholder="e.g., Ice cream" maxlength="100" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" id="cancel-edit-expense" class="btn btn-secondary">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+            <p id="edit-expense-error" class="error hidden"></p>
+        </div>
+    </div>
+
+    <!-- Create Month Modal -->
+    <div id="create-month-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <h2>New Month</h2>
+            <form id="create-month-form">
+                <div class="form-group">
+                    <label for="new-month-input">Month</label>
+                    <input type="month" id="new-month-input" required>
+                </div>
+                <p class="form-hint">Monthly allowance will be applied automatically.</p>
+                <div class="modal-actions">
+                    <button type="button" id="cancel-create-month" class="btn btn-secondary">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create</button>
+                </div>
+            </form>
+            <p id="create-month-error" class="error hidden"></p>
+        </div>
+    </div>
+
+    <!-- Add Funds Modal -->
+    <div id="add-funds-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <h2>Add Funds</h2>
+            <form id="add-funds-form">
+                <div class="form-group">
+                    <label for="funds-amount">Amount ($)</label>
+                    <input type="number" id="funds-amount" placeholder="0.00" step="0.01" min="0.01" required inputmode="decimal">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" id="cancel-add-funds" class="btn btn-secondary">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add Funds</button>
+                </div>
+            </form>
+            <p id="add-funds-error" class="error hidden"></p>
         </div>
     </div>
 

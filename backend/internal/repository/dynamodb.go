@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -203,24 +204,46 @@ func (r *Repository) UpdateMonthExpenses(ctx context.Context, month string, expe
 	return nil
 }
 
-func (r *Repository) ListMonths(ctx context.Context) ([]model.MonthSummary, error) {
-	result, err := r.client.Scan(ctx, &dynamodb.ScanInput{
-		TableName:        aws.String(r.tableName),
-		FilterExpression: aws.String("begins_with(PK, :prefix) AND SK = :summary"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":prefix":  &types.AttributeValueMemberS{Value: MonthPrefix},
-			":summary": &types.AttributeValueMemberS{Value: SKSummary},
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list months: %w", err)
+// ListAllMonths performs a full table scan to retrieve every month summary
+// item (PK begins with "MONTH#", SK equals "SUMMARY"). It handles DynamoDB
+// pagination internally, collecting all pages before returning the complete
+// slice. The results are returned in no guaranteed order; callers should sort
+// as needed.
+func (r *Repository) ListAllMonths(ctx context.Context) ([]model.MonthSummary, error) {
+	var allMonths []model.MonthSummary
+	var lastKey map[string]types.AttributeValue
+
+	for {
+		input := &dynamodb.ScanInput{
+			TableName:        aws.String(r.tableName),
+			FilterExpression: aws.String("begins_with(PK, :prefix) AND SK = :summary"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":prefix":  &types.AttributeValueMemberS{Value: MonthPrefix},
+				":summary": &types.AttributeValueMemberS{Value: SKSummary},
+			},
+		}
+		if lastKey != nil {
+			input.ExclusiveStartKey = lastKey
+		}
+
+		result, err := r.client.Scan(ctx, input)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list months: %w", err)
+		}
+
+		var months []model.MonthSummary
+		if err := attributevalue.UnmarshalListOfMaps(result.Items, &months); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal months: %w", err)
+		}
+		allMonths = append(allMonths, months...)
+
+		if result.LastEvaluatedKey == nil {
+			break
+		}
+		lastKey = result.LastEvaluatedKey
 	}
 
-	var months []model.MonthSummary
-	if err := attributevalue.UnmarshalListOfMaps(result.Items, &months); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal months: %w", err)
-	}
-	return months, nil
+	return allMonths, nil
 }
 
 // Expense operations
@@ -244,9 +267,15 @@ func (r *Repository) AddExpense(ctx context.Context, month string, expense *mode
 	return nil
 }
 
-func (r *Repository) GetExpenses(ctx context.Context, month string) ([]model.Expense, error) {
+// GetExpenses queries all expenses for a given month, sorted by most recent
+// first (descending sort key). It supports cursor-based pagination: pass a
+// non-nil cursor from a previous call to fetch the next page. The limit
+// parameter caps the number of items returned per page (0 means no limit).
+// Returns the expenses, the DynamoDB LastEvaluatedKey for the next page
+// (nil when there are no more results), and any error.
+func (r *Repository) GetExpenses(ctx context.Context, month string, limit int32, cursor map[string]types.AttributeValue) ([]model.Expense, map[string]types.AttributeValue, error) {
 	pk := MonthPrefix + month
-	result, err := r.client.Query(ctx, &dynamodb.QueryInput{
+	input := &dynamodb.QueryInput{
 		TableName:              aws.String(r.tableName),
 		KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
@@ -254,16 +283,111 @@ func (r *Repository) GetExpenses(ctx context.Context, month string) ([]model.Exp
 			":prefix": &types.AttributeValueMemberS{Value: ExpensePrefix},
 		},
 		ScanIndexForward: aws.Bool(false), // Most recent first
-	})
+	}
+
+	if limit > 0 {
+		input.Limit = aws.Int32(limit)
+	}
+	if cursor != nil {
+		input.ExclusiveStartKey = cursor
+	}
+
+	result, err := r.client.Query(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get expenses: %w", err)
+		return nil, nil, fmt.Errorf("failed to get expenses: %w", err)
 	}
 
 	var expenses []model.Expense
 	if err := attributevalue.UnmarshalListOfMaps(result.Items, &expenses); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal expenses: %w", err)
+		return nil, nil, fmt.Errorf("failed to unmarshal expenses: %w", err)
 	}
-	return expenses, nil
+	return expenses, result.LastEvaluatedKey, nil
+}
+
+// GetExpense fetches a single expense by its month and sort key (expenseID).
+// Returns nil (without error) if the expense does not exist.
+func (r *Repository) GetExpense(ctx context.Context, month string, expenseID string) (*model.Expense, error) {
+	pk := MonthPrefix + month
+	result, err := r.client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(r.tableName),
+		Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: pk},
+			"SK": &types.AttributeValueMemberS{Value: expenseID},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get expense: %w", err)
+	}
+	if result.Item == nil {
+		return nil, nil
+	}
+
+	var expense model.Expense
+	if err := attributevalue.UnmarshalMap(result.Item, &expense); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal expense: %w", err)
+	}
+	return &expense, nil
+}
+
+// UpdateExpense atomically updates an expense's amount and description in
+// DynamoDB. It uses a condition expression to ensure the item exists before
+// updating. Returns the OLD expense values (before the update) so the caller
+// can compute the amount delta. Returns nil (without error) if the expense
+// does not exist (ConditionalCheckFailedException).
+func (r *Repository) UpdateExpense(ctx context.Context, month string, expenseID string, amount float64, description string) (*model.Expense, error) {
+	pk := MonthPrefix + month
+	result, err := r.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(r.tableName),
+		Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: pk},
+			"SK": &types.AttributeValueMemberS{Value: expenseID},
+		},
+		UpdateExpression:    aws.String("SET amount = :amount, description = :desc"),
+		ConditionExpression: aws.String("attribute_exists(PK)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":amount": &types.AttributeValueMemberN{Value: fmt.Sprintf("%.2f", amount)},
+			":desc":   &types.AttributeValueMemberS{Value: description},
+		},
+		ReturnValues: types.ReturnValueAllOld,
+	})
+	if err != nil {
+		var condErr *types.ConditionalCheckFailedException
+		if errors.As(err, &condErr) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to update expense: %w", err)
+	}
+
+	var oldExpense model.Expense
+	if err := attributevalue.UnmarshalMap(result.Attributes, &oldExpense); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal old expense: %w", err)
+	}
+	return &oldExpense, nil
+}
+
+// UpdateMonthAllowance atomically increments a month's allowance_added and
+// ending_balance by fundsDelta. This is used when adding supplemental funds
+// to an existing month. The condition expression ensures the month summary
+// item exists before the update is applied.
+func (r *Repository) UpdateMonthAllowance(ctx context.Context, month string, fundsDelta float64) error {
+	pk := MonthPrefix + month
+	_, err := r.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(r.tableName),
+		Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: pk},
+			"SK": &types.AttributeValueMemberS{Value: SKSummary},
+		},
+		UpdateExpression:    aws.String("SET allowance_added = allowance_added + :delta, ending_balance = ending_balance + :delta, updated_at = :now"),
+		ConditionExpression: aws.String("attribute_exists(PK)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":delta": &types.AttributeValueMemberN{Value: fmt.Sprintf("%.2f", fundsDelta)},
+			":now":   &types.AttributeValueMemberS{Value: time.Now().Format(time.RFC3339)},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update month allowance: %w", err)
+	}
+	return nil
 }
 
 func (r *Repository) DeleteExpense(ctx context.Context, month string, expenseID string) (*model.Expense, error) {

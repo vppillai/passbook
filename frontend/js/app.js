@@ -7,6 +7,9 @@ class App {
     constructor() {
         this.currentMonth = null;
         this.monthData = null;
+        this.allExpenses = [];
+        this.expensesCursor = null;
+        this.editingExpenseId = null;
     }
 
     async init() {
@@ -50,7 +53,8 @@ class App {
 
     async loadInitialData() {
         // First, get the list of months to find the latest one
-        const { months } = await api.getMonths();
+        const data = await api.getMonths();
+        const months = data.months;
 
         if (months && months.length > 0) {
             // Use the latest month (list is sorted descending)
@@ -62,7 +66,13 @@ class App {
             ui.showEmptyState();
         }
 
-        ui.renderMonthsList(months, this.currentMonth, (month) => this.selectMonth(month));
+        ui.renderMonthsList(
+            months,
+            this.currentMonth,
+            (month) => this.selectMonth(month),
+            data.next_cursor,
+            (cursor) => this.loadMoreMonths(cursor)
+        );
     }
 
     bindEvents() {
@@ -85,11 +95,69 @@ class App {
             ui.hideError('expense-error');
         });
 
+        // Edit expense form
+        document.getElementById('edit-expense-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.handleEditExpense();
+        });
+
+        // Cancel edit expense
+        document.getElementById('cancel-edit-expense').addEventListener('click', () => {
+            ui.hideModal('edit-expense-modal');
+            document.getElementById('edit-expense-form').reset();
+            ui.hideError('edit-expense-error');
+            this.editingExpenseId = null;
+        });
+
+        // Create month form
+        document.getElementById('create-month-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.handleCreateMonth();
+        });
+
+        // New month button
+        document.getElementById('new-month-btn').addEventListener('click', () => {
+            ui.hideMenu();
+            const input = document.getElementById('new-month-input');
+            input.value = ui.getCurrentMonthKey();
+            ui.showModal('create-month-modal');
+        });
+
+        // Cancel create month
+        document.getElementById('cancel-create-month').addEventListener('click', () => {
+            ui.hideModal('create-month-modal');
+            document.getElementById('create-month-form').reset();
+            ui.hideError('create-month-error');
+        });
+
+        // Add funds button
+        document.getElementById('add-funds-btn').addEventListener('click', () => {
+            ui.showModal('add-funds-modal');
+            document.getElementById('funds-amount').focus();
+        });
+
+        // Add funds form
+        document.getElementById('add-funds-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.handleAddFunds();
+        });
+
+        // Cancel add funds
+        document.getElementById('cancel-add-funds').addEventListener('click', () => {
+            ui.hideModal('add-funds-modal');
+            document.getElementById('add-funds-form').reset();
+            ui.hideError('add-funds-error');
+        });
+
         // Modal backdrop click
         document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
             backdrop.addEventListener('click', () => {
                 const modal = backdrop.closest('.modal');
                 ui.hideModal(modal.id);
+                // Reset editing state if edit modal was closed
+                if (modal.id === 'edit-expense-modal') {
+                    this.editingExpenseId = null;
+                }
             });
         });
 
@@ -157,11 +225,20 @@ class App {
         });
     }
 
+    // --- Data loading ---
+
     async loadCurrentMonth() {
         try {
             this.monthData = await api.getMonth(this.currentMonth);
+            this.allExpenses = this.monthData.expenses || [];
+            this.expensesCursor = this.monthData.next_cursor || null;
+
             ui.updateDashboard(this.monthData);
-            ui.renderExpenses(this.monthData.expenses, (id) => this.handleDeleteExpense(id));
+            ui.renderExpenses(this.allExpenses, {
+                onDelete: (id) => this.handleDeleteExpense(id),
+                onEdit: (id, amount, desc) => this.openEditExpense(id, amount, desc),
+                onLoadMore: (cursor) => this.loadMoreExpenses(cursor),
+            }, this.expensesCursor);
         } catch (error) {
             console.error('Failed to load month data:', error);
             throw error;
@@ -170,10 +247,65 @@ class App {
 
     async loadMonthsList() {
         try {
-            const { months } = await api.getMonths();
-            ui.renderMonthsList(months, this.currentMonth, (month) => this.selectMonth(month));
+            const data = await api.getMonths();
+            ui.renderMonthsList(
+                data.months,
+                this.currentMonth,
+                (month) => this.selectMonth(month),
+                data.next_cursor,
+                (cursor) => this.loadMoreMonths(cursor)
+            );
         } catch (error) {
             console.error('Failed to load months list:', error);
+        }
+    }
+
+    async loadMoreExpenses(cursor) {
+        try {
+            const data = await api.getMonth(this.currentMonth, cursor);
+            this.allExpenses = [...this.allExpenses, ...(data.expenses || [])];
+            this.expensesCursor = data.next_cursor || null;
+
+            ui.renderExpenses(this.allExpenses, {
+                onDelete: (id) => this.handleDeleteExpense(id),
+                onEdit: (id, amount, desc) => this.openEditExpense(id, amount, desc),
+                onLoadMore: (cursor) => this.loadMoreExpenses(cursor),
+            }, this.expensesCursor);
+        } catch (error) {
+            ui.showToast('Failed to load more expenses', 'error');
+        }
+    }
+
+    async loadMoreMonths(cursor) {
+        try {
+            const data = await api.getMonths(cursor);
+            // Append to existing months list
+            const container = document.getElementById('months-list');
+            const loadMoreItem = document.getElementById('load-more-months');
+            if (loadMoreItem) loadMoreItem.remove();
+
+            for (const month of data.months) {
+                const li = document.createElement('li');
+                li.className = `month-item ${month.month === this.currentMonth ? 'active' : ''}`;
+                li.dataset.month = month.month;
+                li.innerHTML = `
+                    <span class="month-name">${ui.formatMonthName(month.month)}</span>
+                    <span class="month-balance">${ui.formatCurrency(month.monthly_saved)}</span>
+                `;
+                li.addEventListener('click', () => this.selectMonth(month.month));
+                container.appendChild(li);
+            }
+
+            if (data.next_cursor) {
+                const newLoadMore = document.createElement('li');
+                newLoadMore.id = 'load-more-months';
+                newLoadMore.className = 'month-item load-more-item';
+                newLoadMore.innerHTML = '<span>Load More...</span>';
+                newLoadMore.addEventListener('click', () => this.loadMoreMonths(data.next_cursor));
+                container.appendChild(newLoadMore);
+            }
+        } catch (error) {
+            ui.showToast('Failed to load more months', 'error');
         }
     }
 
@@ -183,12 +315,21 @@ class App {
 
         try {
             this.monthData = await api.getMonth(month);
+            this.allExpenses = this.monthData.expenses || [];
+            this.expensesCursor = this.monthData.next_cursor || null;
+
             ui.updateDashboard(this.monthData);
-            ui.renderExpenses(this.monthData.expenses, (id) => this.handleDeleteExpense(id));
+            ui.renderExpenses(this.allExpenses, {
+                onDelete: (id) => this.handleDeleteExpense(id),
+                onEdit: (id, amount, desc) => this.openEditExpense(id, amount, desc),
+                onLoadMore: (cursor) => this.loadMoreExpenses(cursor),
+            }, this.expensesCursor);
         } catch (error) {
             ui.showToast('Failed to load month data', 'error');
         }
     }
+
+    // --- Expense handlers ---
 
     async handleAddExpense() {
         const amountInput = document.getElementById('expense-amount');
@@ -221,6 +362,41 @@ class App {
         }
     }
 
+    openEditExpense(expenseId, amount, description) {
+        this.editingExpenseId = expenseId;
+        ui.populateEditExpenseModal(amount, description);
+    }
+
+    async handleEditExpense() {
+        const amountInput = document.getElementById('edit-expense-amount');
+        const descInput = document.getElementById('edit-expense-desc');
+        const amount = parseFloat(amountInput.value);
+        const description = descInput.value.trim();
+
+        ui.hideError('edit-expense-error');
+
+        if (isNaN(amount) || amount <= 0) {
+            ui.showError('edit-expense-error', 'Please enter a valid amount');
+            return;
+        }
+
+        if (!description) {
+            ui.showError('edit-expense-error', 'Please enter a description');
+            return;
+        }
+
+        try {
+            await api.updateExpense(this.currentMonth, this.editingExpenseId, amount, description);
+            ui.hideModal('edit-expense-modal');
+            document.getElementById('edit-expense-form').reset();
+            this.editingExpenseId = null;
+            ui.showToast('Expense updated!', 'success');
+            await this.loadCurrentMonth();
+        } catch (error) {
+            ui.showError('edit-expense-error', error.message);
+        }
+    }
+
     async handleDeleteExpense(expenseId) {
         try {
             await api.deleteExpense(this.currentMonth, expenseId);
@@ -230,6 +406,60 @@ class App {
             ui.showToast('Failed to delete expense', 'error');
         }
     }
+
+    // --- Month management handlers ---
+
+    async handleCreateMonth() {
+        const monthInput = document.getElementById('new-month-input');
+        const month = monthInput.value;
+
+        ui.hideError('create-month-error');
+
+        if (!month || month.length !== 7) {
+            ui.showError('create-month-error', 'Please select a valid month');
+            return;
+        }
+
+        try {
+            await api.createMonth(month);
+            ui.hideModal('create-month-modal');
+            document.getElementById('create-month-form').reset();
+            ui.showToast('Month created!', 'success');
+            await this.loadInitialData();
+        } catch (error) {
+            ui.showError('create-month-error', error.message);
+        }
+    }
+
+    async handleAddFunds() {
+        const amountInput = document.getElementById('funds-amount');
+        const amount = parseFloat(amountInput.value);
+
+        ui.hideError('add-funds-error');
+
+        if (isNaN(amount) || amount <= 0) {
+            ui.showError('add-funds-error', 'Please enter a valid amount');
+            return;
+        }
+
+        if (!this.currentMonth) {
+            ui.showError('add-funds-error', 'No month selected');
+            return;
+        }
+
+        try {
+            await api.addFunds(this.currentMonth, amount);
+            ui.hideModal('add-funds-modal');
+            document.getElementById('add-funds-form').reset();
+            ui.showToast('Funds added!', 'success');
+            await this.loadCurrentMonth();
+            this.loadMonthsList();
+        } catch (error) {
+            ui.showError('add-funds-error', error.message);
+        }
+    }
+
+    // --- PIN management ---
 
     async handleChangePin() {
         const currentPin = document.getElementById('current-pin').value;

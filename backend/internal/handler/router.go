@@ -99,11 +99,20 @@ func (rt *Router) protectedRoute(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/months" && method == http.MethodGet:
 		rt.handleListMonths(w, r)
 		return
+	case path == "/api/month" && method == http.MethodPost:
+		rt.handleCreateMonth(w, r)
+		return
+	case strings.HasPrefix(path, "/api/month/") && strings.HasSuffix(path, "/funds") && method == http.MethodPost:
+		rt.handleAddFunds(w, r)
+		return
 	case strings.HasPrefix(path, "/api/month/") && method == http.MethodGet:
 		rt.handleGetMonth(w, r)
 		return
 	case path == "/api/expense" && method == http.MethodPost:
 		rt.handleAddExpense(w, r)
+		return
+	case strings.HasPrefix(path, "/api/expense/") && method == http.MethodPut:
+		rt.handleUpdateExpense(w, r)
 		return
 	case strings.HasPrefix(path, "/api/expense/") && method == http.MethodDelete:
 		rt.handleDeleteExpense(w, r)

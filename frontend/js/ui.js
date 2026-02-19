@@ -1,10 +1,24 @@
-// UI Helper Functions
+/**
+ * UI Helper Functions
+ *
+ * Pure presentation layer utilities for the Passbook application. Contains
+ * formatting helpers, screen/modal management, toast notifications, and
+ * DOM rendering functions for expenses and months lists.
+ *
+ * @module ui
+ */
 
+/** Full month names indexed 0-11 for converting "YYYY-MM" keys to display strings */
 const MONTHS = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
+/**
+ * Formats a numeric amount as a US dollar currency string (e.g. "$1,234.56").
+ * @param {number} amount - The monetary amount to format
+ * @returns {string} Locale-formatted USD currency string
+ */
 export function formatCurrency(amount) {
     return new Intl.NumberFormat('en-US', {
         style: 'currency',
@@ -121,7 +135,7 @@ export function showPinError(containerId) {
     }, 300);
 }
 
-export function renderExpenses(expenses, onDelete) {
+export function renderExpenses(expenses, callbacks, nextCursor = null) {
     const container = document.getElementById('expenses-list');
 
     if (!expenses || expenses.length === 0) {
@@ -130,12 +144,18 @@ export function renderExpenses(expenses, onDelete) {
     }
 
     container.innerHTML = expenses.map(expense => `
-        <div class="expense-item" data-id="${encodeURIComponent(expense.id)}">
+        <div class="expense-item" data-id="${encodeURIComponent(expense.id)}" data-amount="${expense.amount}" data-desc="${escapeHtml(expense.description)}">
             <div class="expense-info">
                 <div class="expense-desc">${escapeHtml(expense.description)}</div>
                 <div class="expense-date">${formatDate(expense.created_at)}</div>
             </div>
             <div class="expense-amount">-${formatCurrency(expense.amount)}</div>
+            <button class="expense-edit" aria-label="Edit expense">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                </svg>
+            </button>
             <button class="expense-delete" aria-label="Delete expense">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="3,6 5,6 21,6"></polyline>
@@ -145,19 +165,42 @@ export function renderExpenses(expenses, onDelete) {
         </div>
     `).join('');
 
+    // Add "Load More" button if there's a next cursor
+    if (nextCursor && callbacks.onLoadMore) {
+        const loadMoreBtn = document.createElement('button');
+        loadMoreBtn.id = 'load-more-expenses';
+        loadMoreBtn.className = 'btn btn-secondary btn-full load-more-btn';
+        loadMoreBtn.textContent = 'Load More';
+        loadMoreBtn.addEventListener('click', () => {
+            callbacks.onLoadMore(nextCursor);
+        });
+        container.appendChild(loadMoreBtn);
+    }
+
+    // Add edit handlers
+    container.querySelectorAll('.expense-edit').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const item = e.target.closest('.expense-item');
+            const id = decodeURIComponent(item.dataset.id);
+            const amount = parseFloat(item.dataset.amount);
+            const desc = item.dataset.desc;
+            callbacks.onEdit(id, amount, desc);
+        });
+    });
+
     // Add delete handlers
     container.querySelectorAll('.expense-delete').forEach(btn => {
         btn.addEventListener('click', (e) => {
             const item = e.target.closest('.expense-item');
             const id = decodeURIComponent(item.dataset.id);
             if (confirm('Delete this expense?')) {
-                onDelete(id);
+                callbacks.onDelete(id);
             }
         });
     });
 }
 
-export function renderMonthsList(months, currentMonth, onSelect) {
+export function renderMonthsList(months, currentMonth, onSelect, nextCursor = null, onLoadMore = null) {
     const container = document.getElementById('months-list');
 
     if (!months || months.length === 0) {
@@ -172,11 +215,29 @@ export function renderMonthsList(months, currentMonth, onSelect) {
         </li>
     `).join('');
 
-    container.querySelectorAll('.month-item').forEach(item => {
+    if (nextCursor && onLoadMore) {
+        const loadMoreItem = document.createElement('li');
+        loadMoreItem.id = 'load-more-months';
+        loadMoreItem.className = 'month-item load-more-item';
+        loadMoreItem.innerHTML = '<span>Load More...</span>';
+        loadMoreItem.addEventListener('click', () => {
+            onLoadMore(nextCursor);
+        });
+        container.appendChild(loadMoreItem);
+    }
+
+    container.querySelectorAll('.month-item:not(.load-more-item)').forEach(item => {
         item.addEventListener('click', () => {
             onSelect(item.dataset.month);
         });
     });
+}
+
+export function populateEditExpenseModal(amount, description) {
+    document.getElementById('edit-expense-amount').value = amount;
+    document.getElementById('edit-expense-desc').value = description;
+    showModal('edit-expense-modal');
+    document.getElementById('edit-expense-amount').focus();
 }
 
 export function updateDashboard(data) {
@@ -202,7 +263,7 @@ export function showEmptyState() {
     document.getElementById('total-balance').textContent = formatCurrency(0);
     document.getElementById('expenses-total').textContent = '$0.00 spent';
     document.getElementById('expenses-list').innerHTML =
-        '<p class="no-expenses">No entries yet. Use admin tools to add monthly data.</p>';
+        '<p class="no-expenses">No entries yet. Open the menu to create a new month.</p>';
 }
 
 function escapeHtml(text) {

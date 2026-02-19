@@ -400,6 +400,82 @@ header h1 {
     color: var(--danger-color);
 }
 
+/* Edit button on expense items */
+.expense-edit {
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: transparent;
+    border-radius: 50%;
+    cursor: pointer;
+    margin-left: var(--spacing-sm);
+    opacity: 0.5;
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.expense-edit:active {
+    opacity: 1;
+    background: rgba(74, 144, 164, 0.1);
+}
+
+.expense-edit svg {
+    color: var(--primary-color);
+}
+
+/* Load More button */
+.load-more-btn {
+    margin-top: var(--spacing);
+    padding: 12px;
+    text-align: center;
+}
+
+.load-more-item {
+    justify-content: center;
+    color: var(--primary-color);
+    font-weight: 500;
+}
+
+/* Button text (inline action) */
+.btn-text {
+    background: none;
+    border: none;
+    color: var(--primary-color);
+    font-weight: 500;
+    font-size: 0.875rem;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: var(--border-radius-sm);
+    transition: var(--transition);
+}
+
+.btn-text:active {
+    background: rgba(74, 144, 164, 0.1);
+}
+
+/* Section actions */
+.section-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+/* Menu header with multiple buttons */
+.menu-header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+/* Form hint text */
+.form-hint {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: var(--spacing);
+}
+
 /* FAB Button */
 .fab {
     position: fixed;
@@ -714,9 +790,18 @@ header h1 {
         background: rgba(74, 144, 164, 0.1);
     }
 
+    .expense-edit:hover {
+        opacity: 1;
+        background: rgba(74, 144, 164, 0.1);
+    }
+
     .expense-delete:hover {
         opacity: 1;
         background: rgba(244, 67, 54, 0.1);
+    }
+
+    .btn-text:hover {
+        background: rgba(74, 144, 164, 0.1);
     }
 
     .btn:hover {
