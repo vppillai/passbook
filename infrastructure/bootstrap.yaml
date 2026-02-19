@@ -179,18 +179,24 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:iam::${AWS::AccountId}:role/passbook-*'
 
-              # CloudWatch Logs permissions
+              # CloudWatch Logs permissions - scoped to passbook log groups
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
                   - logs:DeleteLogGroup
                   - logs:PutRetentionPolicy
-                  - logs:DescribeLogGroups
                   - logs:TagLogGroup
                   - logs:ListTagsLogGroup
                 Resource:
                   - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/passbook-*'
                   - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/passbook-*'
+
+              # CloudWatch Logs describe - requires wildcard (list-level API used by CloudFormation GetAtt)
+              - Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                Resource:
+                  - '*'
 
 Outputs:
   LambdaDeploymentBucketName:
