@@ -218,17 +218,48 @@ body {
     cursor: not-allowed;
 }
 
-/* Loading animation */
-.loading-dots::after {
-    content: '';
-    animation: dots 1.5s infinite;
+/* Verifying text animation */
+#auth-message .dot,
+#setup-message .dot {
+    display: inline-block;
+    opacity: 0;
+    animation: dot-appear 1.5s ease-in-out infinite;
 }
 
-@keyframes dots {
-    0%, 20% { content: ''; }
-    40% { content: '.'; }
-    60% { content: '..'; }
-    80%, 100% { content: '...'; }
+#auth-message .dot:nth-child(2),
+#setup-message .dot:nth-child(2) {
+    animation-delay: 0.25s;
+}
+
+#auth-message .dot:nth-child(3),
+#setup-message .dot:nth-child(3) {
+    animation-delay: 0.5s;
+}
+
+@keyframes dot-appear {
+    0%, 100% { opacity: 0; transform: translateY(0); }
+    25% { opacity: 1; transform: translateY(-3px); }
+    50%, 80% { opacity: 0; transform: translateY(0); }
+}
+
+/* PIN dots wave animation during loading */
+.pin-display.loading .pin-dot {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    animation: pin-wave 1.2s ease-in-out infinite;
+    transition: none;
+}
+
+.pin-display.loading .pin-dot:nth-child(1) { animation-delay: 0s; }
+.pin-display.loading .pin-dot:nth-child(2) { animation-delay: 0.15s; }
+.pin-display.loading .pin-dot:nth-child(3) { animation-delay: 0.30s; }
+.pin-display.loading .pin-dot:nth-child(4) { animation-delay: 0.45s; }
+.pin-display.loading .pin-dot:nth-child(5) { animation-delay: 0.60s; }
+.pin-display.loading .pin-dot:nth-child(6) { animation-delay: 0.75s; }
+
+@keyframes pin-wave {
+    0%, 100% { opacity: 0.2; transform: scale(0.75); }
+    50% { opacity: 1; transform: scale(1.15); }
 }
 
 /* Main Screen Header */

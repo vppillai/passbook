@@ -35,11 +35,16 @@ class Auth {
         const message = screen === 'setup'
             ? document.getElementById('setup-message')
             : document.getElementById('auth-message');
+        const pinDisplay = screen === 'setup'
+            ? document.querySelector('#setup-screen .pin-display')
+            : document.getElementById('auth-pin-display');
 
         if (loading) {
-            message.innerHTML = '<span class="loading-dots">Verifying</span>';
+            message.innerHTML = 'Verifying<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>';
+            pinDisplay.classList.add('loading');
             document.querySelectorAll('.pin-key').forEach(key => key.disabled = true);
         } else {
+            pinDisplay.classList.remove('loading');
             document.querySelectorAll('.pin-key').forEach(key => key.disabled = false);
         }
     }
