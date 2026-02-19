@@ -34,8 +34,13 @@ jobs:
 
       - name: Inject Version
         run: |
-          # Get version: tag if on tag, otherwise git describe
-          VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
+          # Tag push: use the exact tag name from the ref
+          # Branch push: use git describe (shows nearest tag + distance)
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="$GITHUB_REF_NAME"
+          else
+            VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
+          fi
           echo "Version: $VERSION"
           sed -i "s|>dev</span>|>$VERSION</span>|" frontend/index.html
 
