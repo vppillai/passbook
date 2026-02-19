@@ -6,6 +6,8 @@ on:
     paths:
       - 'frontend/**'
       - '.github/workflows/deploy-frontend.yaml'
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
