@@ -120,13 +120,6 @@ Resources:
         - Key: Application
           Value: Passbook
 
-  # API Gateway Log Group
-  ApiGatewayLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/apigateway/passbook-${Environment}'
-      RetentionInDays: 14
-
   # Lambda Log Group with retention
   LambdaLogGroup:
     Type: AWS::Logs::LogGroup
@@ -165,9 +158,6 @@ Resources:
       ApiId: !Ref HttpApi
       StageName: '$default'
       AutoDeploy: true
-      AccessLogSettings:
-        DestinationArn: !GetAtt ApiGatewayLogGroup.Arn
-        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","method":"$context.httpMethod","path":"$context.path","status":"$context.status","responseLength":"$context.responseLength","responseTime":"$context.responseLatency"}'
       # Tight rate limits - this is a single-user app
       DefaultRouteSettings:
         ThrottlingBurstLimit: 10    # Max 10 concurrent requests
