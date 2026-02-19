@@ -6,8 +6,6 @@ on:
     paths:
       - 'frontend/**'
       - '.github/workflows/deploy-frontend.yaml'
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -34,10 +32,10 @@ jobs:
 
       - name: Inject Version
         run: |
-          # Tag push: use the exact tag name from the ref
-          # Branch push: use git describe (shows nearest tag + distance)
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            VERSION="$GITHUB_REF_NAME"
+          # Use frontend/VERSION file if present (set during release tagging)
+          # Fall back to git describe for non-release branch builds
+          if [ -f frontend/VERSION ]; then
+            VERSION=$(cat frontend/VERSION | tr -d '[:space:]')
           else
             VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
           fi
