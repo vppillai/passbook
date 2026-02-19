@@ -103,7 +103,7 @@ This app is hosted in a **public GitHub repository**. Below is a comprehensive s
 | PIN Hashing | Argon2id (16MB, 3 iterations, 1 thread) | Memory-hard, resistant to GPU attacks |
 | Salt | 16 bytes random per PIN | Unique salt prevents rainbow tables |
 | Session Tokens | UUID v4 (122 bits of randomness) | Cryptographically secure |
-| Session Storage | Server-side DynamoDB only | Token in sessionStorage, cleared on tab close |
+| Session Storage | Server-side DynamoDB only | Token in localStorage, persists 24h across browser restarts |
 | Session Expiry | 24-hour TTL | Auto-deleted by DynamoDB |
 
 ### Brute Force Protection
@@ -123,6 +123,9 @@ This app is hosted in a **public GitHub repository**. Below is a comprehensive s
 | Origin validation | Checked in Lambda code | Defense-in-depth |
 | Referer check | Fallback for edge cases | Additional validation |
 | HTTPS | Enforced by API Gateway + GitHub Pages | Encryption in transit |
+| Security headers | `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cache-Control: no-store` | MIME sniffing, clickjacking, referrer, caching protection |
+| Content Security Policy | CSP meta tag: `default-src 'none'` with minimal allowances | Restricts resource loading to same origin |
+| Request body limit | 32 KB max in Lambda handler | Prevents oversized payload abuse |
 
 ### Data Protection
 
@@ -138,7 +141,9 @@ This app is hosted in a **public GitHub repository**. Below is a comprehensive s
 | Control | Implementation |
 |---------|----------------|
 | No stored credentials | GitHub OIDC for AWS access |
-| Least privilege | Lambda role limited to specific table |
+| OIDC scope | Trust restricted to `environment:production` — only production deployments can assume role |
+| Least privilege | Lambda role limited to specific table; CI role scoped to `passbook-*` resources |
+| Reserved concurrency | Lambda capped at 5 concurrent executions |
 | Private S3 | Lambda artifacts not publicly accessible |
 | Resource isolation | All resources prefixed `passbook-*` |
 
@@ -375,7 +380,7 @@ Open `frontend/index.html` directly in browser. API calls will fail without back
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TABLE_NAME` | Required | DynamoDB table name |
-| `ALLOWED_ORIGIN` | `https://vppillai.github.io` | CORS origin |
+| `ALLOWED_ORIGIN` | Required | CORS allowed origin (e.g. `https://vppillai.github.io`) |
 | `MONTHLY_ALLOWANCE` | `100` | Allowance amount |
 
 ---
@@ -433,7 +438,7 @@ aws cloudformation wait stack-delete-complete --stack-name passbook-bootstrap --
 
 ### 401 Unauthorized
 - Session expired (24h limit)
-- Clear browser sessionStorage and re-authenticate
+- Clear browser localStorage and re-authenticate
 
 ### 403 Forbidden
 - Request origin doesn't match allowed origin
@@ -442,6 +447,15 @@ aws cloudformation wait stack-delete-complete --stack-name passbook-bootstrap --
 ### 429 Too Many Requests
 - API rate limit exceeded (5 req/sec)
 - Wait and retry
+
+### CloudFormation stack stuck in UPDATE_ROLLBACK_FAILED
+If a deployment adds new IAM permissions to the GitHub Actions role (e.g. new Lambda or CloudWatch actions) and the stack update fails mid-rollback:
+1. Apply the updated `bootstrap.yaml` first using admin credentials: `aws cloudformation deploy --template-file infrastructure/bootstrap.yaml --stack-name passbook-bootstrap --capabilities CAPABILITY_NAMED_IAM --region us-west-2`
+2. Resume the stuck rollback: `aws cloudformation continue-update-rollback --stack-name passbook-prod --region us-west-2`
+3. Wait for `UPDATE_ROLLBACK_COMPLETE`, then re-trigger the CI deployment
+
+### bootstrap.yaml changes don't take effect automatically
+`bootstrap.yaml` is a manually managed stack (it creates the CI/CD role itself, so it can't bootstrap itself via CI). Any changes to `bootstrap.yaml` must be deployed manually with admin credentials before the CI pipeline will have the new permissions.
 
 ---
 
