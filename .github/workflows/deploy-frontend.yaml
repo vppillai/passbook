@@ -167,20 +167,25 @@ jobs:
             fi
 
             # ===== Per-instance color theme =====
-            # Read color tokens from YAML (falls back to pwa.theme_color/background_color)
+            # Read color tokens from YAML (falls back to pwa.theme_color/background_color).
+            # Written to an external CSS file (NOT inline <style>) because the app's CSP
+            # meta tag has style-src 'self', which blocks inline styles. An external
+            # stylesheet from the same origin is permitted.
             COLOR_PRIMARY=$(yq '.colors.primary // .pwa.theme_color // "#4A90A4"' "$CONFIG_FILE")
             COLOR_PRIMARY_DARK=$(yq '.colors.primary_dark // ""' "$CONFIG_FILE")
             COLOR_BACKGROUND=$(yq '.colors.background // .pwa.background_color // "#f5f7fa"' "$CONFIG_FILE")
-            # Build the override CSS. If primary_dark is empty, only override primary + background.
-            if [ -n "$COLOR_PRIMARY_DARK" ] && [ "$COLOR_PRIMARY_DARK" != "null" ]; then
-              STYLE_OVERRIDE="<style>:root{--primary-color:${COLOR_PRIMARY};--primary-dark:${COLOR_PRIMARY_DARK};--background:${COLOR_BACKGROUND};}</style>"
-            else
-              STYLE_OVERRIDE="<style>:root{--primary-color:${COLOR_PRIMARY};--background:${COLOR_BACKGROUND};}</style>"
-            fi
-            # Insert immediately before </head>. The order matters: this <style> must
-            # come AFTER the <link rel="stylesheet" href="css/styles.css"> so it wins
-            # via CSS cascade source order.
-            sed -i "s|</head>|    ${STYLE_OVERRIDE}\n</head>|" "build/$INSTANCE/index.html"
+            {
+              echo ":root {"
+              echo "    --primary-color: ${COLOR_PRIMARY};"
+              if [ -n "$COLOR_PRIMARY_DARK" ] && [ "$COLOR_PRIMARY_DARK" != "null" ]; then
+                echo "    --primary-dark: ${COLOR_PRIMARY_DARK};"
+              fi
+              echo "    --background: ${COLOR_BACKGROUND};"
+              echo "}"
+            } > "build/$INSTANCE/css/theme.css"
+            # Insert a <link> to theme.css AFTER the main stylesheet link, so cascade
+            # source order makes the theme variables win.
+            sed -i 's|<link rel="stylesheet" href="css/styles.css">|<link rel="stylesheet" href="css/styles.css">\n    <link rel="stylesheet" href="css/theme.css">|' "build/$INSTANCE/index.html"
 
             # ===== PWA: per-instance icon (overrides default if a custom one exists) =====
             if [ -f "frontend/assets/icons/$INSTANCE.svg" ]; then
