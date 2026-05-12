@@ -1,0 +1,15 @@
+name: eatout
+display_name: Eat-Out Budget
+monthly_amount: 500
+labels:
+  app_title: Eat-Out Budget
+  app_description: Track household eat-out spending
+  total_savings: Total Remaining
+  add_funds_button: "+ Top Up"
+  add_funds_modal_title: Top Up Budget
+  add_funds_modal_submit: Top Up
+  expense_buy_label: Where did you eat?
+  expense_buy_placeholder: "e.g., Pizza Hut"
+  monthly_allowance_hint: Monthly budget will be applied automatically.
+  funds_added_toast: Budget topped up!
+  spent_suffix: spent

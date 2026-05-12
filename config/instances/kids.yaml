@@ -1,0 +1,15 @@
+name: kids
+display_name: Kids Passbook
+monthly_amount: 100
+labels:
+  app_title: My Passbook
+  app_description: Track allowance and expenses
+  total_savings: Total Savings
+  add_funds_button: "+ Funds"
+  add_funds_modal_title: Add Funds
+  add_funds_modal_submit: Add Funds
+  expense_buy_label: What did you buy?
+  expense_buy_placeholder: e.g., Ice cream
+  monthly_allowance_hint: Monthly allowance will be applied automatically.
+  funds_added_toast: Funds added!
+  spent_suffix: spent

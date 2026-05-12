@@ -29,3 +29,7 @@ coverage.out
 #AI
 .claude/
 passbook-backup-*.json
+
+# Local data backups (never commit — contain PIN hashes)
+backups/
+*.json.bak
