@@ -221,9 +221,10 @@ aws cloudformation deploy \
 
 Add these repository settings (Settings → Secrets and variables → Actions):
 
-**Variables:**
+**Secrets:**
 - `AWS_ACCOUNT_ID`: Your 12-digit AWS account ID
-- `API_ENDPOINT`: Set after first backend deploy (from CloudFormation outputs)
+
+The frontend workflow fetches each instance's API endpoint directly from CloudFormation outputs — no manual variable needed.
 
 **Pages:**
 - Settings → Pages → Source: "GitHub Actions"
@@ -439,8 +440,10 @@ Deletes the instance's CloudFormation stack, DynamoDB table, and log group. Does
 
 ```bash
 # 1. Cleanup each instance
-for INSTANCE in kids eatout; do
-  ./scripts/cleanup-aws.sh --instance $INSTANCE
+# Loop over all instances defined in config/instances/
+for f in config/instances/*.yaml; do
+  INSTANCE=$(basename "$f" .yaml)
+  ./scripts/cleanup-aws.sh --instance "$INSTANCE"
 done
 
 # 2. Empty and delete the shared S3 deployment bucket
@@ -467,7 +470,7 @@ aws cloudformation delete-stack --stack-name passbook-bootstrap --region us-west
 ## Troubleshooting
 
 ### PIN Setup Fails
-- Check CloudWatch logs: `/aws/lambda/passbook-api`
+- Check CloudWatch logs: `/aws/lambda/passbook-api-<instance>-prod` (e.g., `/aws/lambda/passbook-api-kids-prod`)
 - Verify DynamoDB table exists and Lambda has permissions
 
 ### 401 Unauthorized
@@ -521,11 +524,15 @@ CI deploys `passbook-kids-prod` and `passbook-eatout-prod` stacks alongside the 
 
 ### Cutover
 
+⚠️ **Coordination:** During the window between merge and cutover, the kids frontend at `/passbook/kids/` will see an empty new table — anyone opening the app will see the PIN setup screen. If a PIN is set during that window, it will be **overwritten** by the migration step (since `CONFIG` items are part of what we copy). Coordinate "don't open the app for ~10 minutes" with your household.
+
 ```bash
 ./scripts/migrate-instance.sh --from passbook-prod --to passbook-kids-prod
 ```
 
 Verify the kids app at `/passbook/kids/` shows the migrated data. Test login, balance, expense list, edit, delete, add.
+
+**Rollback:** If verification fails, the old `passbook-prod` stack is untouched. Manually re-deploy the frontend pointing at the old API by setting `passbook-kids-prod` aside (do NOT delete it) and reverting the frontend's `config.js` — or, simpler, redeploy the frontend from a `main` commit predating the multi-instance merge while you debug.
 
 ### Cleanup (after confidence period)
 

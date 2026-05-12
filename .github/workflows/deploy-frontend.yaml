@@ -70,27 +70,26 @@ jobs:
           set -euo pipefail
           mkdir -p build
 
-          # Landing page (root): meta-refresh to /kids/, with visible links as fallback
-          cat > build/index.html <<'EOF'
-          <!doctype html>
-          <html lang="en">
-          <head>
-            <meta charset="utf-8">
-            <meta http-equiv="refresh" content="0; url=./kids/">
-            <title>Passbook</title>
-            <style>body{font-family:system-ui,sans-serif;max-width:36em;margin:4em auto;padding:0 1em;color:#333}a{color:#4A90A4}</style>
-          </head>
-          <body>
-            <h1>Passbook</h1>
-            <p>Redirecting to <a href="./kids/">Kids Passbook</a>...</p>
-            <ul>
-              <li><a href="./kids/">Kids Passbook</a></li>
-              <li><a href="./eatout/">Eat-Out Budget</a></li>
-            </ul>
-            <script>location.replace('./kids/');</script>
-          </body>
-          </html>
-          EOF
+          # Landing page (root): meta-refresh to preferred instance, with visible links as fallback
+          # Determine default-redirect target (prefer 'kids' if present, else first in list)
+          DEFAULT_TARGET=$(echo "$INSTANCES" | jq -r 'if any(. == "kids") then "kids" else .[0] end')
+
+          {
+            printf '%s\n' '<!doctype html>' '<html lang="en">' '<head>' '  <meta charset="utf-8">'
+            printf '  <meta http-equiv="refresh" content="0; url=./%s/">\n' "$DEFAULT_TARGET"
+            printf '%s\n' '  <title>Passbook</title>' \
+              '  <style>body{font-family:system-ui,sans-serif;max-width:36em;margin:4em auto;padding:0 1em;color:#333}a{color:#4A90A4}</style>' \
+              '</head>' '<body>' '  <h1>Passbook</h1>'
+            printf '  <p>Redirecting to <a href="./%s/">%s</a>...</p>\n' "$DEFAULT_TARGET" "$(yq ".display_name" "config/instances/$DEFAULT_TARGET.yaml")"
+            echo "  <ul>"
+            for INSTANCE in $(echo "$INSTANCES" | jq -r '.[]'); do
+              DISPLAY=$(yq '.display_name' "config/instances/$INSTANCE.yaml")
+              printf '    <li><a href="./%s/">%s</a></li>\n' "$INSTANCE" "$DISPLAY"
+            done
+            echo "  </ul>"
+            printf '  <script>location.replace(%s);</script>\n' "$(printf './%s/' "$DEFAULT_TARGET" | jq -Rs .)"
+            printf '%s\n' '</body>' '</html>'
+          } > build/index.html
 
           for INSTANCE in $(echo "$INSTANCES" | jq -r '.[]'); do
             echo "=== Building $INSTANCE ==="
@@ -156,6 +155,14 @@ jobs:
 
             # ===== PWA: update theme-color meta tag in index.html =====
             sed -i "s|<meta name=\"theme-color\" content=\"[^\"]*\">|<meta name=\"theme-color\" content=\"$PWA_THEME\">|" "build/$INSTANCE/index.html"
+
+            # ===== Update meta description per-instance =====
+            DESC=$(yq '.labels.app_description // ""' "$CONFIG_FILE")
+            if [ -n "$DESC" ] && [ "$DESC" != "null" ]; then
+              # jq for safe quoting; sed for the actual replacement
+              ESCAPED_DESC=$(printf '%s' "$DESC" | sed -e 's/[&|]/\\&/g')
+              sed -i "s|<meta name=\"description\" content=\"[^\"]*\">|<meta name=\"description\" content=\"$ESCAPED_DESC\">|" "build/$INSTANCE/index.html"
+            fi
 
             # ===== PWA: per-instance icon (overrides default if a custom one exists) =====
             if [ -f "frontend/assets/icons/$INSTANCE.svg" ]; then

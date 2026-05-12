@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Kids Passbook App - Serverless Backend Infrastructure
+Description: Passbook App - Serverless Backend Infrastructure
 
 Parameters:
   Environment:
