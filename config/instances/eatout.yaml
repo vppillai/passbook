@@ -5,8 +5,12 @@ pwa:
   name: Eat-Out Budget
   short_name: Eat-Out
   description: Track household eat-out spending
-  theme_color: "#E67E22"
-  background_color: "#fff5e6"
+  theme_color: "#E07856"
+  background_color: "#FFF8F4"
+colors:
+  primary: "#E07856"
+  primary_dark: "#B85A3D"
+  background: "#FFF8F4"
 labels:
   app_title: Eat-Out Budget
   app_description: Track household eat-out spending

@@ -424,7 +424,7 @@ header h1 {
 
 .expense-delete:active {
     opacity: 1;
-    background: rgba(244, 67, 54, 0.1);
+    background: color-mix(in srgb, var(--danger-color) 10%, transparent);
 }
 
 .expense-delete svg {
@@ -449,7 +449,7 @@ header h1 {
 
 .expense-edit:active {
     opacity: 1;
-    background: rgba(74, 144, 164, 0.1);
+    background: color-mix(in srgb, var(--primary-color) 10%, transparent);
 }
 
 .expense-edit svg {
@@ -483,7 +483,7 @@ header h1 {
 }
 
 .btn-text:active {
-    background: rgba(74, 144, 164, 0.1);
+    background: color-mix(in srgb, var(--primary-color) 10%, transparent);
 }
 
 /* Section actions */
@@ -596,7 +596,7 @@ header h1 {
 .form-group input:focus {
     outline: none;
     border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(74, 144, 164, 0.1);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 10%, transparent);
 }
 
 .form-group input[type="number"]::-webkit-inner-spin-button,
@@ -751,7 +751,7 @@ header h1 {
 
 .month-item:active,
 .month-item.active {
-    background: rgba(74, 144, 164, 0.1);
+    background: color-mix(in srgb, var(--primary-color) 10%, transparent);
 }
 
 .month-item .month-name {
@@ -829,21 +829,21 @@ header h1 {
     }
 
     .pin-key:hover {
-        background: rgba(74, 144, 164, 0.1);
+        background: color-mix(in srgb, var(--primary-color) 10%, transparent);
     }
 
     .expense-edit:hover {
         opacity: 1;
-        background: rgba(74, 144, 164, 0.1);
+        background: color-mix(in srgb, var(--primary-color) 10%, transparent);
     }
 
     .expense-delete:hover {
         opacity: 1;
-        background: rgba(244, 67, 54, 0.1);
+        background: color-mix(in srgb, var(--danger-color) 10%, transparent);
     }
 
     .btn-text:hover {
-        background: rgba(74, 144, 164, 0.1);
+        background: color-mix(in srgb, var(--primary-color) 10%, transparent);
     }
 
     .btn:hover {

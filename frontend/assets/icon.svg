@@ -1,12 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
   <defs>
     <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#62C1DA"/>
-      <stop offset="100%" stop-color="#24728A"/>
+      <stop offset="0%" stop-color="#7B9CE8"/>
+      <stop offset="100%" stop-color="#4263B3"/>
     </linearGradient>
     <linearGradient id="coin" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#FFE066"/>
-      <stop offset="100%" stop-color="#F09418"/>
+      <stop offset="0%" stop-color="#FFD86B"/>
+      <stop offset="100%" stop-color="#E89B0A"/>
     </linearGradient>
   </defs>
 
@@ -20,37 +20,37 @@
   <rect x="122" y="124" width="268" height="300" rx="20" fill="white"/>
 
   <!-- Spine -->
-  <rect x="122" y="124" width="50" height="300" rx="20" fill="#2E88A0"/>
-  <rect x="152" y="124" width="20" height="300" fill="#2E88A0"/>
+  <rect x="122" y="124" width="50" height="300" rx="20" fill="#3A56A8"/>
+  <rect x="152" y="124" width="20" height="300" fill="#3A56A8"/>
 
   <!-- Spine highlight -->
   <rect x="130" y="136" width="11" height="276" rx="5.5" fill="rgba(255,255,255,0.22)"/>
 
   <!-- Entry rows — two columns (description pill + amount pill) -->
-  <rect x="192" y="188" width="88" height="13" rx="6.5" fill="#C4E8F5"/>
-  <rect x="292" y="188" width="68" height="13" rx="6.5" fill="#A4D4EC"/>
+  <rect x="192" y="188" width="88" height="13" rx="6.5" fill="#D8E2F7"/>
+  <rect x="292" y="188" width="68" height="13" rx="6.5" fill="#B8C7EE"/>
 
-  <rect x="192" y="224" width="104" height="13" rx="6.5" fill="#C4E8F5"/>
-  <rect x="308" y="224" width="52" height="13" rx="6.5" fill="#A4D4EC"/>
+  <rect x="192" y="224" width="104" height="13" rx="6.5" fill="#D8E2F7"/>
+  <rect x="308" y="224" width="52" height="13" rx="6.5" fill="#B8C7EE"/>
 
-  <rect x="192" y="260" width="72" height="13" rx="6.5" fill="#C4E8F5"/>
-  <rect x="276" y="260" width="84" height="13" rx="6.5" fill="#A4D4EC"/>
+  <rect x="192" y="260" width="72" height="13" rx="6.5" fill="#D8E2F7"/>
+  <rect x="276" y="260" width="84" height="13" rx="6.5" fill="#B8C7EE"/>
 
-  <rect x="192" y="296" width="96" height="13" rx="6.5" fill="#C4E8F5"/>
-  <rect x="300" y="296" width="60" height="13" rx="6.5" fill="#A4D4EC"/>
+  <rect x="192" y="296" width="96" height="13" rx="6.5" fill="#D8E2F7"/>
+  <rect x="300" y="296" width="60" height="13" rx="6.5" fill="#B8C7EE"/>
 
   <!-- Divider -->
-  <rect x="188" y="332" width="172" height="2" rx="1" fill="#D4EEF6"/>
+  <rect x="188" y="332" width="172" height="2" rx="1" fill="#E4ECFA"/>
 
-  <!-- Balance row (green highlight) -->
-  <rect x="188" y="350" width="162" height="36" rx="10" fill="#3CB878"/>
+  <!-- Balance row (green highlight stays — it's "savings") -->
+  <rect x="188" y="350" width="162" height="36" rx="10" fill="#52B788"/>
   <rect x="204" y="362" width="90" height="12" rx="6" fill="rgba(255,255,255,0.65)"/>
   <rect x="304" y="362" width="32" height="12" rx="6" fill="rgba(255,255,255,0.35)"/>
 
   <!-- Coin badge (overlaps top-right corner of book) -->
   <circle cx="346" cy="162" r="76" fill="rgba(0,0,0,0.14)" transform="translate(5,6)"/>
   <circle cx="346" cy="162" r="76" fill="url(#coin)"/>
-  <circle cx="346" cy="162" r="62" fill="none" stroke="rgba(255,230,100,0.55)" stroke-width="5"/>
+  <circle cx="346" cy="162" r="62" fill="none" stroke="rgba(255,216,107,0.55)" stroke-width="5"/>
 
   <!-- Dollar sign: vertical bar -->
   <rect x="339" y="106" width="14" height="112" rx="7" fill="#A86010"/>

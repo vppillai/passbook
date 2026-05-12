@@ -5,8 +5,12 @@ pwa:
   name: My Passbook
   short_name: Passbook
   description: Track allowance and expenses
-  theme_color: "#4A90A4"
-  background_color: "#f5f7fa"
+  theme_color: "#5B7FD9"
+  background_color: "#F5F7FB"
+colors:
+  primary: "#5B7FD9"
+  primary_dark: "#4263B3"
+  background: "#F5F7FB"
 labels:
   app_title: My Passbook
   app_description: Track allowance and expenses
