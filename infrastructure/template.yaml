@@ -8,6 +8,13 @@ Parameters:
     AllowedValues:
       - prod
 
+  InstanceName:
+    Type: String
+    Description: Instance suffix used in resource names (e.g., kids, eatout)
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+    MinLength: 1
+    MaxLength: 32
+
   AllowedOrigin:
     Type: String
     Default: https://vppillai.github.io
@@ -35,7 +42,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      TableName: !Sub 'passbook-${Environment}'
+      TableName: !Sub 'passbook-${InstanceName}-${Environment}'
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: PK
@@ -66,7 +73,7 @@ Resources:
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub 'passbook-lambda-${Environment}'
+      RoleName: !Sub 'passbook-lambda-${InstanceName}-${Environment}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -98,7 +105,7 @@ Resources:
   PassbookFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub 'passbook-api-${Environment}'
+      FunctionName: !Sub 'passbook-api-${InstanceName}-${Environment}'
       Runtime: provided.al2023
       Handler: bootstrap
       Code:
@@ -133,7 +140,7 @@ Resources:
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
-      Name: !Sub 'passbook-api-${Environment}'
+      Name: !Sub 'passbook-api-${InstanceName}-${Environment}'
       ProtocolType: HTTP
       CorsConfiguration:
         AllowOrigins:
@@ -193,7 +200,7 @@ Outputs:
     Description: API Gateway endpoint URL
     Value: !GetAtt HttpApi.ApiEndpoint
     Export:
-      Name: !Sub 'PassbookApiEndpoint-${Environment}'
+      Name: !Sub 'PassbookApiEndpoint-${InstanceName}-${Environment}'
 
   TableName:
     Description: DynamoDB table name
