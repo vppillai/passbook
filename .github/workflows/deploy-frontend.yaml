@@ -34,12 +34,14 @@ jobs:
           echo "instances=$INSTANCES" >> $GITHUB_OUTPUT
           echo "Discovered instances: $INSTANCES"
 
-  build-and-deploy:
+  # Build runs under `environment: production` so it can assume the OIDC role
+  # (the bootstrap stack trusts repo:vppillai/passbook:environment:production only).
+  # AWS access is read-only here: we just query CloudFormation outputs to fetch
+  # each instance's API endpoint and bake it into the static frontend bundle.
+  build:
     needs: discover
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    environment: production
     steps:
       - uses: actions/checkout@v4
         with:
@@ -186,13 +188,23 @@ jobs:
           echo "Build tree:"
           find build -type f | sort
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-
-      - name: Upload artifact
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: 'build'
+
+  # Deploy runs under `environment: github-pages` (required for actions/deploy-pages
+  # to associate the deployment with the GitHub Pages environment). This job has no
+  # AWS access and only consumes the build artifact uploaded by the previous job.
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
 
       - name: Deploy to GitHub Pages
         id: deployment

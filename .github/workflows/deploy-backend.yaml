@@ -51,7 +51,6 @@ jobs:
     environment: production
     outputs:
       s3_key: ${{ steps.upload.outputs.s3_key }}
-      bucket: ${{ steps.bucket.outputs.bucket }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -69,18 +68,18 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/passbook-github-actions
           aws-region: ${{ env.AWS_REGION }}
-      - id: bucket
+      - id: upload
         run: |
           BUCKET=$(aws cloudformation describe-stacks \
             --stack-name passbook-bootstrap \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaDeploymentBucketName'].OutputValue" \
             --output text)
-          echo "bucket=$BUCKET" >> $GITHUB_OUTPUT
-      - id: upload
-        run: |
           S3_KEY="function-${{ github.sha }}.zip"
-          aws s3 cp backend/function.zip s3://${{ steps.bucket.outputs.bucket }}/$S3_KEY
+          aws s3 cp backend/function.zip "s3://$BUCKET/$S3_KEY"
           echo "s3_key=$S3_KEY" >> $GITHUB_OUTPUT
+          # Note: bucket name is NOT emitted as an output because it contains the
+          # AWS account ID, which GitHub Actions redacts as a secret. Downstream
+          # jobs re-query it from CloudFormation outputs.
 
   deploy:
     needs: [build, discover]
@@ -105,25 +104,42 @@ jobs:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/passbook-github-actions
           aws-region: ${{ env.AWS_REGION }}
       - name: Deploy CloudFormation
+        env:
+          INSTANCE: ${{ matrix.instance }}
+          S3_KEY: ${{ needs.build.outputs.s3_key }}
+          MONTHLY: ${{ steps.config.outputs.monthly_amount }}
         run: |
+          # Resolve bucket via shell var (not step output — output would be
+          # redacted because the bucket name contains the AWS_ACCOUNT_ID secret)
+          BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name passbook-bootstrap \
+            --query "Stacks[0].Outputs[?OutputKey=='LambdaDeploymentBucketName'].OutputValue" \
+            --output text)
           aws cloudformation deploy \
             --template-file infrastructure/template.yaml \
-            --stack-name passbook-${{ matrix.instance }}-prod \
+            --stack-name "passbook-${INSTANCE}-prod" \
             --parameter-overrides \
               Environment=prod \
-              InstanceName=${{ matrix.instance }} \
-              LambdaCodeBucket=${{ needs.build.outputs.bucket }} \
-              LambdaCodeKey=${{ needs.build.outputs.s3_key }} \
+              InstanceName="$INSTANCE" \
+              LambdaCodeBucket="$BUCKET" \
+              LambdaCodeKey="$S3_KEY" \
               AllowedOrigin=https://vppillai.github.io \
-              MonthlyAllowance=${{ steps.config.outputs.monthly_amount }} \
+              MonthlyAllowance="$MONTHLY" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
       - name: Update Lambda code
+        env:
+          INSTANCE: ${{ matrix.instance }}
+          S3_KEY: ${{ needs.build.outputs.s3_key }}
         run: |
+          BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name passbook-bootstrap \
+            --query "Stacks[0].Outputs[?OutputKey=='LambdaDeploymentBucketName'].OutputValue" \
+            --output text)
           aws lambda update-function-code \
-            --function-name passbook-api-${{ matrix.instance }}-prod \
-            --s3-bucket ${{ needs.build.outputs.bucket }} \
-            --s3-key ${{ needs.build.outputs.s3_key }}
+            --function-name "passbook-api-${INSTANCE}-prod" \
+            --s3-bucket "$BUCKET" \
+            --s3-key "$S3_KEY"
       - name: Summarize
         run: |
           API_URL=$(aws cloudformation describe-stacks \
