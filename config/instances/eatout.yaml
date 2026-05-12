@@ -1,6 +1,12 @@
 name: eatout
 display_name: Eat-Out Budget
 monthly_amount: 500
+pwa:
+  name: Eat-Out Budget
+  short_name: Eat-Out
+  description: Track household eat-out spending
+  theme_color: "#E67E22"
+  background_color: "#fff5e6"
 labels:
   app_title: Eat-Out Budget
   app_description: Track household eat-out spending
