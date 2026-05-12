@@ -8,6 +8,8 @@
  * @module ui
  */
 
+import { labels } from './labels.js';
+
 /** Full month names indexed 0-11 for converting "YYYY-MM" keys to display strings */
 const MONTHS = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -253,7 +255,7 @@ export function updateDashboard(data) {
 
     // Update expenses total
     const totalExpenses = data.summary ? data.summary.total_expenses : 0;
-    document.getElementById('expenses-total').textContent = `${formatCurrency(totalExpenses)} spent`;
+    document.getElementById('expenses-total').textContent = `${formatCurrency(totalExpenses)} ${labels.spent_suffix}`;
 }
 
 export function showEmptyState() {
@@ -261,7 +263,7 @@ export function showEmptyState() {
     document.getElementById('month-title').textContent = 'No Data Yet';
     document.getElementById('month-balance').textContent = formatCurrency(0);
     document.getElementById('total-balance').textContent = formatCurrency(0);
-    document.getElementById('expenses-total').textContent = '$0.00 spent';
+    document.getElementById('expenses-total').textContent = `$0.00 ${labels.spent_suffix}`;
     document.getElementById('expenses-list').innerHTML =
         '<p class="no-expenses">No entries yet. Open the menu to create a new month.</p>';
 }
