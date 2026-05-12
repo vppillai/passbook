@@ -7,7 +7,7 @@ show_help() {
     cat << 'EOF'
 Passbook CLI - Data management for passbook app
 
-Usage: ./scripts/add-data.sh <command> [args...]
+Usage: ./scripts/add-data.sh --instance <name> <command> [args...]
 
 Commands:
   month YYYY-MM allowance expenses           Add/update a month (starting balance auto-calculated)
@@ -23,15 +23,15 @@ Commands:
   help, --help, -h                           Show this help message
 
 Examples:
-  ./scripts/add-data.sh month 2026-01 100 30    # January: allowance $100, spent $30
-  ./scripts/add-data.sh expense 2026-01 15 "Book purchase"
-  ./scripts/add-data.sh balance 170
-  ./scripts/add-data.sh funds 2026-02 50
-  ./scripts/add-data.sh rmfunds 2026-02 20
-  ./scripts/add-data.sh rmmonth 2026-01
-  ./scripts/add-data.sh export mybackup.json
-  ./scripts/add-data.sh import mybackup.json
-  ./scripts/add-data.sh show
+  ./scripts/add-data.sh --instance kids month 2026-01 100 30    # January: allowance $100, spent $30
+  ./scripts/add-data.sh --instance kids expense 2026-01 15 "Book purchase"
+  ./scripts/add-data.sh --instance kids balance 170
+  ./scripts/add-data.sh --instance kids funds 2026-02 50
+  ./scripts/add-data.sh --instance kids rmfunds 2026-02 20
+  ./scripts/add-data.sh --instance kids rmmonth 2026-01
+  ./scripts/add-data.sh --instance kids export mybackup.json
+  ./scripts/add-data.sh --instance kids import mybackup.json
+  ./scripts/add-data.sh --instance kids show
 
 Prerequisites:
   - AWS CLI v2 configured with credentials
