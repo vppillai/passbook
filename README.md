@@ -320,8 +320,8 @@ Scripts for managing data directly in DynamoDB.
 aws configure
 # Enter: AWS Access Key ID, Secret Access Key, Region (us-west-2)
 
-# Verify access to the DynamoDB table
-aws dynamodb describe-table --table-name passbook-prod --region us-west-2
+# Verify access to a DynamoDB table (substitute your instance name)
+aws dynamodb describe-table --table-name passbook-kids-prod --region us-west-2
 ```
 
 ### Interactive TUI
@@ -485,7 +485,7 @@ aws cloudformation delete-stack --stack-name passbook-bootstrap --region us-west
 ### CloudFormation stack stuck in UPDATE_ROLLBACK_FAILED
 If a deployment adds new IAM permissions to the GitHub Actions role (e.g. new Lambda or CloudWatch actions) and the stack update fails mid-rollback:
 1. Apply the updated `bootstrap.yaml` first using admin credentials: `aws cloudformation deploy --template-file infrastructure/bootstrap.yaml --stack-name passbook-bootstrap --capabilities CAPABILITY_NAMED_IAM --region us-west-2`
-2. Resume the stuck rollback: `aws cloudformation continue-update-rollback --stack-name passbook-prod --region us-west-2`
+2. Resume the stuck rollback (substitute your instance's stack name): `aws cloudformation continue-update-rollback --stack-name passbook-kids-prod --region us-west-2`
 3. Wait for `UPDATE_ROLLBACK_COMPLETE`, then re-trigger the CI deployment
 
 ### bootstrap.yaml changes don't take effect automatically
