@@ -1,6 +1,6 @@
 # Passbook
 
-A simple, secure budget-tracker app. Originally built for tracking a child's allowance; now supports running multiple independent instances from one codebase (e.g., kids allowance + household eat-out budget).
+A simple, secure budget-tracker app. One codebase, multiple independent deployments (e.g., a child's allowance, a household eat-out budget). Each deployment has its own data, login PIN, branding, and URL — but shares CI and code.
 
 **Live apps:**
 - Kids: https://vppillai.github.io/passbook/kids/
@@ -10,7 +10,12 @@ A simple, secure budget-tracker app. Originally built for tracking a child's all
 
 ## Features
 
-- Monthly allowance tracking (configurable, default $100)
+- Multi-instance deployment from a single codebase
+- Per-instance PWA (name, icon, theme color, start URL)
+- Per-instance UI color theming via CSS variables
+- Per-instance UI labels (e.g., "Allowance" vs "Budget")
+- Dynamic CI matrix: drop a YAML file to add a new instance
+- Monthly budget tracking (configurable amount per instance)
 - Expense tracking with descriptions (add, edit, delete)
 - Running balance calculation (monthly and total)
 - Monthly history view with pagination
@@ -24,31 +29,34 @@ A simple, secure budget-tracker app. Originally built for tracking a child's all
 ## Architecture
 
 ```
-┌─────────────────────┐         HTTPS          ┌────────────────────────┐
-│   GitHub Pages      │ ──────────────────────▶│   API Gateway          │
-│   (Static SPA)      │                        │   (HTTP API v2)        │
-│                     │                        │                        │
-│  - Vanilla JS       │◀───────────────────────│  - CORS: single origin │
-│  - Mobile-first CSS │    JSON responses      │  - Rate: 5/sec, 10 brst│
-└─────────────────────┘                        └───────────┬────────────┘
-                                                           │
-                                               ┌───────────▼────────────┐
-                                               │   Lambda (Go)          │
-                                               │   ARM64, 128MB         │
-                                               │                        │
-                                               │  - PIN: Argon2id hash  │
-                                               │  - Sessions: UUID + TTL│
-                                               │  - Origin validation   │
-                                               └───────────┬────────────┘
-                                                           │
-                                               ┌───────────▼────────────┐
-                                               │   DynamoDB             │
-                                               │   (On-Demand)          │
-                                               │                        │
-                                               │  - Single-table design │
-                                               │  - AES-256 encryption  │
-                                               │  - TTL auto-cleanup    │
-                                               └────────────────────────┘
+                              GitHub Pages
+                  ┌──────────────────────────────────┐
+                  │  /passbook/      (landing page)  │
+                  │  /passbook/kids/    (kids SPA)   │
+                  │  /passbook/eatout/  (eatout SPA) │
+                  └──────────┬───────────┬───────────┘
+                             │           │  HTTPS
+              ┌──────────────▼─┐   ┌─────▼───────────┐
+              │ API Gateway    │   │ API Gateway     │
+              │ passbook-kids- │   │ passbook-eatout-│
+              │ prod           │   │ prod            │
+              └────────┬───────┘   └────────┬────────┘
+                       │  AWS_PROXY         │
+              ┌────────▼───────┐    ┌───────▼────────┐
+              │ Lambda (Go)    │    │ Lambda (Go)    │
+              │ ARM64, 128MB   │    │ ARM64, 128MB   │
+              └────────┬───────┘    └───────┬────────┘
+                       │                    │
+              ┌────────▼───────┐    ┌───────▼────────┐
+              │ DynamoDB       │    │ DynamoDB       │
+              │ passbook-kids- │    │ passbook-eatout│
+              │ prod           │    │ -prod          │
+              └────────────────┘    └────────────────┘
+
+   Shared infrastructure (deployed once via bootstrap.yaml):
+     • S3 bucket — Lambda deployment artifacts
+     • IAM role — passbook-github-actions (assumed via OIDC)
+     • OIDC provider — trusts environment:production only
 ```
 
 ### Data Model (Single-Table Design)
@@ -87,6 +95,20 @@ A simple, secure budget-tracker app. Originally built for tracking a child's all
 
 Each deployment ("instance") is fully isolated — its own DynamoDB table, Lambda function, API Gateway, and frontend subpath. Instances share: codebase, CloudFormation template, CI workflows, bootstrap stack, and S3 deployment bucket.
 
+### How per-instance customization works
+
+Each instance's `config/instances/<name>.yaml` drives three layers of customization:
+
+| Block | Drives | Mechanism |
+|---|---|---|
+| `pwa:` | PWA install (name, icon, theme color, start URL) | CI writes `build/<instance>/manifest.json`; meta tags rewritten in `index.html` |
+| `colors:` | In-app accent / background colors | CI writes `build/<instance>/css/theme.css` (linked after `styles.css`); cascade overrides CSS custom properties |
+| `labels:` | Divergent UI strings ("Allowance" vs "Budget") | CI bakes `window.PASSBOOK_LABELS` into `build/<instance>/js/config.js`; `applyLabels()` runs at page init |
+
+The CSS theming is a separate stylesheet (not an inline `<style>` block) because the app's Content-Security-Policy uses `style-src 'self'`, which blocks inline styles. External same-origin stylesheets are allowed.
+
+To customize the PWA icon for an instance, drop a square SVG at `frontend/assets/icons/<name>.svg`. If absent, the instance uses the default `frontend/assets/icon.svg`.
+
 ### Adding a new instance
 
 1. Create `config/instances/<name>.yaml`. Minimum required fields:
@@ -98,8 +120,12 @@ Each deployment ("instance") is fully isolated — its own DynamoDB table, Lambd
      name: App Display Name
      short_name: ShortName
      description: Brief description
-     theme_color: "#4A90A4"
-     background_color: "#f5f7fa"
+     theme_color: "#5B7FD9"
+     background_color: "#F5F7FB"
+   colors:
+     primary: "#5B7FD9"
+     primary_dark: "#4263B3"
+     background: "#F5F7FB"
    labels:
      app_title: My App
      # ... see config/instances/kids.yaml for the full label set
@@ -237,11 +263,11 @@ Push to `main` to trigger automatic deployment:
 git push origin main
 ```
 
-Workflows will:
+CI runs a dynamic matrix across all instances defined in `config/instances/`. Each instance gets its own backend stack and frontend build. Workflows:
 1. Build and test Go backend
-2. Deploy CloudFormation stack
-3. Upload Lambda code
-4. Deploy frontend to GitHub Pages
+2. Deploy CloudFormation stack per instance
+3. Upload Lambda code per instance
+4. Build and deploy all instance frontends to GitHub Pages
 
 ---
 
@@ -272,7 +298,7 @@ passbook/
 │       ├── labels.js           # Default English strings + override merging
 │       └── ui.js
 ├── backend/
-│   └── ... (unchanged from single-instance)
+│   └── ... (Go Lambda handler, shared across instances)
 ├── infrastructure/
 │   ├── bootstrap.yaml          # Shared across instances (manually deployed)
 │   └── template.yaml           # Parameterized by InstanceName
@@ -288,16 +314,23 @@ passbook/
 
 ## Cost Estimate
 
+Per instance (typical household-scale usage):
+
 | Service | Expected Usage | Monthly Cost |
 |---------|---------------|--------------|
 | Lambda | ~1,000 invocations | $0.00 |
 | API Gateway | ~1,000 requests | $0.00 |
 | DynamoDB | <1 MB, minimal reads/writes | $0.00 |
-| S3 | ~5 MB artifacts | $0.01 |
-| CloudWatch | Basic logs | $0.00 |
-| **Total** | | **~$0.01/month** |
+| CloudWatch logs | Basic logs | $0.00 |
+| **Per-instance subtotal** | | **~$0.00/month** |
 
-All services within AWS Free Tier for typical usage.
+Shared (one-time across all instances):
+
+| Service | Monthly Cost |
+|---|---|
+| S3 (Lambda artifacts, ~5 MB) | $0.01 |
+
+All services stay within AWS Free Tier for typical multi-instance household usage.
 
 ---
 
@@ -493,52 +526,6 @@ If a deployment adds new IAM permissions to the GitHub Actions role (e.g. new La
 
 ### bootstrap.yaml changes don't take effect automatically
 `bootstrap.yaml` is a manually managed stack (it creates the CI/CD role itself, so it can't bootstrap itself via CI). Any changes to `bootstrap.yaml` must be deployed manually with admin credentials before the CI pipeline will have the new permissions.
-
----
-
-## Migration Runbook: `passbook-prod` → `passbook-kids-prod`
-
-This runbook documents the one-time migration that renamed the original `passbook-prod` stack to `passbook-kids-prod` when multi-instance was introduced. Kept for reference and as a template for any future cross-stack data move.
-
-### Pre-merge (operator with admin AWS creds, before pushing the PR)
-
-1. Export current data using the pre-refactor `add-data.sh` (which still targets `passbook-prod`):
-   ```bash
-   mkdir -p backups
-   git checkout main -- scripts/add-data.sh    # use the pre-refactor version
-   ./scripts/add-data.sh export backups/kids-pre-migration-$(date +%Y%m%d).json
-   git checkout multi-instance-deploy -- scripts/add-data.sh    # restore the refactored version
-   jq . backups/kids-pre-migration-*.json > /dev/null && echo "JSON OK"
-   ```
-   Alternatively, use the AWS CLI directly: `aws dynamodb scan --table-name passbook-prod --region us-west-2 > backups/raw-$(date +%Y%m%d).json`
-
-2. Create an AWS-native on-demand backup:
-   ```bash
-   aws dynamodb create-backup --table-name passbook-prod --backup-name pre-migration-$(date +%Y%m%d) --region us-west-2
-   ```
-   Verify `BackupStatus: AVAILABLE` via `aws dynamodb describe-backup --backup-arn <arn>`.
-
-### Merge the multi-instance PR
-
-CI deploys `passbook-kids-prod` and `passbook-eatout-prod` stacks alongside the existing `passbook-prod`. The kids frontend now points at the (empty) `passbook-kids-prod` table — coordinate "don't open the app for ~10 minutes."
-
-### Cutover
-
-⚠️ **Coordination:** During the window between merge and cutover, the kids frontend at `/passbook/kids/` will see an empty new table — anyone opening the app will see the PIN setup screen. If a PIN is set during that window, it will be **overwritten** by the migration step (since `CONFIG` items are part of what we copy). Coordinate "don't open the app for ~10 minutes" with your household.
-
-```bash
-./scripts/migrate-instance.sh --from passbook-prod --to passbook-kids-prod
-```
-
-Verify the kids app at `/passbook/kids/` shows the migrated data. Test login, balance, expense list, edit, delete, add.
-
-**Rollback:** If verification fails, the old `passbook-prod` stack is untouched. Manually re-deploy the frontend pointing at the old API by setting `passbook-kids-prod` aside (do NOT delete it) and reverting the frontend's `config.js` — or, simpler, redeploy the frontend from a `main` commit predating the multi-instance merge while you debug.
-
-### Cleanup (after confidence period)
-
-- ~1 week: `rm backups/kids-pre-migration-*.json`
-- ~2 weeks: `aws cloudformation delete-stack --stack-name passbook-prod --region us-west-2`, then `aws dynamodb delete-table --table-name passbook-prod --region us-west-2`
-- ~1 month: `aws dynamodb delete-backup --backup-arn <pre-migration-arn>`
 
 ---
 
