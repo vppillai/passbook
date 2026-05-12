@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Bootstrap stack for Kids Passbook App - Creates S3 bucket and GitHub OIDC
+Description: Bootstrap stack for Passbook App - Creates S3 bucket and GitHub OIDC
 
 Parameters:
   GitHubOrg:

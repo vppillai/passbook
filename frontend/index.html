@@ -7,7 +7,7 @@
     <meta name="description" content="Kids Passbook - Track allowance and expenses">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https:; manifest-src 'self'">
     <meta name="referrer" content="strict-origin">
-    <title>My Passbook</title>
+    <title data-i18n="app_title">My Passbook</title>
     <link rel="stylesheet" href="css/styles.css">
     <link rel="manifest" href="manifest.json">
     <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
@@ -25,7 +25,7 @@
     <!-- PIN Setup Screen -->
     <div id="setup-screen" class="screen hidden">
         <div class="pin-container">
-            <h1>My Passbook</h1>
+            <h1 data-i18n="app_title">My Passbook</h1>
             <p id="setup-message">Create your PIN (4-6 digits)</p>
             <div class="pin-display">
                 <span class="pin-dot"></span>
@@ -56,7 +56,7 @@
     <!-- PIN Entry Screen -->
     <div id="auth-screen" class="screen hidden">
         <div class="pin-container">
-            <h1>My Passbook</h1>
+            <h1 data-i18n="app_title">My Passbook</h1>
             <p id="auth-message">Enter your PIN</p>
             <div class="pin-display" id="auth-pin-display">
                 <span class="pin-dot"></span>
@@ -87,7 +87,7 @@
     <!-- Main Dashboard -->
     <div id="main-screen" class="screen hidden">
         <header>
-            <h1>My Passbook</h1>
+            <h1 data-i18n="app_title">My Passbook</h1>
             <button id="menu-btn" class="icon-btn" aria-label="Menu">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <line x1="3" y1="6" x2="21" y2="6"></line>
@@ -105,7 +105,7 @@
                 </div>
                 <div class="balance-divider"></div>
                 <div class="balance-item highlight">
-                    <span class="label">Total Savings</span>
+                    <span class="label" data-i18n="total_savings">Total Savings</span>
                     <span id="total-balance" class="amount">$0.00</span>
                 </div>
             </div>
@@ -115,7 +115,7 @@
             <div class="section-header">
                 <h2 id="month-title">February 2026</h2>
                 <div class="section-actions">
-                    <button id="add-funds-btn" class="btn-text" title="Add funds to this month">+ Funds</button>
+                    <button id="add-funds-btn" class="btn-text" data-i18n="add_funds_button" title="Add funds to this month">+ Funds</button>
                     <span id="expenses-total" class="expenses-total">$0.00 spent</span>
                 </div>
             </div>
@@ -143,8 +143,8 @@
                     <input type="number" id="expense-amount" placeholder="0.00" step="0.01" min="0.01" max="99999.99" required inputmode="decimal">
                 </div>
                 <div class="form-group">
-                    <label for="expense-desc">What did you buy?</label>
-                    <input type="text" id="expense-desc" placeholder="e.g., Ice cream" maxlength="100" required>
+                    <label for="expense-desc" data-i18n="expense_buy_label">What did you buy?</label>
+                    <input type="text" id="expense-desc" data-i18n-placeholder="expense_buy_placeholder" placeholder="e.g., Ice cream" maxlength="100" required>
                 </div>
                 <div class="modal-actions">
                     <button type="button" id="cancel-expense" class="btn btn-secondary">Cancel</button>
@@ -218,7 +218,7 @@
                     <label for="new-month-input">Month</label>
                     <input type="month" id="new-month-input" required>
                 </div>
-                <p class="form-hint">Monthly allowance will be applied automatically.</p>
+                <p class="form-hint" data-i18n="monthly_allowance_hint">Monthly allowance will be applied automatically.</p>
                 <div class="modal-actions">
                     <button type="button" id="cancel-create-month" class="btn btn-secondary">Cancel</button>
                     <button type="submit" class="btn btn-primary">Create</button>
@@ -232,7 +232,7 @@
     <div id="add-funds-modal" class="modal hidden">
         <div class="modal-backdrop"></div>
         <div class="modal-content">
-            <h2>Add Funds</h2>
+            <h2 data-i18n="add_funds_modal_title">Add Funds</h2>
             <form id="add-funds-form">
                 <div class="form-group">
                     <label for="funds-amount">Amount ($)</label>
@@ -240,7 +240,7 @@
                 </div>
                 <div class="modal-actions">
                     <button type="button" id="cancel-add-funds" class="btn btn-secondary">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Add Funds</button>
+                    <button type="submit" class="btn btn-primary" data-i18n="add_funds_modal_submit">Add Funds</button>
                 </div>
             </form>
             <p id="add-funds-error" class="error hidden"></p>

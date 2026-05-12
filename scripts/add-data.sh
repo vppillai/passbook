@@ -7,7 +7,7 @@ show_help() {
     cat << 'EOF'
 Passbook CLI - Data management for passbook app
 
-Usage: ./scripts/add-data.sh <command> [args...]
+Usage: ./scripts/add-data.sh --instance <name> <command> [args...]
 
 Commands:
   month YYYY-MM allowance expenses           Add/update a month (starting balance auto-calculated)
@@ -23,15 +23,15 @@ Commands:
   help, --help, -h                           Show this help message
 
 Examples:
-  ./scripts/add-data.sh month 2026-01 100 30    # January: allowance $100, spent $30
-  ./scripts/add-data.sh expense 2026-01 15 "Book purchase"
-  ./scripts/add-data.sh balance 170
-  ./scripts/add-data.sh funds 2026-02 50
-  ./scripts/add-data.sh rmfunds 2026-02 20
-  ./scripts/add-data.sh rmmonth 2026-01
-  ./scripts/add-data.sh export mybackup.json
-  ./scripts/add-data.sh import mybackup.json
-  ./scripts/add-data.sh show
+  ./scripts/add-data.sh --instance kids month 2026-01 100 30    # January: allowance $100, spent $30
+  ./scripts/add-data.sh --instance kids expense 2026-01 15 "Book purchase"
+  ./scripts/add-data.sh --instance kids balance 170
+  ./scripts/add-data.sh --instance kids funds 2026-02 50
+  ./scripts/add-data.sh --instance kids rmfunds 2026-02 20
+  ./scripts/add-data.sh --instance kids rmmonth 2026-01
+  ./scripts/add-data.sh --instance kids export mybackup.json
+  ./scripts/add-data.sh --instance kids import mybackup.json
+  ./scripts/add-data.sh --instance kids show
 
 Prerequisites:
   - AWS CLI v2 configured with credentials
@@ -40,14 +40,43 @@ Prerequisites:
 EOF
 }
 
-# Show help if requested
-if [[ "$1" == "help" || "$1" == "--help" || "$1" == "-h" || -z "$1" ]]; then
+# Show help if no args provided (will be caught by new parser for --help)
+if [[ -z "$1" ]]; then
     show_help
     exit 0
 fi
 
-TABLE_NAME="passbook-prod"
 REGION="us-west-2"
+
+# Parse --instance flag (must come BEFORE the positional command)
+INSTANCE=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -i|--instance)
+            INSTANCE="$2"; shift 2 ;;
+        --region)
+            REGION="$2"; shift 2 ;;
+        --) shift; break ;;
+        -h|--help)
+            echo "Usage: $0 --instance <name> <command> [args...]"
+            echo ""
+            echo "Commands: month, expense, funds, rmfunds, rmmonth, balance, recalc, show, export, import"
+            echo ""
+            echo "Examples:"
+            echo "  $0 --instance kids show"
+            echo "  $0 --instance eatout export backup.json"
+            exit 0 ;;
+        *) break ;;
+    esac
+done
+
+if [[ -z "$INSTANCE" ]]; then
+    echo "Error: --instance <name> required (e.g., --instance kids)" >&2
+    echo "Run '$0 --help' for usage." >&2
+    exit 1
+fi
+
+TABLE_NAME="passbook-${INSTANCE}-prod"
 
 # Recalculate total balance from all months
 recalc_balance() {

@@ -1,8 +1,10 @@
-# Kids Passbook
+# Passbook
 
-A simple, secure passbook app for tracking a child's allowance and expenses.
+A simple, secure budget-tracker app. Originally built for tracking a child's allowance; now supports running multiple independent instances from one codebase (e.g., kids allowance + household eat-out budget).
 
-**Live App:** https://vppillai.github.io/passbook/
+**Live apps:**
+- Kids: https://vppillai.github.io/passbook/kids/
+- Eat-Out: https://vppillai.github.io/passbook/eatout/
 
 ---
 
@@ -78,6 +80,35 @@ A simple, secure passbook app for tracking a child's allowance and expenses.
 | POST | `/api/expense` | Yes | Add new expense |
 | PUT | `/api/expense/{month}/{id}` | Yes | Edit expense amount and/or description |
 | DELETE | `/api/expense/{month}/{id}` | Yes | Delete expense (refunds balance) |
+
+---
+
+## Multi-Instance
+
+Each deployment ("instance") is fully isolated — its own DynamoDB table, Lambda function, API Gateway, and frontend subpath. Instances share: codebase, CloudFormation template, CI workflows, bootstrap stack, and S3 deployment bucket.
+
+### Adding a new instance
+
+1. Create `config/instances/<name>.yaml`. Minimum required fields:
+   ```yaml
+   name: <name>
+   display_name: Human Readable Name
+   monthly_amount: 200
+   pwa:
+     name: App Display Name
+     short_name: ShortName
+     description: Brief description
+     theme_color: "#4A90A4"
+     background_color: "#f5f7fa"
+   labels:
+     app_title: My App
+     # ... see config/instances/kids.yaml for the full label set
+   ```
+2. (Optional) Add a custom PWA icon at `frontend/assets/icons/<name>.svg`. If not present, the instance uses the default `frontend/assets/icon.svg`.
+3. Commit and push to `main`.
+4. CI discovers the file, deploys `passbook-<name>-prod` stack, and publishes the frontend at `https://vppillai.github.io/passbook/<name>/`.
+
+No other code changes are required — the workflow's dynamic matrix expands automatically.
 
 ---
 
@@ -190,9 +221,10 @@ aws cloudformation deploy \
 
 Add these repository settings (Settings → Secrets and variables → Actions):
 
-**Variables:**
+**Secrets:**
 - `AWS_ACCOUNT_ID`: Your 12-digit AWS account ID
-- `API_ENDPOINT`: Set after first backend deploy (from CloudFormation outputs)
+
+The frontend workflow fetches each instance's API endpoint directly from CloudFormation outputs — no manual variable needed.
 
 **Pages:**
 - Settings → Pages → Source: "GitHub Actions"
@@ -217,31 +249,39 @@ Workflows will:
 
 ```
 passbook/
+├── config/
+│   └── instances/             # One YAML per deployed instance
+│       ├── kids.yaml
+│       └── eatout.yaml
 ├── .github/workflows/
-│   ├── deploy-frontend.yaml    # GitHub Pages deployment
-│   └── deploy-backend.yaml     # Lambda build, test, deploy
+│   ├── deploy-frontend.yaml    # Per-instance build, GH Pages deploy
+│   ├── deploy-backend.yaml     # Matrix over instances → N CF stacks
+│   └── test.yaml               # PR validation
 ├── frontend/
-│   ├── index.html              # Single page application
-│   ├── css/styles.css          # Mobile-first responsive design
+│   ├── index.html              # Same SPA per instance (labels swapped at init)
+│   ├── manifest.json           # Default PWA manifest (CI rewrites per instance)
+│   ├── assets/
+│   │   ├── icon.svg            # Default icon (kids)
+│   │   └── icons/
+│   │       └── eatout.svg      # Per-instance icon overrides
+│   ├── css/styles.css
 │   └── js/
-│       ├── app.js              # Main application logic
-│       ├── api.js              # HTTP client with session handling
-│       ├── auth.js             # PIN entry UI and logic
-│       └── ui.js               # Rendering and helpers
+│       ├── app.js              # Calls applyLabels() on init
+│       ├── api.js
+│       ├── auth.js
+│       ├── labels.js           # Default English strings + override merging
+│       └── ui.js
 ├── backend/
-│   ├── cmd/api/main.go         # Lambda entry point
-│   └── internal/
-│       ├── handler/            # HTTP route handlers
-│       ├── service/            # Business logic (auth, expenses)
-│       ├── repository/         # DynamoDB operations
-│       ├── middleware/         # CORS, authentication
-│       └── model/              # Data structures
+│   └── ... (unchanged from single-instance)
 ├── infrastructure/
-│   ├── bootstrap.yaml          # One-time: OIDC provider, S3 bucket
-│   └── template.yaml           # Main: DynamoDB, Lambda, API Gateway
+│   ├── bootstrap.yaml          # Shared across instances (manually deployed)
+│   └── template.yaml           # Parameterized by InstanceName
 └── scripts/
-    ├── admin.sh                # Interactive TUI
-    └── add-data.sh             # CLI batch operations
+    ├── admin.sh                # All take --instance <name>
+    ├── add-data.sh
+    ├── cleanup-aws.sh
+    ├── migrate-instance.sh     # Cross-stack data migration tool
+    └── bootstrap.sh
 ```
 
 ---
@@ -281,14 +321,14 @@ Scripts for managing data directly in DynamoDB.
 aws configure
 # Enter: AWS Access Key ID, Secret Access Key, Region (us-west-2)
 
-# Verify access to the DynamoDB table
-aws dynamodb describe-table --table-name passbook-prod --region us-west-2
+# Verify access to a DynamoDB table (substitute your instance name)
+aws dynamodb describe-table --table-name passbook-kids-prod --region us-west-2
 ```
 
 ### Interactive TUI
 
 ```bash
-./scripts/admin.sh
+./scripts/admin.sh --instance kids
 ```
 
 Provides a menu-driven interface:
@@ -322,40 +362,39 @@ Actions:
 For scripting or batch operations:
 
 ```bash
-# Add a month summary (starting balance auto-calculated from previous month)
-./scripts/add-data.sh month 2026-01 100 30
-#                      ^     ^   ^
-#                      |     |   └── expenses
-#                      |     └────── allowance
-#                      └──────────── YYYY-MM
-
-# Add a historic expense (auto-creates month if needed)
-./scripts/add-data.sh expense 2026-01 15 "Book purchase"
-
-# Add extra funds to a month
-./scripts/add-data.sh funds 2026-02 50
-
-# Remove funds from a month
-./scripts/add-data.sh rmfunds 2026-02 20
-
-# Delete a month and ALL its expenses
-./scripts/add-data.sh rmmonth 2026-01
-
-# Set total balance directly
-./scripts/add-data.sh balance 170
-
-# Recalculate total balance from all months
-./scripts/add-data.sh recalc
+# View all data in DynamoDB
+./scripts/add-data.sh --instance kids show
 
 # Export all data to JSON backup
-./scripts/add-data.sh export                    # Auto-named: passbook-backup-YYYYMMDD-HHMMSS.json
-./scripts/add-data.sh export mybackup.json      # Custom filename
+./scripts/add-data.sh --instance eatout export backups/eatout-$(date +%Y%m%d).json
+
+# Add a month summary (starting balance auto-calculated from previous month)
+./scripts/add-data.sh --instance kids month 2026-01 100 30
+#                                         ^     ^   ^
+#                                         |     |   └── expenses
+#                                         |     └────── allowance
+#                                         └──────────── YYYY-MM
+
+# Add a historic expense (auto-creates month if needed)
+./scripts/add-data.sh --instance kids expense 2026-01 15 "Book purchase"
+
+# Add extra funds to a month
+./scripts/add-data.sh --instance kids funds 2026-02 50
+
+# Remove funds from a month
+./scripts/add-data.sh --instance kids rmfunds 2026-02 20
+
+# Delete a month and ALL its expenses
+./scripts/add-data.sh --instance kids rmmonth 2026-01
+
+# Set total balance directly
+./scripts/add-data.sh --instance kids balance 170
+
+# Recalculate total balance from all months
+./scripts/add-data.sh --instance kids recalc
 
 # Import data from JSON backup
-./scripts/add-data.sh import mybackup.json
-
-# View all data in DynamoDB
-./scripts/add-data.sh show
+./scripts/add-data.sh --instance kids import mybackup.json
 ```
 
 ---
@@ -383,57 +422,55 @@ Open `frontend/index.html` directly in browser. API calls will fail without back
 | `ALLOWED_ORIGIN` | Required | CORS allowed origin (e.g. `https://vppillai.github.io`) |
 | `MONTHLY_ALLOWANCE` | `100` | Allowance amount |
 
+These are set automatically by the CloudFormation template per instance. See `infrastructure/template.yaml` for the parameter wiring.
+
 ---
 
-## Cleanup / Rehoming
+## Cleanup
 
-To completely remove all AWS backend resources (for cleanup or migrating to another account):
-
-### Using the Cleanup Script
+### Remove one instance
 
 ```bash
-./scripts/cleanup-aws.sh
+./scripts/cleanup-aws.sh --instance <name>
 ```
 
-This interactive script will:
-1. Optionally export your data first
-2. Delete the main CloudFormation stack (DynamoDB, Lambda, API Gateway)
-3. Empty and delete the S3 deployment bucket
-4. Delete the bootstrap stack (OIDC provider, IAM role)
+Deletes the instance's CloudFormation stack, DynamoDB table, and log group. Does **not** touch the shared bootstrap stack or S3 deployment bucket.
 
-### Manual Cleanup
+### Full teardown (all instances + shared resources)
 
 ```bash
-# Delete main stack
-aws cloudformation delete-stack --stack-name passbook-prod --region us-west-2
-aws cloudformation wait stack-delete-complete --stack-name passbook-prod --region us-west-2
+# 1. Cleanup each instance
+# Loop over all instances defined in config/instances/
+for f in config/instances/*.yaml; do
+  INSTANCE=$(basename "$f" .yaml)
+  ./scripts/cleanup-aws.sh --instance "$INSTANCE"
+done
 
-# Empty and delete S3 bucket
+# 2. Empty and delete the shared S3 deployment bucket
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-aws s3 rm s3://passbook-lambda-deployments-${ACCOUNT_ID} --recursive
-aws s3 rb s3://passbook-lambda-deployments-${ACCOUNT_ID}
+aws s3 rm s3://passbook-lambda-${ACCOUNT_ID}-us-west-2 --recursive
+aws s3 rb s3://passbook-lambda-${ACCOUNT_ID}-us-west-2
 
-# Delete bootstrap stack
+# 3. Delete the bootstrap stack (OIDC provider, IAM role)
 aws cloudformation delete-stack --stack-name passbook-bootstrap --region us-west-2
-aws cloudformation wait stack-delete-complete --stack-name passbook-bootstrap --region us-west-2
 ```
 
-### Rehoming to Another AWS Account
+### Rehoming to another AWS account
 
-1. Export data: `./scripts/add-data.sh export backup.json`
-2. Run cleanup script on old account
-3. Configure AWS CLI for new account: `aws configure`
-4. Deploy bootstrap stack (see Deployment section)
-5. Update GitHub secret `AWS_ACCOUNT_ID` with new account
-6. Push to trigger deployment
-7. Import data: `./scripts/add-data.sh import backup.json`
+1. Export each instance's data: `./scripts/add-data.sh --instance <name> export backup-<name>.json`
+2. Run the full teardown above in the old account.
+3. Configure AWS CLI for the new account: `aws configure`
+4. Deploy the bootstrap stack: `aws cloudformation deploy --template-file infrastructure/bootstrap.yaml --stack-name passbook-bootstrap --capabilities CAPABILITY_NAMED_IAM --region us-west-2`
+5. Update the `AWS_ACCOUNT_ID` GitHub repository variable.
+6. Push to trigger backend + frontend deploys.
+7. Import data back: `./scripts/add-data.sh --instance <name> import backup-<name>.json`
 
 ---
 
 ## Troubleshooting
 
 ### PIN Setup Fails
-- Check CloudWatch logs: `/aws/lambda/passbook-api`
+- Check CloudWatch logs: `/aws/lambda/passbook-api-<instance>-prod` (e.g., `/aws/lambda/passbook-api-kids-prod`)
 - Verify DynamoDB table exists and Lambda has permissions
 
 ### 401 Unauthorized
@@ -451,11 +488,57 @@ aws cloudformation wait stack-delete-complete --stack-name passbook-bootstrap --
 ### CloudFormation stack stuck in UPDATE_ROLLBACK_FAILED
 If a deployment adds new IAM permissions to the GitHub Actions role (e.g. new Lambda or CloudWatch actions) and the stack update fails mid-rollback:
 1. Apply the updated `bootstrap.yaml` first using admin credentials: `aws cloudformation deploy --template-file infrastructure/bootstrap.yaml --stack-name passbook-bootstrap --capabilities CAPABILITY_NAMED_IAM --region us-west-2`
-2. Resume the stuck rollback: `aws cloudformation continue-update-rollback --stack-name passbook-prod --region us-west-2`
+2. Resume the stuck rollback (substitute your instance's stack name): `aws cloudformation continue-update-rollback --stack-name passbook-kids-prod --region us-west-2`
 3. Wait for `UPDATE_ROLLBACK_COMPLETE`, then re-trigger the CI deployment
 
 ### bootstrap.yaml changes don't take effect automatically
 `bootstrap.yaml` is a manually managed stack (it creates the CI/CD role itself, so it can't bootstrap itself via CI). Any changes to `bootstrap.yaml` must be deployed manually with admin credentials before the CI pipeline will have the new permissions.
+
+---
+
+## Migration Runbook: `passbook-prod` → `passbook-kids-prod`
+
+This runbook documents the one-time migration that renamed the original `passbook-prod` stack to `passbook-kids-prod` when multi-instance was introduced. Kept for reference and as a template for any future cross-stack data move.
+
+### Pre-merge (operator with admin AWS creds, before pushing the PR)
+
+1. Export current data using the pre-refactor `add-data.sh` (which still targets `passbook-prod`):
+   ```bash
+   mkdir -p backups
+   git checkout main -- scripts/add-data.sh    # use the pre-refactor version
+   ./scripts/add-data.sh export backups/kids-pre-migration-$(date +%Y%m%d).json
+   git checkout multi-instance-deploy -- scripts/add-data.sh    # restore the refactored version
+   jq . backups/kids-pre-migration-*.json > /dev/null && echo "JSON OK"
+   ```
+   Alternatively, use the AWS CLI directly: `aws dynamodb scan --table-name passbook-prod --region us-west-2 > backups/raw-$(date +%Y%m%d).json`
+
+2. Create an AWS-native on-demand backup:
+   ```bash
+   aws dynamodb create-backup --table-name passbook-prod --backup-name pre-migration-$(date +%Y%m%d) --region us-west-2
+   ```
+   Verify `BackupStatus: AVAILABLE` via `aws dynamodb describe-backup --backup-arn <arn>`.
+
+### Merge the multi-instance PR
+
+CI deploys `passbook-kids-prod` and `passbook-eatout-prod` stacks alongside the existing `passbook-prod`. The kids frontend now points at the (empty) `passbook-kids-prod` table — coordinate "don't open the app for ~10 minutes."
+
+### Cutover
+
+⚠️ **Coordination:** During the window between merge and cutover, the kids frontend at `/passbook/kids/` will see an empty new table — anyone opening the app will see the PIN setup screen. If a PIN is set during that window, it will be **overwritten** by the migration step (since `CONFIG` items are part of what we copy). Coordinate "don't open the app for ~10 minutes" with your household.
+
+```bash
+./scripts/migrate-instance.sh --from passbook-prod --to passbook-kids-prod
+```
+
+Verify the kids app at `/passbook/kids/` shows the migrated data. Test login, balance, expense list, edit, delete, add.
+
+**Rollback:** If verification fails, the old `passbook-prod` stack is untouched. Manually re-deploy the frontend pointing at the old API by setting `passbook-kids-prod` aside (do NOT delete it) and reverting the frontend's `config.js` — or, simpler, redeploy the frontend from a `main` commit predating the multi-instance merge while you debug.
+
+### Cleanup (after confidence period)
+
+- ~1 week: `rm backups/kids-pre-migration-*.json`
+- ~2 weeks: `aws cloudformation delete-stack --stack-name passbook-prod --region us-west-2`, then `aws dynamodb delete-table --table-name passbook-prod --region us-west-2`
+- ~1 month: `aws dynamodb delete-backup --backup-arn <pre-migration-arn>`
 
 ---
 

@@ -6,10 +6,12 @@ show_help() {
     cat << 'EOF'
 Passbook Admin TUI - Interactive data management
 
-Usage: ./scripts/admin.sh [options]
+Usage: ./scripts/admin.sh --instance <name> [options]
 
 Options:
-  -h, --help    Show this help message
+  -i, --instance <name>   Instance name (required)
+  --region <region>       AWS region (default: us-west-2)
+  -h, --help              Show this help message
 
 Description:
   Interactive terminal interface for managing passbook data in DynamoDB.
@@ -32,19 +34,37 @@ Prerequisites:
   - jq (JSON processor)
   - bc (calculator)
 
+Example:
+  ./scripts/admin.sh --instance kids
+
 For non-interactive CLI operations, use:
   ./scripts/add-data.sh --help
 EOF
 }
 
-# Show help if requested
-if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-    show_help
-    exit 0
+REGION="us-west-2"
+
+INSTANCE=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -i|--instance)
+            INSTANCE="$2"; shift 2 ;;
+        --region)
+            REGION="$2"; shift 2 ;;
+        -h|--help)
+            show_help
+            exit 0 ;;
+        *) shift ;;
+    esac
+done
+
+if [[ -z "$INSTANCE" ]]; then
+    echo "Error: --instance <name> required (e.g., --instance kids)" >&2
+    echo "Run '$0 --help' for usage." >&2
+    exit 1
 fi
 
-TABLE_NAME="passbook-prod"
-REGION="us-west-2"
+TABLE_NAME="passbook-${INSTANCE}-prod"
 
 # Colors
 RED='\033[0;31m'
@@ -61,6 +81,7 @@ show_header() {
     echo -e "${BLUE}╔════════════════════════════════════════════╗${NC}"
     echo -e "${BLUE}║${NC}     ${BOLD}Passbook Admin Console${NC}                 ${BLUE}║${NC}"
     echo -e "${BLUE}╚════════════════════════════════════════════╝${NC}"
+    echo -e "Instance: ${BOLD}${INSTANCE}${NC}"
     echo ""
 }
 

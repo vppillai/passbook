@@ -6,6 +6,7 @@ on:
     paths:
       - 'backend/**'
       - 'infrastructure/**'
+      - 'config/instances/**'
       - '.github/workflows/deploy-backend.yaml'
   workflow_dispatch:
 
@@ -21,100 +22,113 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
           cache: false
-
-      - name: Download dependencies
+      - name: Test
         working-directory: backend
-        run: go mod tidy
+        run: |
+          go mod tidy
+          go test -v -race ./...
+          go vet ./...
 
-      - name: Run tests
-        working-directory: backend
-        run: go test -v -race ./...
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      instances: ${{ steps.list.outputs.instances }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        run: |
+          INSTANCES=$(ls config/instances/*.yaml | xargs -n1 basename | sed 's/\.yaml$//' | jq -R . | jq -sc .)
+          echo "instances=$INSTANCES" >> $GITHUB_OUTPUT
+          echo "Discovered instances: $INSTANCES"
 
-      - name: Run vet
-        working-directory: backend
-        run: go vet ./...
-
-  deploy:
+  build:
     needs: test
     runs-on: ubuntu-latest
     environment: production
-
+    outputs:
+      s3_key: ${{ steps.upload.outputs.s3_key }}
+      bucket: ${{ steps.bucket.outputs.bucket }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
           cache: false
-
       - name: Build Lambda
         working-directory: backend
         run: |
           go mod tidy
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags lambda.norpc -o bootstrap ./cmd/api
           zip function.zip bootstrap
-
-      - name: Configure AWS credentials (OIDC)
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/passbook-github-actions
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Get S3 bucket name
-        id: get-bucket
+      - id: bucket
         run: |
           BUCKET=$(aws cloudformation describe-stacks \
             --stack-name passbook-bootstrap \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaDeploymentBucketName'].OutputValue" \
             --output text)
           echo "bucket=$BUCKET" >> $GITHUB_OUTPUT
-
-      - name: Upload to S3
+      - id: upload
         run: |
-          aws s3 cp backend/function.zip s3://${{ steps.get-bucket.outputs.bucket }}/function-${{ github.sha }}.zip
+          S3_KEY="function-${{ github.sha }}.zip"
+          aws s3 cp backend/function.zip s3://${{ steps.bucket.outputs.bucket }}/$S3_KEY
+          echo "s3_key=$S3_KEY" >> $GITHUB_OUTPUT
 
+  deploy:
+    needs: [build, discover]
+    runs-on: ubuntu-latest
+    environment: production
+    strategy:
+      matrix:
+        instance: ${{ fromJson(needs.discover.outputs.instances) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read instance config
+        id: config
+        run: |
+          CONFIG="config/instances/${{ matrix.instance }}.yaml"
+          MONTHLY=$(yq '.monthly_amount' "$CONFIG")
+          echo "monthly_amount=$MONTHLY" >> $GITHUB_OUTPUT
+          echo "Instance: ${{ matrix.instance }}, monthly_amount: $MONTHLY"
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/passbook-github-actions
+          aws-region: ${{ env.AWS_REGION }}
       - name: Deploy CloudFormation
         run: |
           aws cloudformation deploy \
             --template-file infrastructure/template.yaml \
-            --stack-name passbook-prod \
+            --stack-name passbook-${{ matrix.instance }}-prod \
             --parameter-overrides \
               Environment=prod \
-              LambdaCodeBucket=${{ steps.get-bucket.outputs.bucket }} \
-              LambdaCodeKey=function-${{ github.sha }}.zip \
+              InstanceName=${{ matrix.instance }} \
+              LambdaCodeBucket=${{ needs.build.outputs.bucket }} \
+              LambdaCodeKey=${{ needs.build.outputs.s3_key }} \
               AllowedOrigin=https://vppillai.github.io \
-              MonthlyAllowance=100 \
+              MonthlyAllowance=${{ steps.config.outputs.monthly_amount }} \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
-
       - name: Update Lambda code
         run: |
           aws lambda update-function-code \
-            --function-name passbook-api-prod \
-            --s3-bucket ${{ steps.get-bucket.outputs.bucket }} \
-            --s3-key function-${{ github.sha }}.zip
-
-      - name: Get API endpoint
-        id: get-api
+            --function-name passbook-api-${{ matrix.instance }}-prod \
+            --s3-bucket ${{ needs.build.outputs.bucket }} \
+            --s3-key ${{ needs.build.outputs.s3_key }}
+      - name: Summarize
         run: |
           API_URL=$(aws cloudformation describe-stacks \
-            --stack-name passbook-prod \
-            --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" \
-            --output text)
-          echo "api_url=$API_URL" >> $GITHUB_OUTPUT
-          echo "API Endpoint: $API_URL"
-
-      - name: Output deployment info
-        run: |
-          echo "## Deployment Complete" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**API Endpoint:** ${{ steps.get-api.outputs.api_url }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Note:** Set this as \`API_ENDPOINT\` repository variable for frontend deployment." >> $GITHUB_STEP_SUMMARY
+            --stack-name passbook-${{ matrix.instance }}-prod \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" --output text)
+          echo "## Deployed: ${{ matrix.instance }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Stack: passbook-${{ matrix.instance }}-prod" >> $GITHUB_STEP_SUMMARY
+          echo "- API: $API_URL" >> $GITHUB_STEP_SUMMARY

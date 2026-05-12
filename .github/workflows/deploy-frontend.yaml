@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'frontend/**'
+      - 'config/instances/**'
       - '.github/workflows/deploy-frontend.yaml'
   workflow_dispatch:
 
@@ -17,41 +18,173 @@ concurrency:
   group: 'pages'
   cancel-in-progress: true
 
+env:
+  AWS_REGION: us-west-2
+
 jobs:
-  deploy:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      instances: ${{ steps.list.outputs.instances }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        run: |
+          INSTANCES=$(ls config/instances/*.yaml | xargs -n1 basename | sed 's/\.yaml$//' | jq -R . | jq -sc .)
+          echo "instances=$INSTANCES" >> $GITHUB_OUTPUT
+          echo "Discovered instances: $INSTANCES"
+
+  build-and-deploy:
+    needs: discover
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Need full history for git describe
+          fetch-depth: 0
 
-      - name: Inject Version
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/passbook-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Determine version
+        id: version
         run: |
-          # Use frontend/VERSION file if present (set during release tagging)
-          # Fall back to git describe for non-release branch builds
           if [ -f frontend/VERSION ]; then
             VERSION=$(cat frontend/VERSION | tr -d '[:space:]')
           else
             VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
           fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
-          sed -i "s|>dev</span>|>$VERSION</span>|" frontend/index.html
 
-      - name: Inject API URL
+      - name: Assemble multi-instance build
+        env:
+          INSTANCES: ${{ needs.discover.outputs.instances }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          # Get the API endpoint from AWS (requires backend to be deployed first)
-          # This is injected as a global variable in the frontend
-          API_URL="${{ vars.API_ENDPOINT }}"
-          if [ -n "$API_URL" ]; then
-            echo "window.PASSBOOK_API_URL = '$API_URL';" > frontend/js/config.js
-            # Add config.js to index.html before app.js
-            sed -i 's|<script type="module" src="js/app.js"></script>|<script src="js/config.js"></script>\n    <script type="module" src="js/app.js"></script>|' frontend/index.html
-          fi
+          set -euo pipefail
+          mkdir -p build
+
+          # Landing page (root): meta-refresh to preferred instance, with visible links as fallback
+          # Determine default-redirect target (prefer 'kids' if present, else first in list)
+          DEFAULT_TARGET=$(echo "$INSTANCES" | jq -r 'if any(. == "kids") then "kids" else .[0] end')
+
+          {
+            printf '%s\n' '<!doctype html>' '<html lang="en">' '<head>' '  <meta charset="utf-8">'
+            printf '  <meta http-equiv="refresh" content="0; url=./%s/">\n' "$DEFAULT_TARGET"
+            printf '%s\n' '  <title>Passbook</title>' \
+              '  <style>body{font-family:system-ui,sans-serif;max-width:36em;margin:4em auto;padding:0 1em;color:#333}a{color:#4A90A4}</style>' \
+              '</head>' '<body>' '  <h1>Passbook</h1>'
+            printf '  <p>Redirecting to <a href="./%s/">%s</a>...</p>\n' "$DEFAULT_TARGET" "$(yq ".display_name" "config/instances/$DEFAULT_TARGET.yaml")"
+            echo "  <ul>"
+            for INSTANCE in $(echo "$INSTANCES" | jq -r '.[]'); do
+              DISPLAY=$(yq '.display_name' "config/instances/$INSTANCE.yaml")
+              printf '    <li><a href="./%s/">%s</a></li>\n' "$INSTANCE" "$DISPLAY"
+            done
+            echo "  </ul>"
+            printf '  <script>location.replace(%s);</script>\n' "$(printf './%s/' "$DEFAULT_TARGET" | jq -Rs .)"
+            printf '%s\n' '</body>' '</html>'
+          } > build/index.html
+
+          for INSTANCE in $(echo "$INSTANCES" | jq -r '.[]'); do
+            echo "=== Building $INSTANCE ==="
+            mkdir -p "build/$INSTANCE"
+            cp -r frontend/. "build/$INSTANCE/"
+
+            # Inject version into footer
+            sed -i "s|>dev</span>|>$VERSION</span>|" "build/$INSTANCE/index.html"
+
+            # Fetch API URL from CloudFormation outputs
+            API_URL=$(aws cloudformation describe-stacks \
+              --stack-name "passbook-$INSTANCE-prod" \
+              --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" \
+              --output text 2>/dev/null || echo "")
+            if [ -z "$API_URL" ] || [ "$API_URL" = "None" ]; then
+              echo "::warning::No API URL for $INSTANCE (stack may not be deployed yet)"
+              API_URL=""
+            else
+              echo "API URL for $INSTANCE: $API_URL"
+            fi
+
+            # Extract labels from YAML as JSON (default to {} if missing)
+            CONFIG_FILE="config/instances/$INSTANCE.yaml"
+            LABELS_JSON=$(yq -o=json '.labels // {}' "$CONFIG_FILE")
+
+            # Generate config.js: use jq to safely JSON-encode the API URL string
+            {
+              printf 'window.PASSBOOK_API_URL = %s;\n' "$(printf '%s' "$API_URL" | jq -Rs .)"
+              printf 'window.PASSBOOK_LABELS = %s;\n' "$LABELS_JSON"
+            } > "build/$INSTANCE/js/config.js"
+
+            # Insert config.js script tag before app.js (must execute first)
+            sed -i 's|<script type="module" src="js/app.js"></script>|<script src="js/config.js"></script>\n    <script type="module" src="js/app.js"></script>|' "build/$INSTANCE/index.html"
+
+            # ===== PWA: per-instance manifest.json =====
+            # Read pwa block from YAML and emit a complete manifest.json keyed for this instance.
+            PWA_NAME=$(yq '.pwa.name // .display_name' "$CONFIG_FILE")
+            PWA_SHORT=$(yq '.pwa.short_name // .display_name' "$CONFIG_FILE")
+            PWA_DESC=$(yq '.pwa.description // ""' "$CONFIG_FILE")
+            PWA_THEME=$(yq '.pwa.theme_color // "#4A90A4"' "$CONFIG_FILE")
+            PWA_BG=$(yq '.pwa.background_color // "#f5f7fa"' "$CONFIG_FILE")
+            START_URL="/passbook/$INSTANCE/"
+
+            jq -n \
+              --arg name "$PWA_NAME" \
+              --arg short_name "$PWA_SHORT" \
+              --arg description "$PWA_DESC" \
+              --arg start_url "$START_URL" \
+              --arg theme_color "$PWA_THEME" \
+              --arg background_color "$PWA_BG" \
+              '{
+                name: $name,
+                short_name: $short_name,
+                description: $description,
+                start_url: $start_url,
+                display: "standalone",
+                background_color: $background_color,
+                theme_color: $theme_color,
+                icons: [
+                  { src: "assets/icon.svg", sizes: "any", type: "image/svg+xml" }
+                ]
+              }' > "build/$INSTANCE/manifest.json"
+
+            # ===== PWA: update theme-color meta tag in index.html =====
+            sed -i "s|<meta name=\"theme-color\" content=\"[^\"]*\">|<meta name=\"theme-color\" content=\"$PWA_THEME\">|" "build/$INSTANCE/index.html"
+
+            # ===== Update meta description per-instance =====
+            DESC=$(yq '.labels.app_description // ""' "$CONFIG_FILE")
+            if [ -n "$DESC" ] && [ "$DESC" != "null" ]; then
+              # jq for safe quoting; sed for the actual replacement
+              ESCAPED_DESC=$(printf '%s' "$DESC" | sed -e 's/[&|]/\\&/g')
+              sed -i "s|<meta name=\"description\" content=\"[^\"]*\">|<meta name=\"description\" content=\"$ESCAPED_DESC\">|" "build/$INSTANCE/index.html"
+            fi
+
+            # ===== PWA: per-instance icon (overrides default if a custom one exists) =====
+            if [ -f "frontend/assets/icons/$INSTANCE.svg" ]; then
+              echo "Using per-instance icon: frontend/assets/icons/$INSTANCE.svg"
+              cp "frontend/assets/icons/$INSTANCE.svg" "build/$INSTANCE/assets/icon.svg"
+            else
+              echo "Using default icon for $INSTANCE (frontend/assets/icon.svg)"
+            fi
+
+            echo "Built $INSTANCE: API=$API_URL, theme=$PWA_THEME"
+          done
+
+          # Strip the per-instance icons source dir from each subdir (it's a build-only input,
+          # not something we want exposed in the deployed site). The default icon.svg has
+          # already been overwritten where needed.
+          for INSTANCE in $(echo "$INSTANCES" | jq -r '.[]'); do
+            rm -rf "build/$INSTANCE/assets/icons"
+          done
+
+          echo ""
+          echo "Build tree:"
+          find build -type f | sort
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
@@ -59,7 +192,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'frontend'
+          path: 'build'
 
       - name: Deploy to GitHub Pages
         id: deployment
