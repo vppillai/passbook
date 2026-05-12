@@ -40,14 +40,43 @@ Prerequisites:
 EOF
 }
 
-# Show help if requested
-if [[ "$1" == "help" || "$1" == "--help" || "$1" == "-h" || -z "$1" ]]; then
+# Show help if no args provided (will be caught by new parser for --help)
+if [[ -z "$1" ]]; then
     show_help
     exit 0
 fi
 
-TABLE_NAME="passbook-prod"
 REGION="us-west-2"
+
+# Parse --instance flag (must come BEFORE the positional command)
+INSTANCE=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -i|--instance)
+            INSTANCE="$2"; shift 2 ;;
+        --region)
+            REGION="$2"; shift 2 ;;
+        --) shift; break ;;
+        -h|--help)
+            echo "Usage: $0 --instance <name> <command> [args...]"
+            echo ""
+            echo "Commands: month, expense, funds, rmfunds, rmmonth, balance, recalc, show, export, import"
+            echo ""
+            echo "Examples:"
+            echo "  $0 --instance kids show"
+            echo "  $0 --instance eatout export backup.json"
+            exit 0 ;;
+        *) break ;;
+    esac
+done
+
+if [[ -z "$INSTANCE" ]]; then
+    echo "Error: --instance <name> required (e.g., --instance kids)" >&2
+    echo "Run '$0 --help' for usage." >&2
+    exit 1
+fi
+
+TABLE_NAME="passbook-${INSTANCE}-prod"
 
 # Recalculate total balance from all months
 recalc_balance() {
