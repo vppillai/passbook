@@ -2,6 +2,7 @@
 import { api } from './api.js';
 import { auth } from './auth.js';
 import * as ui from './ui.js';
+import { labels, applyLabels } from './labels.js';
 
 class App {
     constructor() {
@@ -13,6 +14,7 @@ class App {
     }
 
     async init() {
+        applyLabels();
         try {
             // Check if PIN is set up
             const isSetup = await api.checkSetup();
@@ -504,7 +506,7 @@ class App {
             await api.addFunds(this.currentMonth, amount);
             ui.hideModal('add-funds-modal');
             document.getElementById('add-funds-form').reset();
-            ui.showToast('Funds added!', 'success');
+            ui.showToast(labels.funds_added_toast, 'success');
             await this.loadCurrentMonth();
             this.loadMonthsList();
         } catch (error) {
