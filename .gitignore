@@ -26,8 +26,9 @@ frontend/js/config.js
 # Test coverage
 coverage.out
 
-#AI
+#AI / editor tooling state
 .claude/
+.omc/
 passbook-backup-*.json
 
 # Local data backups (never commit — contain PIN hashes)
