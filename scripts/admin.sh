@@ -724,35 +724,64 @@ action_export_data() {
     prompt "Output file" output_file "$default_file"
 
     echo ""
-    echo -e "${CYAN}Exporting data...${NC}"
+    echo -e "${CYAN}Exporting data (paginated)...${NC}"
 
-    # Scan all items from the table
-    local data=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
-        --output json 2>/dev/null)
+    # Paginate the scan so tables larger than a 1MB page aren't silently
+    # truncated. Filter out SESSION#/RATELIMIT# transient rows — those
+    # cannot be usefully restored. The CONFIG row (containing pin_hash)
+    # IS preserved so a full restore can authenticate; we set 0600 perms
+    # on the output and warn the user accordingly.
+    local tmpdir=$(mktemp -d)
+    local all_items="$tmpdir/items.json"
+    echo "[]" > "$all_items"
+    local next_token=""
+    local page=0 total=0
+    while :; do
+        page=$((page + 1))
+        local page_json
+        if [ -z "$next_token" ]; then
+            page_json=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" --output json 2>/dev/null || echo "")
+        else
+            page_json=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
+                --starting-token "$next_token" --output json 2>/dev/null || echo "")
+        fi
+        if [ -z "$page_json" ]; then
+            rm -rf "$tmpdir"
+            echo -e "${RED}Error: scan page $page returned empty result${NC}"
+            pause
+            return
+        fi
+        local page_count=$(echo "$page_json" | jq '.Count')
+        total=$((total + page_count))
+        jq -s '.[0] + .[1].Items' "$all_items" <(echo "$page_json") > "$all_items.new"
+        mv "$all_items.new" "$all_items"
+        next_token=$(echo "$page_json" | jq -r '.NextToken // empty')
+        [ -z "$next_token" ] && break
+    done
 
-    if [ -z "$data" ]; then
-        echo -e "${RED}Error: Failed to export data${NC}"
-        pause
-        return
-    fi
+    local filtered=$(jq '[.[] | select((.PK.S // "") | (startswith("SESSION#") or startswith("RATELIMIT#")) | not)]' "$all_items")
+    local kept=$(echo "$filtered" | jq 'length')
+    local skipped=$((total - kept))
+    rm -rf "$tmpdir"
 
-    # Save to file with metadata
-    local export_data=$(cat <<EOF
+    umask 077
+    cat <<EOF | jq '.' > "$output_file"
 {
   "export_info": {
     "table_name": "$TABLE_NAME",
     "region": "$REGION",
     "exported_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-    "item_count": $(echo "$data" | jq '.Count')
+    "item_count": $kept,
+    "skipped_transient": $skipped,
+    "warning": "Contains CONFIG.pin_hash — treat this file as a credential."
   },
-  "items": $(echo "$data" | jq '.Items')
+  "items": $filtered
 }
 EOF
-)
-    echo "$export_data" | jq '.' > "$output_file"
 
-    local count=$(echo "$data" | jq '.Count')
-    echo -e "${GREEN}✓ Exported $count items to $output_file${NC}"
+    echo -e "${GREEN}✓ Exported $kept items to $output_file${NC}"
+    echo -e "  Skipped $skipped transient SESSION/RATELIMIT rows."
+    echo -e "${YELLOW}NOTE: backup contains PIN hash. File mode is 600. Do not commit/share.${NC}"
     pause
 }
 
@@ -802,21 +831,33 @@ action_import_data() {
     echo ""
     echo -e "${CYAN}Importing data...${NC}"
 
-    local success=0
-    local failed=0
+    # Counter state in tmp files because the loop has to read from a pipe;
+    # plain shell variables don't survive the subshell. Process substitution
+    # plus file-based counters gives us accurate success/fail totals.
+    local tmpdir=$(mktemp -d)
+    echo 0 > "$tmpdir/success"
+    echo 0 > "$tmpdir/failed"
 
-    # Import each item
-    jq -c '.items[]' "$input_file" | while read -r item; do
+    while IFS= read -r item; do
         if aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" \
             --item "$item" 2>/dev/null; then
-            ((success++))
+            echo $(( $(cat "$tmpdir/success") + 1 )) > "$tmpdir/success"
         else
-            ((failed++))
+            echo $(( $(cat "$tmpdir/failed") + 1 )) > "$tmpdir/failed"
+            echo -e "  ${RED}Failed:${NC} $(echo "$item" | jq -r '.PK.S + "/" + .SK.S')"
         fi
-    done
+    done < <(jq -c '.items[]' "$input_file")
 
-    echo -e "${GREEN}✓ Import complete${NC}"
-    echo "  Note: Check the data to verify import was successful"
+    local s=$(cat "$tmpdir/success")
+    local f=$(cat "$tmpdir/failed")
+    rm -rf "$tmpdir"
+
+    if [ "$f" -gt 0 ]; then
+        echo -e "${RED}✗ Import complete with errors: $s succeeded, $f failed.${NC}"
+        echo -e "${RED}  Review the failures above before treating the table as restored.${NC}"
+    else
+        echo -e "${GREEN}✓ Import complete: $s items imported.${NC}"
+    fi
     pause
 }
 
