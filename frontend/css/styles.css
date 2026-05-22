@@ -701,6 +701,16 @@ header h1 {
     background: #d0d0d0;
 }
 
+/* Used by the .btn-primary inside #confirm-modal when the action is
+   destructive (e.g. delete). ui.showConfirm toggles .btn-danger on. */
+.btn-primary.btn-danger {
+    background: var(--negative-color, #b71c1c);
+}
+
+.btn-primary.btn-danger:active {
+    background: color-mix(in srgb, var(--negative-color, #b71c1c) 75%, black);
+}
+
 .btn-outline {
     background: transparent;
     border: 1px solid var(--border-color);
