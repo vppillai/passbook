@@ -211,11 +211,17 @@ export function renderMonthsList(months, currentMonth, onSelect, nextCursor = nu
     }
 
     container.innerHTML = months.map(month => `
-        <li class="month-item ${month.month === currentMonth ? 'active' : ''}" data-month="${month.month}">
+        <li class="month-item ${month.month === currentMonth ? 'active' : ''}" data-month="${month.month}" data-saved="${month.monthly_saved}">
             <span class="month-name">${formatMonthName(month.month)}</span>
             <span class="month-balance">${formatCurrency(month.monthly_saved)}</span>
         </li>
     `).join('');
+
+    // Apply negative-balance styling to month history entries
+    container.querySelectorAll('.month-item').forEach(item => {
+        const saved = parseFloat(item.dataset.saved);
+        item.querySelector('.month-balance').classList.toggle('balance-negative', saved < 0);
+    });
 
     if (nextCursor && onLoadMore) {
         const loadMoreItem = document.createElement('li');
@@ -250,8 +256,13 @@ export function updateDashboard(data) {
     const monthlySaved = data.summary
         ? (data.summary.allowance_added || 0) - (data.summary.total_expenses || 0)
         : 0;
-    document.getElementById('month-balance').textContent = formatCurrency(monthlySaved);
-    document.getElementById('total-balance').textContent = formatCurrency(data.total_balance);
+    const monthBalanceEl = document.getElementById('month-balance');
+    monthBalanceEl.textContent = formatCurrency(monthlySaved);
+    monthBalanceEl.classList.toggle('balance-negative', monthlySaved < 0);
+
+    const totalBalanceEl = document.getElementById('total-balance');
+    totalBalanceEl.textContent = formatCurrency(data.total_balance);
+    totalBalanceEl.classList.toggle('balance-negative', data.total_balance < 0);
 
     // Update expenses total
     const totalExpenses = data.summary ? data.summary.total_expenses : 0;
@@ -261,8 +272,12 @@ export function updateDashboard(data) {
 export function showEmptyState() {
     // Show empty state when no months exist
     document.getElementById('month-title').textContent = 'No Data Yet';
-    document.getElementById('month-balance').textContent = formatCurrency(0);
-    document.getElementById('total-balance').textContent = formatCurrency(0);
+    const emptyMonthBalanceEl = document.getElementById('month-balance');
+    emptyMonthBalanceEl.textContent = formatCurrency(0);
+    emptyMonthBalanceEl.classList.remove('balance-negative');
+    const emptyTotalBalanceEl = document.getElementById('total-balance');
+    emptyTotalBalanceEl.textContent = formatCurrency(0);
+    emptyTotalBalanceEl.classList.remove('balance-negative');
     document.getElementById('expenses-total').textContent = `$0.00 ${labels.spent_suffix}`;
     document.getElementById('expenses-list').innerHTML =
         '<p class="no-expenses">No entries yet. Open the menu to create a new month.</p>';

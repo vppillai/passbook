@@ -33,6 +33,18 @@ Parameters:
     Default: 100
     Description: Monthly allowance amount in dollars
 
+  AllowOverspending:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: When "true", allow expenses to push month balance below zero (no hard stop)
+
+  CarryOverBalance:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: When "true", new months inherit previous month's ending balance as starting balance
+
 Resources:
   #===========================================
   # DynamoDB Table
@@ -123,6 +135,8 @@ Resources:
           ALLOWED_ORIGIN: !Ref AllowedOrigin
           ENVIRONMENT: !Ref Environment
           MONTHLY_ALLOWANCE: !Ref MonthlyAllowance
+          ALLOW_OVERSPENDING: !Ref AllowOverspending
+          CARRY_OVER_BALANCE: !Ref CarryOverBalance
       Tags:
         - Key: Application
           Value: Passbook

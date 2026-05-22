@@ -1,6 +1,8 @@
 name: eatout
 display_name: Eat-Out Budget
 monthly_amount: 500
+allow_overspending: true
+carry_over_balance: false
 pwa:
   name: Eat-Out Budget
   short_name: Eat-Out

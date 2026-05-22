@@ -96,8 +96,12 @@ jobs:
         run: |
           CONFIG="config/instances/${{ matrix.instance }}.yaml"
           MONTHLY=$(yq '.monthly_amount' "$CONFIG")
+          ALLOW_OVERSPEND=$(yq '.allow_overspending // false' "$CONFIG")
+          CARRY_OVER=$(yq '.carry_over_balance // true' "$CONFIG")
           echo "monthly_amount=$MONTHLY" >> $GITHUB_OUTPUT
-          echo "Instance: ${{ matrix.instance }}, monthly_amount: $MONTHLY"
+          echo "allow_overspending=$ALLOW_OVERSPEND" >> $GITHUB_OUTPUT
+          echo "carry_over_balance=$CARRY_OVER" >> $GITHUB_OUTPUT
+          echo "Instance: ${{ matrix.instance }}, monthly_amount: $MONTHLY, allow_overspend: $ALLOW_OVERSPEND, carry_over: $CARRY_OVER"
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -108,6 +112,8 @@ jobs:
           INSTANCE: ${{ matrix.instance }}
           S3_KEY: ${{ needs.build.outputs.s3_key }}
           MONTHLY: ${{ steps.config.outputs.monthly_amount }}
+          ALLOW_OVERSPEND: ${{ steps.config.outputs.allow_overspending }}
+          CARRY_OVER: ${{ steps.config.outputs.carry_over_balance }}
         run: |
           # Resolve bucket via shell var (not step output — output would be
           # redacted because the bucket name contains the AWS_ACCOUNT_ID secret)
@@ -125,6 +131,8 @@ jobs:
               LambdaCodeKey="$S3_KEY" \
               AllowedOrigin=https://vppillai.github.io \
               MonthlyAllowance="$MONTHLY" \
+              AllowOverspending="$ALLOW_OVERSPEND" \
+              CarryOverBalance="$CARRY_OVER" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
       - name: Update Lambda code

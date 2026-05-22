@@ -37,6 +37,16 @@ func init() {
 		}
 	}
 
+	allowOverspending := false
+	if val := os.Getenv("ALLOW_OVERSPENDING"); val == "true" {
+		allowOverspending = true
+	}
+
+	carryOverBalance := true
+	if val := os.Getenv("CARRY_OVER_BALANCE"); val == "false" {
+		carryOverBalance = false
+	}
+
 	// Initialize AWS SDK
 	cfg, err := config.LoadDefaultConfig(context.Background())
 	if err != nil {
@@ -51,7 +61,7 @@ func init() {
 
 	// Create services
 	authService := service.NewAuthService(repo)
-	expenseService := service.NewExpenseService(repo, monthlyAllowance)
+	expenseService := service.NewExpenseService(repo, monthlyAllowance, allowOverspending, carryOverBalance)
 
 	// Create router
 	router = handler.NewRouter(authService, expenseService, allowedOrigin)

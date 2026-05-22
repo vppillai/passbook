@@ -36,14 +36,18 @@ var (
 )
 
 type ExpenseService struct {
-	repo             *repository.Repository
-	monthlyAllowance float64
+	repo              *repository.Repository
+	monthlyAllowance  float64
+	allowOverspending bool
+	carryOverBalance  bool
 }
 
-func NewExpenseService(repo *repository.Repository, monthlyAllowance float64) *ExpenseService {
+func NewExpenseService(repo *repository.Repository, monthlyAllowance float64, allowOverspending bool, carryOverBalance bool) *ExpenseService {
 	return &ExpenseService{
-		repo:             repo,
-		monthlyAllowance: monthlyAllowance,
+		repo:              repo,
+		monthlyAllowance:  monthlyAllowance,
+		allowOverspending: allowOverspending,
+		carryOverBalance:  carryOverBalance,
 	}
 }
 
@@ -226,8 +230,8 @@ func (s *ExpenseService) AddExpense(ctx context.Context, req *model.AddExpenseRe
 		return nil, err
 	}
 
-	// Check if sufficient funds
-	if summary.EndingBalance < req.Amount {
+	// Check sufficient funds (skipped when the instance allows overspending)
+	if !s.allowOverspending && summary.EndingBalance < req.Amount {
 		return nil, ErrInsufficientFunds
 	}
 
@@ -329,7 +333,7 @@ func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expens
 		if summary == nil {
 			return nil, ErrMonthNotFound
 		}
-		if summary.EndingBalance < amountDelta {
+		if !s.allowOverspending && summary.EndingBalance < amountDelta {
 			return nil, ErrInsufficientFunds
 		}
 	}
@@ -501,7 +505,7 @@ func (s *ExpenseService) CreateMonth(ctx context.Context, month string) (*model.
 	}
 
 	startingBalance := 0.0
-	if prevSummary != nil {
+	if s.carryOverBalance && prevSummary != nil {
 		startingBalance = prevSummary.EndingBalance
 	}
 
