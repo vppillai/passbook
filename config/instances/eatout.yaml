@@ -13,9 +13,9 @@ colors:
   primary: "#E07856"
   primary_dark: "#B85A3D"
   background: "#FFF8F4"
-  # Deep crimson — stays in the warm family with the coral primary but
-  # is dark enough to read as "alert" against the lighter background.
-  negative: "#991B1B"
+  # No explicit `negative:` — the workflow emits its built-in default
+  # (#991B1B, deep crimson) for instances with allow_overspending: true.
+  # Override here only if you want a different alert color.
 labels:
   app_title: Eat-Out Budget
   app_description: Track household eat-out spending

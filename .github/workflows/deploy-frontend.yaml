@@ -174,7 +174,15 @@ jobs:
             COLOR_PRIMARY=$(yq '.colors.primary // .pwa.theme_color // "#4A90A4"' "$CONFIG_FILE")
             COLOR_PRIMARY_DARK=$(yq '.colors.primary_dark // ""' "$CONFIG_FILE")
             COLOR_BACKGROUND=$(yq '.colors.background // .pwa.background_color // "#f5f7fa"' "$CONFIG_FILE")
-            COLOR_NEGATIVE=$(yq '.colors.negative // ""' "$CONFIG_FILE")
+            # Negative-balance color is only meaningful when the instance can
+            # actually produce negative balances — i.e., allow_overspending=true.
+            # For hard-stop instances (allow_overspending=false), we don't emit
+            # the override at all; the styles.css default (#f44336) stays as a
+            # defensive fallback but never renders because the .balance-negative
+            # class never toggles in practice.
+            ALLOW_OVER_BAL=$(yq '.allow_overspending // false' "$CONFIG_FILE")
+            COLOR_NEGATIVE_OVERRIDE=$(yq '.colors.negative // ""' "$CONFIG_FILE")
+            DEFAULT_NEGATIVE_COLOR="#991B1B"
             {
               echo ":root {"
               echo "    --primary-color: ${COLOR_PRIMARY};"
@@ -182,8 +190,12 @@ jobs:
                 echo "    --primary-dark: ${COLOR_PRIMARY_DARK};"
               fi
               echo "    --background: ${COLOR_BACKGROUND};"
-              if [ -n "$COLOR_NEGATIVE" ] && [ "$COLOR_NEGATIVE" != "null" ]; then
-                echo "    --negative-color: ${COLOR_NEGATIVE};"
+              if [ "$ALLOW_OVER_BAL" = "true" ]; then
+                if [ -n "$COLOR_NEGATIVE_OVERRIDE" ] && [ "$COLOR_NEGATIVE_OVERRIDE" != "null" ]; then
+                  echo "    --negative-color: ${COLOR_NEGATIVE_OVERRIDE};"
+                else
+                  echo "    --negative-color: ${DEFAULT_NEGATIVE_COLOR};"
+                fi
               fi
               echo "}"
             } > "build/$INSTANCE/css/theme.css"
