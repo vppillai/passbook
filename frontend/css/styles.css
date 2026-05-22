@@ -335,9 +335,24 @@ header h1 {
     font-size: 2rem;
 }
 
-/* Negative balance (overspend) styling */
+/* Negative balance (overspend) styling.
+   Default: red text — used in contexts outside the balance card (e.g.,
+   month-history list rows). */
 .amount.balance-negative {
     color: var(--negative-color);
+}
+
+/* When the balance card contains any negative amount, flip the entire
+   card to a dark warning gradient and keep all amounts in white. The
+   coral-on-coral contrast problem (dark crimson text on coral background)
+   gets replaced with white-on-dark-red — ~12:1 contrast, and the whole
+   card screams "over budget" at a glance. */
+.balance-card:has(.balance-negative) {
+    background: linear-gradient(135deg, var(--negative-color), color-mix(in srgb, var(--negative-color) 70%, black));
+}
+
+.balance-card .amount.balance-negative {
+    color: white;
 }
 
 .balance-divider {
