@@ -34,6 +34,21 @@ const (
 // already exists. SetupPIN translates this to service.ErrPINAlreadySet.
 var ErrConfigAlreadyExists = errors.New("config already exists")
 
+// ErrInsufficientBalance is returned by atomic expense methods when the
+// transactional overspend check fails (ending_balance < amount). Service
+// layer maps this to ErrInsufficientFunds.
+var ErrInsufficientBalance = errors.New("insufficient balance")
+
+// ErrExpenseStateMismatch is returned when an atomic update or delete
+// finds the expense's amount has changed since the service read it (i.e.,
+// a concurrent edit landed in between). Service layer maps to
+// ErrExpenseNotFound so the client can re-fetch and try again.
+var ErrExpenseStateMismatch = errors.New("expense state mismatch")
+
+// ErrMonthAlreadyExists is returned by AtomicCreateMonth when the month
+// summary already exists. Service layer maps to ErrMonthExists.
+var ErrMonthAlreadyExists = errors.New("month already exists")
+
 // rateLimitPK returns the per-IP partition key for rate-limit rows.
 // Empty ip degrades to a shared "unknown" bucket — never collides with
 // the legacy bare-"RATELIMIT" key that this refactor replaces.
@@ -727,4 +742,347 @@ func (r *Repository) ClearRateLimit(ctx context.Context, sourceIP string) error 
 // Helper to extract expense ID from SK
 func ExtractExpenseID(sk string) string {
 	return strings.TrimPrefix(sk, ExpensePrefix)
+}
+
+// =====================================================================
+// Atomic (TransactWriteItems) operations
+// =====================================================================
+//
+// Each multi-row ledger mutation now executes inside a single DynamoDB
+// transaction so that a Lambda timeout, throttle, or retry mid-flight
+// can no longer leave the ledger in a state where the expense row
+// exists but the balance is unchanged (or vice versa).
+//
+// Conditional checks on the month-summary update double as concurrency
+// guards:
+//   • `ending_balance >= :delta` enforces non-overspending when the
+//     instance forbids it. A parallel AddExpense that drops the balance
+//     below the requested amount will fail its transaction rather than
+//     succeed and leave the ledger negative.
+//   • `amount = :oldAmount` on the expense's update or delete catches a
+//     concurrent edit landing between the service's read and the
+//     transact — surfaces as ErrExpenseStateMismatch.
+//
+// TransactWriteItems uses 2x WCU vs separate writes. At this app's
+// traffic (a family of four) the cost difference is rounding error.
+
+// txCanceledReasons unwraps the first ConditionalCheckFailed reason from
+// a TransactionCanceledException. Returns the zero index and false if
+// not a transaction cancellation.
+func txConditionFailedIndex(err error) (int, bool) {
+	var canceled *types.TransactionCanceledException
+	if !errors.As(err, &canceled) {
+		return 0, false
+	}
+	for i, reason := range canceled.CancellationReasons {
+		if reason.Code != nil && *reason.Code == "ConditionalCheckFailed" {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// AtomicAddExpense puts the expense row and updates the month summary +
+// global balance in a single transaction. If checkBalance is true, the
+// month summary update is conditioned on ending_balance >= amount; on
+// failure, returns ErrInsufficientBalance.
+func (r *Repository) AtomicAddExpense(ctx context.Context, month string, expense *model.Expense, checkBalance bool) error {
+	expense.PK = MonthPrefix + month
+	expenseItem, err := attributevalue.MarshalMap(expense)
+	if err != nil {
+		return fmt.Errorf("failed to marshal expense: %w", err)
+	}
+	pkMonth := MonthPrefix + month
+	nowStr := time.Now().Format(time.RFC3339)
+	amountStr := fmt.Sprintf("%.2f", expense.Amount)
+	negAmountStr := fmt.Sprintf("%.2f", -expense.Amount)
+
+	monthCondition := "attribute_exists(PK)"
+	if checkBalance {
+		monthCondition = "attribute_exists(PK) AND ending_balance >= :amount"
+	}
+
+	_, err = r.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+		TransactItems: []types.TransactWriteItem{
+			{Put: &types.Put{
+				TableName: aws.String(r.tableName),
+				Item:      expenseItem,
+			}},
+			{Update: &types.Update{
+				TableName: aws.String(r.tableName),
+				Key: map[string]types.AttributeValue{
+					"PK": &types.AttributeValueMemberS{Value: pkMonth},
+					"SK": &types.AttributeValueMemberS{Value: SKSummary},
+				},
+				UpdateExpression:    aws.String("SET total_expenses = total_expenses + :amount, ending_balance = ending_balance - :amount, updated_at = :now"),
+				ConditionExpression: aws.String(monthCondition),
+				ExpressionAttributeValues: map[string]types.AttributeValue{
+					":amount": &types.AttributeValueMemberN{Value: amountStr},
+					":now":    &types.AttributeValueMemberS{Value: nowStr},
+				},
+			}},
+			{Update: &types.Update{
+				TableName: aws.String(r.tableName),
+				Key: map[string]types.AttributeValue{
+					"PK": &types.AttributeValueMemberS{Value: PKBalance},
+					"SK": &types.AttributeValueMemberS{Value: SKBalance},
+				},
+				UpdateExpression: aws.String("SET total_balance = if_not_exists(total_balance, :zero) + :delta, updated_at = :now"),
+				ExpressionAttributeValues: map[string]types.AttributeValue{
+					":delta": &types.AttributeValueMemberN{Value: negAmountStr},
+					":zero":  &types.AttributeValueMemberN{Value: "0"},
+					":now":   &types.AttributeValueMemberS{Value: nowStr},
+				},
+			}},
+		},
+	})
+	if err != nil {
+		if idx, ok := txConditionFailedIndex(err); ok && idx == 1 {
+			// Index 1 is the month-summary update — overspend or summary missing.
+			return ErrInsufficientBalance
+		}
+		return fmt.Errorf("failed to add expense atomically: %w", err)
+	}
+	return nil
+}
+
+// AtomicUpdateExpense updates the expense's amount/description and adjusts
+// the month summary + global balance by the supplied delta in a single
+// transaction. The expense update is conditioned on `amount = :oldAmount`
+// to detect concurrent edits → ErrExpenseStateMismatch on mismatch.
+// If amountDelta > 0 and checkBalance is true, the month summary update
+// is also conditioned on ending_balance >= delta → ErrInsufficientBalance.
+func (r *Repository) AtomicUpdateExpense(ctx context.Context, month string, expenseID string, oldAmount, newAmount float64, newDescription string, checkBalance bool) error {
+	pkMonth := MonthPrefix + month
+	nowStr := time.Now().Format(time.RFC3339)
+	oldAmountStr := fmt.Sprintf("%.2f", oldAmount)
+	newAmountStr := fmt.Sprintf("%.2f", newAmount)
+	delta := newAmount - oldAmount
+	deltaStr := fmt.Sprintf("%.2f", delta)
+	negDeltaStr := fmt.Sprintf("%.2f", -delta)
+
+	monthCondition := "attribute_exists(PK)"
+	if checkBalance && delta > 0 {
+		monthCondition = "attribute_exists(PK) AND ending_balance >= :delta"
+	}
+
+	_, err := r.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+		TransactItems: []types.TransactWriteItem{
+			{Update: &types.Update{
+				TableName: aws.String(r.tableName),
+				Key: map[string]types.AttributeValue{
+					"PK": &types.AttributeValueMemberS{Value: pkMonth},
+					"SK": &types.AttributeValueMemberS{Value: expenseID},
+				},
+				UpdateExpression:    aws.String("SET amount = :newAmount, description = :desc"),
+				ConditionExpression: aws.String("attribute_exists(PK) AND begins_with(SK, :expensePrefix) AND amount = :oldAmount"),
+				ExpressionAttributeValues: map[string]types.AttributeValue{
+					":newAmount":     &types.AttributeValueMemberN{Value: newAmountStr},
+					":oldAmount":     &types.AttributeValueMemberN{Value: oldAmountStr},
+					":desc":          &types.AttributeValueMemberS{Value: newDescription},
+					":expensePrefix": &types.AttributeValueMemberS{Value: ExpensePrefix},
+				},
+			}},
+			{Update: &types.Update{
+				TableName: aws.String(r.tableName),
+				Key: map[string]types.AttributeValue{
+					"PK": &types.AttributeValueMemberS{Value: pkMonth},
+					"SK": &types.AttributeValueMemberS{Value: SKSummary},
+				},
+				UpdateExpression:    aws.String("SET total_expenses = total_expenses + :delta, ending_balance = ending_balance - :delta, updated_at = :now"),
+				ConditionExpression: aws.String(monthCondition),
+				ExpressionAttributeValues: map[string]types.AttributeValue{
+					":delta": &types.AttributeValueMemberN{Value: deltaStr},
+					":now":   &types.AttributeValueMemberS{Value: nowStr},
+				},
+			}},
+			{Update: &types.Update{
+				TableName: aws.String(r.tableName),
+				Key: map[string]types.AttributeValue{
+					"PK": &types.AttributeValueMemberS{Value: PKBalance},
+					"SK": &types.AttributeValueMemberS{Value: SKBalance},
+				},
+				UpdateExpression: aws.String("SET total_balance = if_not_exists(total_balance, :zero) + :balanceDelta, updated_at = :now"),
+				ExpressionAttributeValues: map[string]types.AttributeValue{
+					":balanceDelta": &types.AttributeValueMemberN{Value: negDeltaStr},
+					":zero":         &types.AttributeValueMemberN{Value: "0"},
+					":now":          &types.AttributeValueMemberS{Value: nowStr},
+				},
+			}},
+		},
+	})
+	if err != nil {
+		if idx, ok := txConditionFailedIndex(err); ok {
+			switch idx {
+			case 0:
+				return ErrExpenseStateMismatch
+			case 1:
+				return ErrInsufficientBalance
+			}
+		}
+		return fmt.Errorf("failed to update expense atomically: %w", err)
+	}
+	return nil
+}
+
+// AtomicDeleteExpense deletes the expense row and refunds the month
+// summary + global balance in a single transaction. The delete is
+// conditioned on `amount = :oldAmount` so a concurrent edit between
+// the service's read and the transact surfaces as ErrExpenseStateMismatch.
+func (r *Repository) AtomicDeleteExpense(ctx context.Context, month string, expenseID string, oldAmount float64) error {
+	pkMonth := MonthPrefix + month
+	nowStr := time.Now().Format(time.RFC3339)
+	oldAmountStr := fmt.Sprintf("%.2f", oldAmount)
+	negAmountStr := fmt.Sprintf("%.2f", -oldAmount)
+
+	_, err := r.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+		TransactItems: []types.TransactWriteItem{
+			{Delete: &types.Delete{
+				TableName: aws.String(r.tableName),
+				Key: map[string]types.AttributeValue{
+					"PK": &types.AttributeValueMemberS{Value: pkMonth},
+					"SK": &types.AttributeValueMemberS{Value: expenseID},
+				},
+				ConditionExpression: aws.String("attribute_exists(PK) AND begins_with(SK, :expensePrefix) AND amount = :oldAmount"),
+				ExpressionAttributeValues: map[string]types.AttributeValue{
+					":expensePrefix": &types.AttributeValueMemberS{Value: ExpensePrefix},
+					":oldAmount":     &types.AttributeValueMemberN{Value: oldAmountStr},
+				},
+			}},
+			{Update: &types.Update{
+				TableName: aws.String(r.tableName),
+				Key: map[string]types.AttributeValue{
+					"PK": &types.AttributeValueMemberS{Value: pkMonth},
+					"SK": &types.AttributeValueMemberS{Value: SKSummary},
+				},
+				UpdateExpression:    aws.String("SET total_expenses = total_expenses - :amount, ending_balance = ending_balance + :amount, updated_at = :now"),
+				ConditionExpression: aws.String("attribute_exists(PK)"),
+				ExpressionAttributeValues: map[string]types.AttributeValue{
+					":amount": &types.AttributeValueMemberN{Value: oldAmountStr},
+					":now":    &types.AttributeValueMemberS{Value: nowStr},
+				},
+			}},
+			{Update: &types.Update{
+				TableName: aws.String(r.tableName),
+				Key: map[string]types.AttributeValue{
+					"PK": &types.AttributeValueMemberS{Value: PKBalance},
+					"SK": &types.AttributeValueMemberS{Value: SKBalance},
+				},
+				// Refund: subtract a negative = add the amount.
+				UpdateExpression: aws.String("SET total_balance = if_not_exists(total_balance, :zero) - :neg, updated_at = :now"),
+				ExpressionAttributeValues: map[string]types.AttributeValue{
+					":neg":  &types.AttributeValueMemberN{Value: negAmountStr},
+					":zero": &types.AttributeValueMemberN{Value: "0"},
+					":now":  &types.AttributeValueMemberS{Value: nowStr},
+				},
+			}},
+		},
+	})
+	if err != nil {
+		if _, ok := txConditionFailedIndex(err); ok {
+			return ErrExpenseStateMismatch
+		}
+		return fmt.Errorf("failed to delete expense atomically: %w", err)
+	}
+	return nil
+}
+
+// AtomicCreateMonth puts a new month summary and credits the global
+// balance by the allowance amount in a single transaction. The put is
+// conditioned on `attribute_not_exists(PK)` so concurrent creates can't
+// both succeed → ErrMonthAlreadyExists on the loser.
+func (r *Repository) AtomicCreateMonth(ctx context.Context, summary *model.MonthSummary, allowance float64) error {
+	summary.PK = MonthPrefix + summary.Month
+	summary.SK = SKSummary
+	summary.UpdatedAt = time.Now()
+	if summary.CreatedAt.IsZero() {
+		summary.CreatedAt = summary.UpdatedAt
+	}
+	item, err := attributevalue.MarshalMap(summary)
+	if err != nil {
+		return fmt.Errorf("failed to marshal month summary: %w", err)
+	}
+	nowStr := time.Now().Format(time.RFC3339)
+	allowanceStr := fmt.Sprintf("%.2f", allowance)
+
+	_, err = r.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+		TransactItems: []types.TransactWriteItem{
+			{Put: &types.Put{
+				TableName:           aws.String(r.tableName),
+				Item:                item,
+				ConditionExpression: aws.String("attribute_not_exists(PK)"),
+			}},
+			{Update: &types.Update{
+				TableName: aws.String(r.tableName),
+				Key: map[string]types.AttributeValue{
+					"PK": &types.AttributeValueMemberS{Value: PKBalance},
+					"SK": &types.AttributeValueMemberS{Value: SKBalance},
+				},
+				UpdateExpression: aws.String("SET total_balance = if_not_exists(total_balance, :zero) + :delta, updated_at = :now"),
+				ExpressionAttributeValues: map[string]types.AttributeValue{
+					":delta": &types.AttributeValueMemberN{Value: allowanceStr},
+					":zero":  &types.AttributeValueMemberN{Value: "0"},
+					":now":   &types.AttributeValueMemberS{Value: nowStr},
+				},
+			}},
+		},
+	})
+	if err != nil {
+		if idx, ok := txConditionFailedIndex(err); ok && idx == 0 {
+			return ErrMonthAlreadyExists
+		}
+		return fmt.Errorf("failed to create month atomically: %w", err)
+	}
+	return nil
+}
+
+// AtomicAddFunds credits the month summary and the global balance by the
+// same amount in a single transaction. The month summary update is
+// conditioned on attribute_exists(PK) — returns a wrapped error if the
+// month doesn't exist (caller maps to ErrMonthNotFound via lookup).
+func (r *Repository) AtomicAddFunds(ctx context.Context, month string, amount float64) error {
+	pkMonth := MonthPrefix + month
+	nowStr := time.Now().Format(time.RFC3339)
+	amountStr := fmt.Sprintf("%.2f", amount)
+
+	_, err := r.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+		TransactItems: []types.TransactWriteItem{
+			{Update: &types.Update{
+				TableName: aws.String(r.tableName),
+				Key: map[string]types.AttributeValue{
+					"PK": &types.AttributeValueMemberS{Value: pkMonth},
+					"SK": &types.AttributeValueMemberS{Value: SKSummary},
+				},
+				UpdateExpression:    aws.String("SET allowance_added = allowance_added + :amount, ending_balance = ending_balance + :amount, updated_at = :now"),
+				ConditionExpression: aws.String("attribute_exists(PK)"),
+				ExpressionAttributeValues: map[string]types.AttributeValue{
+					":amount": &types.AttributeValueMemberN{Value: amountStr},
+					":now":    &types.AttributeValueMemberS{Value: nowStr},
+				},
+			}},
+			{Update: &types.Update{
+				TableName: aws.String(r.tableName),
+				Key: map[string]types.AttributeValue{
+					"PK": &types.AttributeValueMemberS{Value: PKBalance},
+					"SK": &types.AttributeValueMemberS{Value: SKBalance},
+				},
+				UpdateExpression: aws.String("SET total_balance = if_not_exists(total_balance, :zero) + :delta, updated_at = :now"),
+				ExpressionAttributeValues: map[string]types.AttributeValue{
+					":delta": &types.AttributeValueMemberN{Value: amountStr},
+					":zero":  &types.AttributeValueMemberN{Value: "0"},
+					":now":   &types.AttributeValueMemberS{Value: nowStr},
+				},
+			}},
+		},
+	})
+	if err != nil {
+		if _, ok := txConditionFailedIndex(err); ok {
+			// Month summary doesn't exist (or some other conditional). The
+			// service layer typically pre-checks existence; wrapping as a
+			// state mismatch is safe.
+			return ErrExpenseStateMismatch
+		}
+		return fmt.Errorf("failed to add funds atomically: %w", err)
+	}
+	return nil
 }

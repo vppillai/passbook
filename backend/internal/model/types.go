@@ -83,9 +83,15 @@ type ChangePinRequest struct {
 	NewPin     string `json:"new_pin"`
 }
 
+// AddExpenseRequest is the JSON body for adding an expense. Month is
+// optional — if omitted, the server uses its current UTC month, which
+// for non-UTC clients near a month boundary can land in the wrong
+// monthly bucket. Clients aware of their local timezone SHOULD include
+// it in YYYY-MM format.
 type AddExpenseRequest struct {
 	Amount      float64 `json:"amount"`
 	Description string  `json:"description"`
+	Month       string  `json:"month,omitempty"` // optional YYYY-MM; defaults to server UTC current month
 }
 
 type AddExpenseResponse struct {

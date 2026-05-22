@@ -205,13 +205,21 @@ func (s *ExpenseService) ensureMonthExists(ctx context.Context, month string) (*
 	return summary, nil
 }
 
-// AddExpense adds a new expense
+// AddExpense adds a new expense in a single DynamoDB transaction
+// (PutExpense + UpdateMonthExpenses + UpdateBalance). Closes the
+// non-atomic 3-write window that previously could leave the ledger
+// in a corrupt state if the Lambda timed out mid-flight.
+//
+// When req.Month is set, the expense is filed against that month
+// (client knows its local timezone). Empty Month falls back to the
+// server's UTC current month.
+//
+// When the instance forbids overspending, the transaction's condition
+// expression atomically checks `ending_balance >= amount`, so two
+// concurrent AddExpense calls cannot both succeed at $7 each on a $10
+// balance.
 func (s *ExpenseService) AddExpense(ctx context.Context, req *model.AddExpenseRequest) (*model.AddExpenseResponse, error) {
-	// Validate
-	if req.Amount <= 0 {
-		return nil, ErrInvalidAmount
-	}
-	if req.Amount > 99999.99 {
+	if req.Amount <= 0 || req.Amount > 99999.99 {
 		return nil, ErrInvalidAmount
 	}
 	if len(req.Description) > 100 {
@@ -222,20 +230,18 @@ func (s *ExpenseService) AddExpense(ctx context.Context, req *model.AddExpenseRe
 		req.Description = "Expense"
 	}
 
-	month := GetCurrentMonth()
-
-	// Ensure month summary exists (created with $0 allowance if new)
-	summary, err := s.ensureMonthExists(ctx, month)
+	month, err := resolveMonth(req.Month)
 	if err != nil {
 		return nil, err
 	}
 
-	// Check sufficient funds (skipped when the instance allows overspending)
-	if !s.allowOverspending && summary.EndingBalance < req.Amount {
-		return nil, ErrInsufficientFunds
+	// Ensure month summary exists. This non-atomic create-if-missing is
+	// idempotent and rare (once per month); the atomic transaction below
+	// then guarantees correctness of the actual expense write.
+	if _, err := s.ensureMonthExists(ctx, month); err != nil {
+		return nil, err
 	}
 
-	// Create expense
 	now := time.Now()
 	expense := &model.Expense{
 		SK:          fmt.Sprintf("%s%d#%s", repository.ExpensePrefix, now.UnixNano(), uuid.New().String()[:8]),
@@ -244,53 +250,66 @@ func (s *ExpenseService) AddExpense(ctx context.Context, req *model.AddExpenseRe
 		CreatedAt:   now,
 	}
 
-	// Save expense
-	if err := s.repo.AddExpense(ctx, month, expense); err != nil {
+	if err := s.repo.AtomicAddExpense(ctx, month, expense, !s.allowOverspending); err != nil {
+		if errors.Is(err, repository.ErrInsufficientBalance) {
+			return nil, ErrInsufficientFunds
+		}
 		return nil, err
 	}
 
-	// Update month summary
-	if err := s.repo.UpdateMonthExpenses(ctx, month, req.Amount); err != nil {
-		return nil, err
-	}
-
-	// Update total balance
-	balance, err := s.repo.UpdateBalance(ctx, -req.Amount)
+	// Read back the post-transaction state for an accurate response.
+	updatedSummary, err := s.repo.GetMonthSummary(ctx, month)
 	if err != nil {
 		return nil, err
+	}
+	balance, err := s.repo.GetBalance(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	monthBalance := 0.0
+	if updatedSummary != nil {
+		monthBalance = updatedSummary.EndingBalance
 	}
 
 	return &model.AddExpenseResponse{
 		Success:      true,
 		Expense:      expense,
-		MonthBalance: summary.EndingBalance - req.Amount,
+		MonthBalance: monthBalance,
 		TotalBalance: balance.TotalBalance,
 	}, nil
 }
 
+// resolveMonth validates the optional client-supplied month parameter.
+// Empty input falls back to the server's UTC current month (legacy
+// behavior — preserved for callers that haven't been updated yet).
+// Any non-empty value must parse as YYYY-MM; bad formats return
+// ErrInvalidMonth so clients can fail loudly.
+func resolveMonth(clientMonth string) (string, error) {
+	if clientMonth == "" {
+		return GetCurrentMonth(), nil
+	}
+	if _, err := time.Parse("2006-01", clientMonth); err != nil {
+		return "", ErrInvalidMonth
+	}
+	return clientMonth, nil
+}
+
 // UpdateExpense updates an existing expense's amount and/or description.
-// It performs the following steps:
-//  1. Validates that at least one field is being changed and values are valid.
-//  2. Fetches the current expense to compute the amount delta.
-//  3. If the amount is increasing, verifies sufficient funds in the month.
-//  4. Persists the update in DynamoDB via the repository.
-//  5. Adjusts the month summary (total_expenses, ending_balance) and the
-//     global balance by the computed delta.
-//
-// Returns ErrNoChanges if both Amount and Description are nil, ErrExpenseNotFound
-// if the expense does not exist, and ErrInsufficientFunds if an amount increase
-// would exceed the month's available balance.
+// Validation, read of current state, and the multi-row write
+// (expense + month summary + balance) are wrapped in a single DynamoDB
+// transaction with conditions to detect concurrent edits (amount
+// mismatch) and overspending. Returns ErrExpenseNotFound on concurrent
+// edit or stale read (the client should re-fetch and retry).
 func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expenseID string, req *model.UpdateExpenseRequest) (*model.UpdateExpenseResponse, error) {
 	if req.Amount == nil && req.Description == nil {
 		return nil, ErrNoChanges
 	}
-
 	if req.Amount != nil {
 		if *req.Amount <= 0 || *req.Amount > 99999.99 {
 			return nil, ErrInvalidAmount
 		}
 	}
-
 	if req.Description != nil {
 		trimmed := strings.TrimSpace(*req.Description)
 		req.Description = &trimmed
@@ -299,7 +318,6 @@ func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expens
 		}
 	}
 
-	// Get current expense to compute delta and fill unchanged fields
 	currentExpense, err := s.repo.GetExpense(ctx, month, expenseID)
 	if err != nil {
 		return nil, err
@@ -308,7 +326,6 @@ func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expens
 		return nil, ErrExpenseNotFound
 	}
 
-	// Determine new values
 	newAmount := currentExpense.Amount
 	if req.Amount != nil {
 		newAmount = *req.Amount
@@ -320,56 +337,42 @@ func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expens
 	if newDescription == "" {
 		newDescription = "Expense"
 	}
-
-	// Calculate amount delta (positive = expense increased)
 	amountDelta := newAmount - currentExpense.Amount
 
-	// If amount increased, check sufficient funds
-	if amountDelta > 0 {
-		summary, err := s.repo.GetMonthSummary(ctx, month)
-		if err != nil {
-			return nil, err
-		}
-		if summary == nil {
-			return nil, ErrMonthNotFound
-		}
-		if !s.allowOverspending && summary.EndingBalance < amountDelta {
-			return nil, ErrInsufficientFunds
-		}
-	}
-
-	// Update expense in DynamoDB
-	oldExpense, err := s.repo.UpdateExpense(ctx, month, expenseID, newAmount, newDescription)
-	if err != nil {
-		return nil, err
-	}
-	if oldExpense == nil {
-		return nil, ErrExpenseNotFound
-	}
-
-	// If amount changed, update month summary and total balance
-	var totalBalance float64
 	if amountDelta != 0 {
-		if err := s.repo.UpdateMonthExpenses(ctx, month, amountDelta); err != nil {
-			return nil, err
+		// Atomic transaction with optimistic concurrency on amount.
+		if err := s.repo.AtomicUpdateExpense(ctx, month, expenseID, currentExpense.Amount, newAmount, newDescription, !s.allowOverspending); err != nil {
+			switch {
+			case errors.Is(err, repository.ErrInsufficientBalance):
+				return nil, ErrInsufficientFunds
+			case errors.Is(err, repository.ErrExpenseStateMismatch):
+				return nil, ErrExpenseNotFound
+			default:
+				return nil, err
+			}
 		}
-		balance, err := s.repo.UpdateBalance(ctx, -amountDelta)
-		if err != nil {
-			return nil, err
-		}
-		totalBalance = balance.TotalBalance
 	} else {
-		balance, err := s.repo.GetBalance(ctx)
+		// Description-only update doesn't touch summary/balance — single write is fine.
+		oldExpense, err := s.repo.UpdateExpense(ctx, month, expenseID, newAmount, newDescription)
 		if err != nil {
 			return nil, err
 		}
-		totalBalance = balance.TotalBalance
+		if oldExpense == nil {
+			return nil, ErrExpenseNotFound
+		}
 	}
 
-	// Get updated month summary for response
 	updatedSummary, err := s.repo.GetMonthSummary(ctx, month)
 	if err != nil {
 		return nil, err
+	}
+	balance, err := s.repo.GetBalance(ctx)
+	if err != nil {
+		return nil, err
+	}
+	monthBalance := 0.0
+	if updatedSummary != nil {
+		monthBalance = updatedSummary.EndingBalance
 	}
 
 	return &model.UpdateExpenseResponse{
@@ -380,32 +383,30 @@ func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expens
 			Description: newDescription,
 			CreatedAt:   currentExpense.CreatedAt,
 		},
-		MonthBalance: updatedSummary.EndingBalance,
-		TotalBalance: totalBalance,
+		MonthBalance: monthBalance,
+		TotalBalance: balance.TotalBalance,
 	}, nil
 }
 
-// DeleteExpense deletes an expense and refunds the balance
+// DeleteExpense deletes an expense and refunds the balance in a single
+// transaction. The expense's amount is read first so the refund delta is
+// known; the transaction conditions the delete on that amount to catch
+// any concurrent edit that landed in between.
 func (s *ExpenseService) DeleteExpense(ctx context.Context, month string, expenseID string) error {
-	// Delete and get the old expense
-	expense, err := s.repo.DeleteExpense(ctx, month, expenseID)
+	currentExpense, err := s.repo.GetExpense(ctx, month, expenseID)
 	if err != nil {
 		return err
 	}
-	if expense == nil {
+	if currentExpense == nil {
 		return ErrExpenseNotFound
 	}
 
-	// Refund: update month summary (subtract from expenses, add to balance)
-	if err := s.repo.UpdateMonthExpenses(ctx, month, -expense.Amount); err != nil {
+	if err := s.repo.AtomicDeleteExpense(ctx, month, expenseID, currentExpense.Amount); err != nil {
+		if errors.Is(err, repository.ErrExpenseStateMismatch) {
+			return ErrExpenseNotFound
+		}
 		return err
 	}
-
-	// Update total balance
-	if _, err := s.repo.UpdateBalance(ctx, expense.Amount); err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -459,9 +460,17 @@ func (s *ExpenseService) ListMonths(ctx context.Context, limit int, cursorMonth 
 
 	items := make([]model.MonthListItem, len(slice))
 	for i, m := range slice {
+		// MonthlySaved is the user-visible "delta this month" — i.e. what
+		// the month contributed above (or below) its starting balance.
+		// Previously this was `AllowanceAdded - TotalExpenses`, which
+		// ignored StartingBalance entirely; with carry-over enabled the
+		// reported number understated savings, and with overspending
+		// enabled it could show "−$50 saved" for a month that ended in
+		// the black thanks to the carried-over balance. Using
+		// `EndingBalance - StartingBalance` is the consistent answer.
 		items[i] = model.MonthListItem{
 			Month:        m.Month,
-			MonthlySaved: m.AllowanceAdded - m.TotalExpenses,
+			MonthlySaved: m.EndingBalance - m.StartingBalance,
 		}
 	}
 
@@ -478,9 +487,11 @@ func (s *ExpenseService) ListMonths(ctx context.Context, limit int, cursorMonth 
 	}, nil
 }
 
-// CreateMonth creates a new month with the configured monthly allowance
+// CreateMonth creates a new month with the configured monthly allowance.
+// The month summary write and the balance credit are wrapped in a single
+// DynamoDB transaction; an attribute_not_exists condition on the put
+// prevents two concurrent creates from both succeeding.
 func (s *ExpenseService) CreateMonth(ctx context.Context, month string) (*model.CreateMonthResponse, error) {
-	// Validate month format
 	if len(month) != 7 {
 		return nil, ErrInvalidMonth
 	}
@@ -488,16 +499,6 @@ func (s *ExpenseService) CreateMonth(ctx context.Context, month string) (*model.
 		return nil, ErrInvalidMonth
 	}
 
-	// Check if month already exists
-	existing, err := s.repo.GetMonthSummary(ctx, month)
-	if err != nil {
-		return nil, err
-	}
-	if existing != nil {
-		return nil, ErrMonthExists
-	}
-
-	// Get previous month's ending balance as starting balance
 	prevMonth := GetPreviousMonth(month)
 	prevSummary, err := s.repo.GetMonthSummary(ctx, prevMonth)
 	if err != nil {
@@ -508,29 +509,26 @@ func (s *ExpenseService) CreateMonth(ctx context.Context, month string) (*model.
 	if s.carryOverBalance && prevSummary != nil {
 		startingBalance = prevSummary.EndingBalance
 	}
-
-	// Create month with configured monthly allowance
 	allowance := s.monthlyAllowance
-	endingBalance := startingBalance + allowance
-
 	summary := &model.MonthSummary{
 		Month:           month,
 		StartingBalance: startingBalance,
 		AllowanceAdded:  allowance,
 		TotalExpenses:   0,
-		EndingBalance:   endingBalance,
+		EndingBalance:   startingBalance + allowance,
 	}
 
-	if err := s.repo.SaveMonthSummary(ctx, summary); err != nil {
+	if err := s.repo.AtomicCreateMonth(ctx, summary, allowance); err != nil {
+		if errors.Is(err, repository.ErrMonthAlreadyExists) {
+			return nil, ErrMonthExists
+		}
 		return nil, err
 	}
 
-	// Update total balance (add the allowance)
-	balance, err := s.repo.UpdateBalance(ctx, allowance)
+	balance, err := s.repo.GetBalance(ctx)
 	if err != nil {
 		return nil, err
 	}
-
 	return &model.CreateMonthResponse{
 		Success:      true,
 		Summary:      summary,
@@ -538,13 +536,15 @@ func (s *ExpenseService) CreateMonth(ctx context.Context, month string) (*model.
 	}, nil
 }
 
-// AddFunds adds funds to an existing month
+// AddFunds tops up an existing month's allowance and credits the global
+// balance by the same amount in a single transaction.
 func (s *ExpenseService) AddFunds(ctx context.Context, month string, amount float64) (*model.AddFundsResponse, error) {
 	if amount <= 0 {
 		return nil, ErrFundsNotPositive
 	}
 
-	// Verify month exists
+	// Pre-check existence so the user gets a precise ErrMonthNotFound
+	// instead of a generic state-mismatch from the transaction.
 	summary, err := s.repo.GetMonthSummary(ctx, month)
 	if err != nil {
 		return nil, err
@@ -553,23 +553,22 @@ func (s *ExpenseService) AddFunds(ctx context.Context, month string, amount floa
 		return nil, ErrMonthNotFound
 	}
 
-	// Update month: add to allowance_added and ending_balance
-	if err := s.repo.UpdateMonthAllowance(ctx, month, amount); err != nil {
+	if err := s.repo.AtomicAddFunds(ctx, month, amount); err != nil {
+		if errors.Is(err, repository.ErrExpenseStateMismatch) {
+			// Month vanished between our pre-check and the transaction.
+			return nil, ErrMonthNotFound
+		}
 		return nil, err
 	}
 
-	// Update total balance
-	balance, err := s.repo.UpdateBalance(ctx, amount)
-	if err != nil {
-		return nil, err
-	}
-
-	// Re-fetch updated summary for response
 	updatedSummary, err := s.repo.GetMonthSummary(ctx, month)
 	if err != nil {
 		return nil, err
 	}
-
+	balance, err := s.repo.GetBalance(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return &model.AddFundsResponse{
 		Success:      true,
 		Summary:      updatedSummary,
