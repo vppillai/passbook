@@ -135,19 +135,14 @@ jobs:
               CarryOverBalance="$CARRY_OVER" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
-      - name: Update Lambda code
-        env:
-          INSTANCE: ${{ matrix.instance }}
-          S3_KEY: ${{ needs.build.outputs.s3_key }}
-        run: |
-          BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name passbook-bootstrap \
-            --query "Stacks[0].Outputs[?OutputKey=='LambdaDeploymentBucketName'].OutputValue" \
-            --output text)
-          aws lambda update-function-code \
-            --function-name "passbook-api-${INSTANCE}-prod" \
-            --s3-bucket "$BUCKET" \
-            --s3-key "$S3_KEY"
+      # Note: previously this step ran `aws lambda update-function-code`
+      # AFTER `cloudformation deploy`. That created a drift surface — the
+      # CFN stack thinks Lambda points at one S3 key, but the live
+      # function code has been swapped to another. Stack rollbacks and
+      # change-set previews become untrustworthy. Now CFN is the single
+      # source of truth: `LambdaCodeKey=${S3_KEY}` is already supplied to
+      # the deploy command above, and the function is updated by CFN
+      # itself. The direct API call has been removed.
       - name: Summarize
         run: |
           API_URL=$(aws cloudformation describe-stacks \
