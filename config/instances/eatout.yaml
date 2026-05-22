@@ -13,6 +13,9 @@ colors:
   primary: "#E07856"
   primary_dark: "#B85A3D"
   background: "#FFF8F4"
+  # Deep crimson — stays in the warm family with the coral primary but
+  # is dark enough to read as "alert" against the lighter background.
+  negative: "#991B1B"
 labels:
   app_title: Eat-Out Budget
   app_description: Track household eat-out spending

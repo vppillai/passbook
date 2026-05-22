@@ -5,6 +5,9 @@
     --success-color: #4CAF50;
     --danger-color: #f44336;
     --warning-color: #ff9800;
+    /* Color for negative balances. Defaults to --danger-color but can be
+       overridden per-instance via theme.css (see deploy-frontend.yaml). */
+    --negative-color: #f44336;
     --background: #f5f7fa;
     --card-bg: #ffffff;
     --text-primary: #333333;
@@ -334,7 +337,7 @@ header h1 {
 
 /* Negative balance (overspend) styling */
 .amount.balance-negative {
-    color: var(--danger-color);
+    color: var(--negative-color);
 }
 
 .balance-divider {
