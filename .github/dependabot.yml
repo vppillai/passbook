@@ -1,0 +1,23 @@
+version: 2
+updates:
+  # Keep GitHub Actions SHA pins fresh. Without Dependabot, a SHA-pinned
+  # workflow drifts behind upstream security patches. Dependabot opens a
+  # PR when a pinned action has a new release.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+
+  # Go module updates for the backend.
+  - package-ecosystem: gomod
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - go

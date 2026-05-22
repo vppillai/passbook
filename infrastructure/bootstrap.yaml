@@ -160,17 +160,12 @@ Resources:
                   - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis'
                   - !Sub 'arn:aws:apigateway:${AWS::Region}::/tags/*'
 
-              # IAM permissions for Lambda execution role
+              # IAM read-only / tagging actions on passbook-* roles.
+              # No conditions needed: these cannot modify the role's identity
+              # or attached policies.
               - Effect: Allow
                 Action:
-                  - iam:CreateRole
-                  - iam:DeleteRole
                   - iam:GetRole
-                  - iam:PutRolePolicy
-                  - iam:DeleteRolePolicy
-                  - iam:AttachRolePolicy
-                  - iam:DetachRolePolicy
-                  - iam:PassRole
                   - iam:ListRolePolicies
                   - iam:GetRolePolicy
                   - iam:TagRole
@@ -178,6 +173,50 @@ Resources:
                   - iam:ListAttachedRolePolicies
                 Resource:
                   - !Sub 'arn:aws:iam::${AWS::AccountId}:role/passbook-*'
+
+              # IAM mutations on passbook-* roles — restricted to CloudFormation.
+              # Direct API calls (e.g. from a compromised workflow trying to
+              # create a passbook-attacker role and pass it to a fresh Lambda)
+              # are blocked. CloudFormation deploys still work because the
+              # actions are made on its behalf.
+              - Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:DetachRolePolicy
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/passbook-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # AttachRolePolicy restricted to the single managed policy our
+              # Lambda exec role needs. Without this lock, the CI role could
+              # attach AdministratorAccess to a passbook-* role.
+              - Effect: Allow
+                Action:
+                  - iam:AttachRolePolicy
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/passbook-*'
+                Condition:
+                  ArnEquals:
+                    iam:PolicyARN: 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # PassRole restricted to Lambda service. The CI role cannot
+              # pass a passbook-* role to EC2, SageMaker, or any non-Lambda
+              # principal that an attacker could trick into running code.
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/passbook-*'
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: 'lambda.amazonaws.com'
 
               # CloudWatch Logs permissions - scoped to passbook log groups
               - Effect: Allow
