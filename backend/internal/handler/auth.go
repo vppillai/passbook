@@ -50,7 +50,7 @@ func (rt *Router) handleVerifyPIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response, err := rt.authService.VerifyPIN(r.Context(), req.Pin)
+	response, err := rt.authService.VerifyPIN(r.Context(), req.Pin, r.Header.Get(SourceIPHeader))
 	if err != nil {
 		http.Error(w, `{"error":"Failed to verify PIN"}`, http.StatusInternalServerError)
 		return

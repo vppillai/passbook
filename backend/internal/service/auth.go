@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 	"unicode"
@@ -60,47 +61,47 @@ func (s *AuthService) IsSetup(ctx context.Context) (bool, error) {
 	return config != nil && config.PinHash != "", nil
 }
 
-// SetupPIN sets up the initial PIN
+// SetupPIN sets up the initial PIN. Uses CreateConfig (which conditions on
+// attribute_not_exists) so two concurrent setup attempts cannot both write —
+// the loser gets ErrPINAlreadySet. Closes the first-deploy takeover window
+// where an adversary scraping new instance config from GitHub could race the
+// owner to claim the PIN slot.
 func (s *AuthService) SetupPIN(ctx context.Context, pin string) error {
-	// Validate PIN format
 	if err := validatePIN(pin); err != nil {
 		return err
 	}
 
-	// Check if already set up
-	config, err := s.repo.GetConfig(ctx)
-	if err != nil {
-		return err
-	}
-	if config != nil && config.PinHash != "" {
-		return ErrPINAlreadySet
-	}
-
-	// Hash the PIN
 	hash, err := hashPIN(pin)
 	if err != nil {
 		return fmt.Errorf("failed to hash PIN: %w", err)
 	}
 
-	// Save config
 	newConfig := &model.Config{
 		PinHash:   hash,
 		CreatedAt: time.Now(),
 	}
-	return s.repo.SaveConfig(ctx, newConfig)
+	if err := s.repo.CreateConfig(ctx, newConfig); err != nil {
+		if errors.Is(err, repository.ErrConfigAlreadyExists) {
+			return ErrPINAlreadySet
+		}
+		return err
+	}
+	return nil
 }
 
-// VerifyPIN verifies the PIN and returns a session token
-func (s *AuthService) VerifyPIN(ctx context.Context, pin string) (*model.VerifyPinResponse, error) {
-	// Check rate limiting
-	rateLimit, err := s.repo.GetRateLimitEntry(ctx)
+// VerifyPIN verifies the PIN and returns a session token on success.
+// sourceIP scopes rate-limiting per requesting client — without it, one
+// attacker could lock out the family by flooding /api/auth/verify.
+func (s *AuthService) VerifyPIN(ctx context.Context, pin string, sourceIP string) (*model.VerifyPinResponse, error) {
+	rateLimit, err := s.repo.GetRateLimitEntry(ctx, sourceIP)
 	if err != nil {
 		return nil, err
 	}
 
+	now := time.Now()
 	if rateLimit != nil {
-		// Check if locked out
-		if rateLimit.LockedAt > 0 && rateLimit.LockedAt > time.Now().Unix() {
+		// Hard lockout — refuse without burning Argon2 cycles.
+		if rateLimit.LockedAt > 0 && rateLimit.LockedAt > now.Unix() {
 			return &model.VerifyPinResponse{
 				Success:     false,
 				Error:       "Account locked. Please try again later.",
@@ -108,27 +109,49 @@ func (s *AuthService) VerifyPIN(ctx context.Context, pin string) (*model.VerifyP
 			}, nil
 		}
 
-		// Check if at max attempts
+		// Soft cap reached — return immediately. The original code computed
+		// `remaining` here but fell through to verifyPIN(), giving 10 attempts
+		// instead of the documented 5. Promote the lockout if already at the
+		// hard threshold; otherwise just refuse this attempt without
+		// incurring Argon2 cost or letting the counter slide.
 		if rateLimit.Attempts >= maxAttempts {
-			remaining := maxAttempts - rateLimit.Attempts
-			if remaining < 0 {
-				remaining = 0
-			}
-			// If at lockout threshold, set lockout
 			if rateLimit.Attempts >= lockoutAttempts {
-				if err := s.repo.SetLockout(ctx, lockoutMinutes); err != nil {
+				if err := s.repo.SetLockout(ctx, sourceIP, lockoutMinutes); err != nil {
 					return nil, err
 				}
 				return &model.VerifyPinResponse{
 					Success:     false,
 					Error:       "Too many failed attempts. Account locked.",
-					LockedUntil: time.Now().Add(lockoutMinutes * time.Minute).Unix(),
+					LockedUntil: now.Add(lockoutMinutes * time.Minute).Unix(),
 				}, nil
 			}
+			return &model.VerifyPinResponse{
+				Success:           false,
+				Error:             "Too many attempts. Please wait.",
+				AttemptsRemaining: 0,
+			}, nil
 		}
 	}
 
-	// Get config
+	// Validate PIN format before incurring Argon2 cost. Still increments
+	// the failed-attempt counter so that format-vs-Argon2 timing cannot
+	// be used to enumerate valid PIN shapes.
+	if err := validatePIN(pin); err != nil {
+		entry, incErr := s.repo.IncrementFailedAttempts(ctx, sourceIP)
+		if incErr != nil {
+			return nil, incErr
+		}
+		remaining := maxAttempts - entry.Attempts
+		if remaining < 0 {
+			remaining = 0
+		}
+		return &model.VerifyPinResponse{
+			Success:           false,
+			Error:             "Invalid PIN",
+			AttemptsRemaining: remaining,
+		}, nil
+	}
+
 	config, err := s.repo.GetConfig(ctx)
 	if err != nil {
 		return nil, err
@@ -140,36 +163,30 @@ func (s *AuthService) VerifyPIN(ctx context.Context, pin string) (*model.VerifyP
 		}, nil
 	}
 
-	// Verify PIN
-	match, err := verifyPIN(pin, config.PinHash)
+	match, err := verifyPINHash(pin, config.PinHash)
 	if err != nil {
 		return nil, err
 	}
 
 	if !match {
-		// Increment failed attempts
-		entry, err := s.repo.IncrementFailedAttempts(ctx)
+		entry, err := s.repo.IncrementFailedAttempts(ctx, sourceIP)
 		if err != nil {
 			return nil, err
 		}
-
 		remaining := maxAttempts - entry.Attempts
 		if remaining < 0 {
 			remaining = 0
 		}
-
-		// Check if should lock
 		if entry.Attempts >= lockoutAttempts {
-			if err := s.repo.SetLockout(ctx, lockoutMinutes); err != nil {
+			if err := s.repo.SetLockout(ctx, sourceIP, lockoutMinutes); err != nil {
 				return nil, err
 			}
 			return &model.VerifyPinResponse{
 				Success:     false,
 				Error:       "Too many failed attempts. Account locked.",
-				LockedUntil: time.Now().Add(lockoutMinutes * time.Minute).Unix(),
+				LockedUntil: now.Add(lockoutMinutes * time.Minute).Unix(),
 			}, nil
 		}
-
 		return &model.VerifyPinResponse{
 			Success:           false,
 			Error:             "Invalid PIN",
@@ -177,12 +194,10 @@ func (s *AuthService) VerifyPIN(ctx context.Context, pin string) (*model.VerifyP
 		}, nil
 	}
 
-	// Clear rate limit on success
-	if err := s.repo.ClearRateLimit(ctx); err != nil {
-		// Non-fatal, continue
+	if err := s.repo.ClearRateLimit(ctx, sourceIP); err != nil {
+		log.Printf("warn: ClearRateLimit failed for ip=%s: %v", sourceIP, err)
 	}
 
-	// Create session
 	token := uuid.New().String()
 	if err := s.repo.CreateSession(ctx, token, sessionTTLHours); err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
@@ -194,35 +209,46 @@ func (s *AuthService) VerifyPIN(ctx context.Context, pin string) (*model.VerifyP
 	}, nil
 }
 
-// ChangePIN changes the PIN after verifying the current one
+// ChangePIN rotates the PIN after verifying the current one. Calls
+// verifyPINHash directly (not VerifyPIN) so wrong-current-PIN attempts do
+// NOT increment the login rate-limit counter (which would lock the
+// account from its own owner) and do NOT mint stray session tokens.
+// On success, all existing sessions are revoked so that a stolen token
+// cannot survive a PIN rotation.
 func (s *AuthService) ChangePIN(ctx context.Context, currentPIN, newPIN string) error {
-	// Validate new PIN format
 	if err := validatePIN(newPIN); err != nil {
 		return err
 	}
 
-	// Verify current PIN
-	response, err := s.VerifyPIN(ctx, currentPIN)
-	if err != nil {
-		return err
-	}
-	if !response.Success {
-		return ErrInvalidPIN
-	}
-
-	// Hash new PIN
-	hash, err := hashPIN(newPIN)
-	if err != nil {
-		return fmt.Errorf("failed to hash PIN: %w", err)
-	}
-
-	// Update config
 	config, err := s.repo.GetConfig(ctx)
 	if err != nil {
 		return err
 	}
+	if config == nil || config.PinHash == "" {
+		return ErrPINNotSetup
+	}
+
+	match, err := verifyPINHash(currentPIN, config.PinHash)
+	if err != nil {
+		return err
+	}
+	if !match {
+		return ErrInvalidPIN
+	}
+
+	hash, err := hashPIN(newPIN)
+	if err != nil {
+		return fmt.Errorf("failed to hash PIN: %w", err)
+	}
 	config.PinHash = hash
-	return s.repo.SaveConfig(ctx, config)
+	if err := s.repo.SaveConfig(ctx, config); err != nil {
+		return err
+	}
+
+	if err := s.repo.DeleteAllSessions(ctx); err != nil {
+		log.Printf("warn: DeleteAllSessions on ChangePIN failed: %v", err)
+	}
+	return nil
 }
 
 // ValidateSession validates a session token
@@ -274,7 +300,11 @@ func hashPIN(pin string) (string, error) {
 		argonMemory, argonTime, argonThreads, b64Salt, b64Hash), nil
 }
 
-func verifyPIN(pin, encodedHash string) (bool, error) {
+// verifyPINHash performs a constant-time hash comparison between the
+// supplied PIN and a PHC-formatted Argon2id hash. Pure function — no rate
+// limit increment, no session minting, no I/O. Called by both VerifyPIN
+// (the public session-minting flow) and ChangePIN.
+func verifyPINHash(pin, encodedHash string) (bool, error) {
 	// Parse the encoded hash
 	parts := strings.Split(encodedHash, "$")
 	if len(parts) != 6 {

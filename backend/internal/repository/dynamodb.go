@@ -19,13 +19,30 @@ const (
 	SKConfig     = "CONFIG"
 	PKBalance    = "BALANCE"
 	SKBalance    = "BALANCE"
-	PKRateLimit  = "RATELIMIT"
-	SKRateLimit  = "RATELIMIT"
-	MonthPrefix  = "MONTH#"
-	SKSummary    = "SUMMARY"
-	ExpensePrefix = "EXP#"
-	SessionPrefix = "SESSION#"
+	// Rate-limit rows are scoped per source IP: PK = "RATELIMIT#<ip>".
+	// A bare "RATELIMIT#" prefix (empty ip) means the caller did not provide
+	// an IP — we still serve the request but with a shared "unknown" bucket.
+	RateLimitPrefix = "RATELIMIT#"
+	SKRateLimit     = "RATELIMIT"
+	MonthPrefix     = "MONTH#"
+	SKSummary       = "SUMMARY"
+	ExpensePrefix   = "EXP#"
+	SessionPrefix   = "SESSION#"
 )
+
+// ErrConfigAlreadyExists is returned by CreateConfig when a CONFIG row
+// already exists. SetupPIN translates this to service.ErrPINAlreadySet.
+var ErrConfigAlreadyExists = errors.New("config already exists")
+
+// rateLimitPK returns the per-IP partition key for rate-limit rows.
+// Empty ip degrades to a shared "unknown" bucket — never collides with
+// the legacy bare-"RATELIMIT" key that this refactor replaces.
+func rateLimitPK(sourceIP string) string {
+	if sourceIP == "" {
+		return RateLimitPrefix + "unknown"
+	}
+	return RateLimitPrefix + sourceIP
+}
 
 type Repository struct {
 	client    *dynamodb.Client
@@ -82,6 +99,38 @@ func (r *Repository) SaveConfig(ctx context.Context, config *model.Config) error
 	})
 	if err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
+	}
+	return nil
+}
+
+// CreateConfig writes a new CONFIG row atomically, refusing if one already
+// exists. Used by SetupPIN to close the first-deploy race where an adversary
+// scraping new instance config from GitHub could curl /api/auth/setup before
+// the owner does. ChangePIN continues to use SaveConfig for in-place update.
+func (r *Repository) CreateConfig(ctx context.Context, config *model.Config) error {
+	config.PK = PKConfig
+	config.SK = SKConfig
+	config.UpdatedAt = time.Now()
+	if config.CreatedAt.IsZero() {
+		config.CreatedAt = config.UpdatedAt
+	}
+
+	item, err := attributevalue.MarshalMap(config)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	_, err = r.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName:           aws.String(r.tableName),
+		Item:                item,
+		ConditionExpression: aws.String("attribute_not_exists(PK)"),
+	})
+	if err != nil {
+		var condErr *types.ConditionalCheckFailedException
+		if errors.As(err, &condErr) {
+			return ErrConfigAlreadyExists
+		}
+		return fmt.Errorf("failed to create config: %w", err)
 	}
 	return nil
 }
@@ -485,13 +534,74 @@ func (r *Repository) DeleteSession(ctx context.Context, token string) error {
 	return nil
 }
 
-// Rate limiting operations
+// DeleteAllSessions removes every SESSION# row in the table. Called by
+// ChangePIN so that a stolen token cannot survive a PIN rotation.
+// Implemented as a Scan + BatchWriteItem loop (25 items per batch).
+// For a single-user family app the session-row count is tiny so this
+// is fine; if it ever grows, replace with a GSI on entity_type.
+func (r *Repository) DeleteAllSessions(ctx context.Context) error {
+	var lastKey map[string]types.AttributeValue
+	for {
+		scanResult, err := r.client.Scan(ctx, &dynamodb.ScanInput{
+			TableName:            aws.String(r.tableName),
+			FilterExpression:     aws.String("begins_with(PK, :prefix)"),
+			ProjectionExpression: aws.String("PK, SK"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":prefix": &types.AttributeValueMemberS{Value: SessionPrefix},
+			},
+			ExclusiveStartKey: lastKey,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to scan sessions: %w", err)
+		}
 
-func (r *Repository) GetRateLimitEntry(ctx context.Context) (*model.RateLimitEntry, error) {
+		// Batch delete in chunks of 25 (DynamoDB BatchWriteItem limit).
+		for i := 0; i < len(scanResult.Items); i += 25 {
+			end := i + 25
+			if end > len(scanResult.Items) {
+				end = len(scanResult.Items)
+			}
+			writes := make([]types.WriteRequest, 0, end-i)
+			for _, item := range scanResult.Items[i:end] {
+				writes = append(writes, types.WriteRequest{
+					DeleteRequest: &types.DeleteRequest{
+						Key: map[string]types.AttributeValue{
+							"PK": item["PK"],
+							"SK": item["SK"],
+						},
+					},
+				})
+			}
+			_, err := r.client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
+				RequestItems: map[string][]types.WriteRequest{
+					r.tableName: writes,
+				},
+			})
+			if err != nil {
+				return fmt.Errorf("failed to batch delete sessions: %w", err)
+			}
+		}
+
+		if scanResult.LastEvaluatedKey == nil {
+			return nil
+		}
+		lastKey = scanResult.LastEvaluatedKey
+	}
+}
+
+// Rate limiting operations
+//
+// All rate-limit methods take a sourceIP parameter that scopes the
+// counter to that client. Two attackers from different IPs get
+// independent counters, so one cannot lock the legitimate family out.
+// The empty string degrades to a shared "unknown" bucket (used when
+// the request did not include an authoritative IP).
+
+func (r *Repository) GetRateLimitEntry(ctx context.Context, sourceIP string) (*model.RateLimitEntry, error) {
 	result, err := r.client.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(r.tableName),
 		Key: map[string]types.AttributeValue{
-			"PK": &types.AttributeValueMemberS{Value: PKRateLimit},
+			"PK": &types.AttributeValueMemberS{Value: rateLimitPK(sourceIP)},
 			"SK": &types.AttributeValueMemberS{Value: SKRateLimit},
 		},
 	})
@@ -515,14 +625,14 @@ func (r *Repository) GetRateLimitEntry(ctx context.Context) (*model.RateLimitEnt
 	return &entry, nil
 }
 
-func (r *Repository) IncrementFailedAttempts(ctx context.Context) (*model.RateLimitEntry, error) {
+func (r *Repository) IncrementFailedAttempts(ctx context.Context, sourceIP string) (*model.RateLimitEntry, error) {
 	now := time.Now()
 	ttl := now.Add(15 * time.Minute).Unix() // 15-minute window
 
 	result, err := r.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName: aws.String(r.tableName),
 		Key: map[string]types.AttributeValue{
-			"PK": &types.AttributeValueMemberS{Value: PKRateLimit},
+			"PK": &types.AttributeValueMemberS{Value: rateLimitPK(sourceIP)},
 			"SK": &types.AttributeValueMemberS{Value: SKRateLimit},
 		},
 		UpdateExpression: aws.String("SET attempts = if_not_exists(attempts, :zero) + :one, updated_at = :now, #ttl = :ttl"),
@@ -548,17 +658,21 @@ func (r *Repository) IncrementFailedAttempts(ctx context.Context) (*model.RateLi
 	return &entry, nil
 }
 
-func (r *Repository) SetLockout(ctx context.Context, lockoutMinutes int) error {
+// SetLockout writes a hard lockout. The conditional update prevents an
+// in-flight IncrementFailedAttempts from clobbering the longer lockout TTL
+// with its shorter 15-minute window.
+func (r *Repository) SetLockout(ctx context.Context, sourceIP string, lockoutMinutes int) error {
 	now := time.Now()
 	lockoutUntil := now.Add(time.Duration(lockoutMinutes) * time.Minute)
 
 	_, err := r.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName: aws.String(r.tableName),
 		Key: map[string]types.AttributeValue{
-			"PK": &types.AttributeValueMemberS{Value: PKRateLimit},
+			"PK": &types.AttributeValueMemberS{Value: rateLimitPK(sourceIP)},
 			"SK": &types.AttributeValueMemberS{Value: SKRateLimit},
 		},
 		UpdateExpression: aws.String("SET locked_at = :locked, #ttl = :ttl, updated_at = :now"),
+		ConditionExpression: aws.String("attribute_not_exists(locked_at) OR locked_at < :now"),
 		ExpressionAttributeNames: map[string]string{
 			"#ttl": "ttl",
 		},
@@ -569,16 +683,22 @@ func (r *Repository) SetLockout(ctx context.Context, lockoutMinutes int) error {
 		},
 	})
 	if err != nil {
+		// A pre-existing active lockout is fine — the caller's intent is
+		// satisfied either way.
+		var condErr *types.ConditionalCheckFailedException
+		if errors.As(err, &condErr) {
+			return nil
+		}
 		return fmt.Errorf("failed to set lockout: %w", err)
 	}
 	return nil
 }
 
-func (r *Repository) ClearRateLimit(ctx context.Context) error {
+func (r *Repository) ClearRateLimit(ctx context.Context, sourceIP string) error {
 	_, err := r.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
 		TableName: aws.String(r.tableName),
 		Key: map[string]types.AttributeValue{
-			"PK": &types.AttributeValueMemberS{Value: PKRateLimit},
+			"PK": &types.AttributeValueMemberS{Value: rateLimitPK(sourceIP)},
 			"SK": &types.AttributeValueMemberS{Value: SKRateLimit},
 		},
 	})
