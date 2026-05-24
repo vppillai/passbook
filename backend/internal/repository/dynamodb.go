@@ -379,10 +379,12 @@ func (r *Repository) GetExpense(ctx context.Context, month string, expenseID str
 }
 
 // UpdateExpense atomically updates an expense's amount and description in
-// DynamoDB. It uses a condition expression to ensure the item exists before
-// updating. Returns the OLD expense values (before the update) so the caller
-// can compute the amount delta. Returns nil (without error) if the expense
-// does not exist (ConditionalCheckFailedException).
+// DynamoDB. The condition expression also requires SK to begin with "EXP#" —
+// defense-in-depth against record-type confusion. Even if the handler-level
+// prefix check is bypassed, this update cannot touch SUMMARY rows or any
+// other non-expense SK in the same partition. Returns the OLD expense
+// values so the caller can compute the amount delta. Returns nil (without
+// error) if the expense does not exist (ConditionalCheckFailedException).
 func (r *Repository) UpdateExpense(ctx context.Context, month string, expenseID string, amount float64, description string) (*model.Expense, error) {
 	pk := MonthPrefix + month
 	result, err := r.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
@@ -392,10 +394,11 @@ func (r *Repository) UpdateExpense(ctx context.Context, month string, expenseID 
 			"SK": &types.AttributeValueMemberS{Value: expenseID},
 		},
 		UpdateExpression:    aws.String("SET amount = :amount, description = :desc"),
-		ConditionExpression: aws.String("attribute_exists(PK)"),
+		ConditionExpression: aws.String("attribute_exists(PK) AND begins_with(SK, :expensePrefix)"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":amount": &types.AttributeValueMemberN{Value: fmt.Sprintf("%.2f", amount)},
-			":desc":   &types.AttributeValueMemberS{Value: description},
+			":amount":        &types.AttributeValueMemberN{Value: fmt.Sprintf("%.2f", amount)},
+			":desc":          &types.AttributeValueMemberS{Value: description},
+			":expensePrefix": &types.AttributeValueMemberS{Value: ExpensePrefix},
 		},
 		ReturnValues: types.ReturnValueAllOld,
 	})
@@ -439,6 +442,11 @@ func (r *Repository) UpdateMonthAllowance(ctx context.Context, month string, fun
 	return nil
 }
 
+// DeleteExpense removes an expense row. The condition expression requires
+// SK to begin with "EXP#" — defense-in-depth against record-type confusion
+// so the expense API cannot delete SUMMARY rows or other non-expense SKs.
+// Returns the deleted expense (for caller bookkeeping), nil if the row
+// did not exist or did not satisfy the condition.
 func (r *Repository) DeleteExpense(ctx context.Context, month string, expenseID string) (*model.Expense, error) {
 	pk := MonthPrefix + month
 	result, err := r.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
@@ -447,9 +455,17 @@ func (r *Repository) DeleteExpense(ctx context.Context, month string, expenseID 
 			"PK": &types.AttributeValueMemberS{Value: pk},
 			"SK": &types.AttributeValueMemberS{Value: expenseID},
 		},
+		ConditionExpression: aws.String("begins_with(SK, :expensePrefix)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":expensePrefix": &types.AttributeValueMemberS{Value: ExpensePrefix},
+		},
 		ReturnValues: types.ReturnValueAllOld,
 	})
 	if err != nil {
+		var condErr *types.ConditionalCheckFailedException
+		if errors.As(err, &condErr) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("failed to delete expense: %w", err)
 	}
 	if result.Attributes == nil {

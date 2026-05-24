@@ -8,8 +8,18 @@ import (
 	"strings"
 
 	"github.com/vppillai/passbook/backend/internal/model"
+	"github.com/vppillai/passbook/backend/internal/repository"
 	"github.com/vppillai/passbook/backend/internal/service"
 )
+
+// validateExpenseID gates expense-API mutations to rows whose SK actually
+// begins with "EXP#". Without this, an authenticated caller could PUT or
+// DELETE arbitrary rows (e.g. SK="SUMMARY") under any month, corrupting
+// the ledger via the expense endpoint. The repository layer adds a
+// matching ConditionExpression as defense-in-depth.
+func validateExpenseID(id string) bool {
+	return strings.HasPrefix(id, repository.ExpensePrefix) && len(id) > len(repository.ExpensePrefix)
+}
 
 func (rt *Router) handleGetBalance(w http.ResponseWriter, r *http.Request) {
 	response, err := rt.expenseService.GetBalance(r.Context())
@@ -113,6 +123,10 @@ func (rt *Router) handleUpdateExpense(w http.ResponseWriter, r *http.Request) {
 
 	month := segments[0]
 	expenseID := segments[1]
+	if !validateExpenseID(expenseID) {
+		http.Error(w, `{"error":"Invalid expense ID"}`, http.StatusBadRequest)
+		return
+	}
 
 	var req model.UpdateExpenseRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -157,6 +171,10 @@ func (rt *Router) handleDeleteExpense(w http.ResponseWriter, r *http.Request) {
 
 	month := segments[0]
 	expenseID := segments[1]
+	if !validateExpenseID(expenseID) {
+		http.Error(w, `{"error":"Invalid expense ID"}`, http.StatusBadRequest)
+		return
+	}
 
 	if err := rt.expenseService.DeleteExpense(r.Context(), month, expenseID); err != nil {
 		switch err {

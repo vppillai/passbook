@@ -21,8 +21,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.22'
           cache: false
@@ -38,7 +38,7 @@ jobs:
     outputs:
       instances: ${{ steps.list.outputs.instances }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - id: list
         run: |
           INSTANCES=$(ls config/instances/*.yaml | xargs -n1 basename | sed 's/\.yaml$//' | jq -R . | jq -sc .)
@@ -52,8 +52,8 @@ jobs:
     outputs:
       s3_key: ${{ steps.upload.outputs.s3_key }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.22'
           cache: false
@@ -64,7 +64,7 @@ jobs:
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags lambda.norpc -o bootstrap ./cmd/api
           zip function.zip bootstrap
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/passbook-github-actions
           aws-region: ${{ env.AWS_REGION }}
@@ -90,7 +90,7 @@ jobs:
         instance: ${{ fromJson(needs.discover.outputs.instances) }}
       fail-fast: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Read instance config
         id: config
         run: |
@@ -103,7 +103,7 @@ jobs:
           echo "carry_over_balance=$CARRY_OVER" >> $GITHUB_OUTPUT
           echo "Instance: ${{ matrix.instance }}, monthly_amount: $MONTHLY, allow_overspend: $ALLOW_OVERSPEND, carry_over: $CARRY_OVER"
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/passbook-github-actions
           aws-region: ${{ env.AWS_REGION }}
