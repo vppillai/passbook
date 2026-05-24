@@ -8,6 +8,12 @@ import (
 	"github.com/vppillai/passbook/backend/internal/service"
 )
 
+// SourceIPHeader carries the client's source IP from the Lambda entrypoint
+// (which reads APIGW v2's event.RequestContext.HTTP.SourceIp) down to
+// handlers. Any user-supplied value with this name is stripped before
+// the trusted value is set in cmd/api/main.go, so the IP cannot be forged.
+const SourceIPHeader = "X-Source-Ip"
+
 // Router handles HTTP routing
 type Router struct {
 	authService    *service.AuthService
@@ -47,22 +53,19 @@ func (rt *Router) route(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate Origin header for all other requests
-	// This provides defense-in-depth beyond CORS
+	// Defense-in-depth beyond CORS: every non-health request must carry
+	// either a matching Origin or a matching Referer. Browsers attach one
+	// or both for cross-origin fetches; direct API access from tools like
+	// curl that sends neither will be rejected here. The previous version
+	// allowed callers with NO Origin and NO Referer to pass — that hole
+	// is now closed.
 	origin := r.Header.Get("Origin")
-	if origin != "" && origin != rt.allowedOrigin {
+	referer := r.Header.Get("Referer")
+	originOK := origin != "" && origin == rt.allowedOrigin
+	refererOK := referer != "" && strings.HasPrefix(referer, rt.allowedOrigin)
+	if !originOK && !refererOK {
 		http.Error(w, `{"error":"Forbidden"}`, http.StatusForbidden)
 		return
-	}
-
-	// For non-browser requests (no Origin header), check Referer as fallback
-	// This blocks direct API access from tools like curl without Origin header
-	if origin == "" {
-		referer := r.Header.Get("Referer")
-		if referer != "" && !strings.HasPrefix(referer, rt.allowedOrigin) {
-			http.Error(w, `{"error":"Forbidden"}`, http.StatusForbidden)
-			return
-		}
 	}
 
 	// Public routes (no auth required)

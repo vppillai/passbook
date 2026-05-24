@@ -177,8 +177,7 @@ This app is hosted in a **public GitHub repository**. Below is a comprehensive s
 | Control | Implementation | Purpose |
 |---------|----------------|---------|
 | CORS | `Access-Control-Allow-Origin: https://vppillai.github.io` | Only allow requests from app |
-| Origin validation | Checked in Lambda code | Defense-in-depth |
-| Referer check | Fallback for edge cases | Additional validation |
+| Origin / Referer enforcement | At least one of `Origin` or `Referer` must match the allowed origin (browser-style requests). Requests with neither header are rejected. | Blocks direct API access from non-browser clients |
 | HTTPS | Enforced by API Gateway + GitHub Pages | Encryption in transit |
 | Security headers | `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cache-Control: no-store` | MIME sniffing, clickjacking, referrer, caching protection |
 | Content Security Policy | CSP meta tag: `default-src 'none'` with minimal allowances | Restricts resource loading to same origin |
@@ -213,7 +212,7 @@ This app is hosted in a **public GitHub repository**. Below is a comprehensive s
 | XSS | Low | No user-generated HTML, minimal DOM manipulation |
 | CSRF | Low | Origin validation, no cookies used |
 | Code injection | Low | Parameterized DynamoDB queries |
-| Direct API access | None | Origin header required, validated server-side |
+| Direct API access | None | Requires matching `Origin` or `Referer` header; non-browser clients with neither are rejected |
 | Credential exposure | None | No credentials in code, OIDC used |
 
 ### Security Recommendations

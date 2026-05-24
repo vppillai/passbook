@@ -120,6 +120,12 @@ func convertToHTTPRequest(ctx context.Context, event events.APIGatewayV2HTTPRequ
 		req.Header.Set(k, v)
 	}
 
+	// Authoritatively set the source IP from the APIGW request context AFTER
+	// copying user-supplied headers, so a malicious client cannot forge it.
+	// Handlers read this via handler.SourceIPHeader to scope rate-limiting
+	// per client.
+	req.Header.Set("X-Source-Ip", event.RequestContext.HTTP.SourceIP)
+
 	// Set body
 	if event.Body != "" {
 		req.Body = &bodyReader{data: []byte(event.Body)}
