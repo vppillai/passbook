@@ -218,6 +218,39 @@ Resources:
                   StringEquals:
                     iam:PassedToService: 'lambda.amazonaws.com'
 
+              # SNS permissions - alert topics for CloudWatch alarms created by
+              # the per-instance stacks. Scoped to passbook-alerts-* topics.
+              - Effect: Allow
+                Action:
+                  - sns:CreateTopic
+                  - sns:DeleteTopic
+                  - sns:Subscribe
+                  - sns:Unsubscribe
+                  - sns:SetTopicAttributes
+                  - sns:GetTopicAttributes
+                  - sns:GetSubscriptionAttributes
+                  - sns:ListSubscriptionsByTopic
+                  - sns:TagResource
+                  - sns:UntagResource
+                  - sns:ListTagsForResource
+                Resource:
+                  - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:passbook-*'
+
+              # CloudWatch alarms - per-instance Lambda Errors and API 5xx
+              # alarms created by the per-instance stacks. The Put/Delete/
+              # Describe actions don't support resource-level conditions in
+              # CloudWatch IAM, so the wildcard is mandated by the AWS API.
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:TagResource
+                  - cloudwatch:UntagResource
+                  - cloudwatch:ListTagsForResource
+                Resource:
+                  - '*'
+
               # CloudWatch Logs permissions - scoped to passbook log groups
               - Effect: Allow
                 Action:
