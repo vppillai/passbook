@@ -107,49 +107,81 @@ Resources:
                   - !GetAtt LambdaDeploymentBucket.Arn
                   - !Sub '${LambdaDeploymentBucket.Arn}/*'
 
-              # Lambda permissions
+              # Lambda — read-only describes (no CalledVia condition; CFN
+              # can call these directly too). lambda:InvokeFunction was
+              # removed — the CI role never invokes Lambdas; API Gateway
+              # does, and that goes through the function's resource policy.
+              - Effect: Allow
+                Action:
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:GetFunctionConcurrency
+                  - lambda:ListTags
+                Resource:
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:passbook-*'
+
+              # Lambda — mutations, restricted to CloudFormation. Direct
+              # API calls from a compromised workflow (e.g. swap code
+              # outside CFN) are blocked.
               - Effect: Allow
                 Action:
                   - lambda:CreateFunction
                   - lambda:UpdateFunctionCode
                   - lambda:UpdateFunctionConfiguration
                   - lambda:DeleteFunction
-                  - lambda:GetFunction
-                  - lambda:GetFunctionConfiguration
                   - lambda:AddPermission
                   - lambda:RemovePermission
-                  - lambda:InvokeFunction
-                  - lambda:ListTags
                   - lambda:TagResource
                   - lambda:UntagResource
                   - lambda:PutFunctionConcurrency
                   - lambda:DeleteFunctionConcurrency
-                  - lambda:GetFunctionConcurrency
                 Resource:
                   - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:passbook-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
 
-              # DynamoDB permissions
+              # DynamoDB — read-only describes.
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeTable
+                  - dynamodb:DescribeContinuousBackups
+                  - dynamodb:DescribeTimeToLive
+                  - dynamodb:ListTagsOfResource
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/passbook-*'
+
+              # DynamoDB — mutations, restricted to CloudFormation.
+              # Critically protects against a direct DeleteTable call
+              # bypassing the CFN DeletionPolicy: Retain protection.
               - Effect: Allow
                 Action:
                   - dynamodb:CreateTable
                   - dynamodb:DeleteTable
-                  - dynamodb:DescribeTable
                   - dynamodb:UpdateTable
-                  - dynamodb:DescribeContinuousBackups
                   - dynamodb:UpdateContinuousBackups
-                  - dynamodb:ListTagsOfResource
+                  - dynamodb:UpdateTimeToLive
                   - dynamodb:TagResource
                   - dynamodb:UntagResource
-                  - dynamodb:DescribeTimeToLive
-                  - dynamodb:UpdateTimeToLive
                 Resource:
                   - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/passbook-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
 
-              # API Gateway permissions
+              # API Gateway — read-only.
+              - Effect: Allow
+                Action:
+                  - apigateway:GET
+                Resource:
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis/*'
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis'
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/tags/*'
+
+              # API Gateway — mutations, restricted to CloudFormation.
               - Effect: Allow
                 Action:
                   - apigateway:POST
-                  - apigateway:GET
                   - apigateway:PUT
                   - apigateway:DELETE
                   - apigateway:PATCH
@@ -159,6 +191,9 @@ Resources:
                   - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis/*'
                   - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis'
                   - !Sub 'arn:aws:apigateway:${AWS::Region}::/tags/*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
 
               # IAM read-only / tagging actions on passbook-* roles.
               # No conditions needed: these cannot modify the role's identity
@@ -218,8 +253,17 @@ Resources:
                   StringEquals:
                     iam:PassedToService: 'lambda.amazonaws.com'
 
-              # SNS permissions - alert topics for CloudWatch alarms created by
-              # the per-instance stacks. Scoped to passbook-alerts-* topics.
+              # SNS — read-only describes.
+              - Effect: Allow
+                Action:
+                  - sns:GetTopicAttributes
+                  - sns:GetSubscriptionAttributes
+                  - sns:ListSubscriptionsByTopic
+                  - sns:ListTagsForResource
+                Resource:
+                  - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:passbook-*'
+
+              # SNS — mutations, restricted to CloudFormation.
               - Effect: Allow
                 Action:
                   - sns:CreateTopic
@@ -227,19 +271,17 @@ Resources:
                   - sns:Subscribe
                   - sns:Unsubscribe
                   - sns:SetTopicAttributes
-                  - sns:GetTopicAttributes
-                  - sns:GetSubscriptionAttributes
-                  - sns:ListSubscriptionsByTopic
                   - sns:TagResource
                   - sns:UntagResource
-                  - sns:ListTagsForResource
                 Resource:
                   - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:passbook-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
 
-              # CloudWatch alarms - per-instance Lambda Errors and API 5xx
-              # alarms created by the per-instance stacks. The Put/Delete/
-              # Describe actions don't support resource-level conditions in
-              # CloudWatch IAM, so the wildcard is mandated by the AWS API.
+              # CloudWatch alarms — Put/Delete/Describe don't support
+              # resource-level conditions in CloudWatch IAM, so resource
+              # is wildcard. CalledVia condition adds defense-in-depth.
               - Effect: Allow
                 Action:
                   - cloudwatch:PutMetricAlarm
@@ -250,8 +292,19 @@ Resources:
                   - cloudwatch:ListTagsForResource
                 Resource:
                   - '*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
 
-              # CloudWatch Logs permissions - scoped to passbook log groups
+              # CloudWatch Logs — describe is unconditional (wildcard
+              # resource per AWS API) but only the passbook log-group
+              # mutations are allowed, and they're CFN-only.
+              - Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                Resource:
+                  - '*'
+
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
@@ -262,13 +315,9 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/passbook-*'
                   - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/passbook-*'
-
-              # CloudWatch Logs describe - requires wildcard (list-level API used by CloudFormation GetAtt)
-              - Effect: Allow
-                Action:
-                  - logs:DescribeLogGroups
-                Resource:
-                  - '*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
 
 Outputs:
   LambdaDeploymentBucketName:
