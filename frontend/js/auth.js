@@ -9,11 +9,21 @@ class Auth {
         this.isConfirmMode = false;
         this.isLoading = false;
         this.onAuthSuccess = null;
+        this.bound = false;
     }
 
     init(onAuthSuccess) {
         this.onAuthSuccess = onAuthSuccess;
-        this.bindEvents();
+        // Bind event listeners exactly once. Previously, init() was called
+        // multiple times (once per branch of app.init()'s setup/session/
+        // hasSession path AND again after session-expired re-auth), stacking
+        // duplicate click listeners on the PIN pads. Each keypress then
+        // fired N times → double-submitted PINs and tripped the rate-limit
+        // for legitimate users.
+        if (!this.bound) {
+            this.bindEvents();
+            this.bound = true;
+        }
     }
 
     bindEvents() {
@@ -40,7 +50,15 @@ class Auth {
             : document.getElementById('auth-pin-display');
 
         if (loading) {
-            message.innerHTML = 'Verifying<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>';
+            // Build "Verifying..." via DOM nodes (not innerHTML) so this stays
+            // safe even if a future change pipes localized text through it.
+            message.textContent = 'Verifying';
+            for (let i = 0; i < 3; i++) {
+                const dot = document.createElement('span');
+                dot.className = 'dot';
+                dot.textContent = '.';
+                message.appendChild(dot);
+            }
             pinDisplay.classList.add('loading');
             document.querySelectorAll('.pin-key').forEach(key => key.disabled = true);
         } else {

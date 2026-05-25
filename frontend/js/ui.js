@@ -139,106 +139,198 @@ export function showPinError(containerId) {
 
 export function renderExpenses(expenses, callbacks, nextCursor = null) {
     const container = document.getElementById('expenses-list');
+    container.replaceChildren();
 
     if (!expenses || expenses.length === 0) {
-        container.innerHTML = '<p class="no-expenses">No expenses yet this month</p>';
+        const empty = document.createElement('p');
+        empty.className = 'no-expenses';
+        empty.textContent = 'No expenses yet this month';
+        container.appendChild(empty);
         return;
     }
 
-    container.innerHTML = expenses.map(expense => `
-        <div class="expense-item" data-id="${encodeURIComponent(expense.id)}" data-amount="${expense.amount}" data-desc="${escapeHtml(expense.description)}">
-            <div class="expense-info">
-                <div class="expense-desc">${escapeHtml(expense.description)}</div>
-                <div class="expense-date">${formatDate(expense.created_at)}</div>
-            </div>
-            <div class="expense-amount">-${formatCurrency(expense.amount)}</div>
-            <button class="expense-edit" aria-label="Edit expense">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                </svg>
-            </button>
-            <button class="expense-delete" aria-label="Delete expense">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="3,6 5,6 21,6"></polyline>
-                    <path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6M8,6V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2V6"></path>
-                </svg>
-            </button>
-        </div>
-    `).join('');
+    // Build each expense row via createElement/setAttribute (NOT innerHTML
+    // with templated values). Server data sits in data-* attributes through
+    // setAttribute, so even an adversarial backend that started returning
+    // weird expense IDs cannot break out of the attribute context.
+    for (const expense of expenses) {
+        container.appendChild(buildExpenseRow(expense, callbacks));
+    }
 
-    // Add "Load More" button if there's a next cursor
     if (nextCursor && callbacks.onLoadMore) {
         const loadMoreBtn = document.createElement('button');
         loadMoreBtn.id = 'load-more-expenses';
         loadMoreBtn.className = 'btn btn-secondary btn-full load-more-btn';
         loadMoreBtn.textContent = 'Load More';
-        loadMoreBtn.addEventListener('click', () => {
-            callbacks.onLoadMore(nextCursor);
-        });
+        loadMoreBtn.addEventListener('click', () => callbacks.onLoadMore(nextCursor));
         container.appendChild(loadMoreBtn);
     }
+}
 
-    // Add edit handlers
-    container.querySelectorAll('.expense-edit').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            const item = e.target.closest('.expense-item');
-            const id = decodeURIComponent(item.dataset.id);
-            const amount = parseFloat(item.dataset.amount);
-            const desc = item.dataset.desc;
-            callbacks.onEdit(id, amount, desc);
-        });
+// SVG markup is static and not user-controlled, so building it once via
+// innerHTML inside a fresh element is safe and avoids verbose
+// createElementNS chains.
+function svgIcon(paths) {
+    const wrapper = document.createElement('span');
+    wrapper.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${paths}</svg>`;
+    return wrapper.firstChild;
+}
+
+function buildExpenseRow(expense, callbacks) {
+    const row = document.createElement('div');
+    row.className = 'expense-item';
+    row.setAttribute('data-id', expense.id);          // safe — attribute API, no HTML parsing
+    row.setAttribute('data-amount', String(expense.amount));
+    row.setAttribute('data-desc', expense.description); // safe — attribute API
+
+    const info = document.createElement('div');
+    info.className = 'expense-info';
+    const desc = document.createElement('div');
+    desc.className = 'expense-desc';
+    desc.textContent = expense.description;
+    const date = document.createElement('div');
+    date.className = 'expense-date';
+    date.textContent = formatDate(expense.created_at);
+    info.appendChild(desc);
+    info.appendChild(date);
+
+    const amt = document.createElement('div');
+    amt.className = 'expense-amount';
+    amt.textContent = `-${formatCurrency(expense.amount)}`;
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'expense-edit';
+    editBtn.setAttribute('aria-label', 'Edit expense');
+    editBtn.appendChild(svgIcon(
+        '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>' +
+        '<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>'
+    ));
+    editBtn.addEventListener('click', () => {
+        callbacks.onEdit(expense.id, parseFloat(expense.amount), expense.description);
     });
 
-    // Add delete handlers
-    container.querySelectorAll('.expense-delete').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            const item = e.target.closest('.expense-item');
-            const id = decodeURIComponent(item.dataset.id);
-            if (confirm('Delete this expense?')) {
-                callbacks.onDelete(id);
-            }
-        });
+    const delBtn = document.createElement('button');
+    delBtn.className = 'expense-delete';
+    delBtn.setAttribute('aria-label', 'Delete expense');
+    delBtn.appendChild(svgIcon(
+        '<polyline points="3,6 5,6 21,6"></polyline>' +
+        '<path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6M8,6V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2V6"></path>'
+    ));
+    let deleting = false;
+    delBtn.addEventListener('click', async () => {
+        // In-flight guard. Without this, a double-tap fires the confirm
+        // modal twice and emits two DELETE calls; the second 404's after
+        // the first succeeds, surfacing as a confusing toast.
+        if (deleting) return;
+        deleting = true;
+        try {
+            const ok = await showConfirm({
+                title: 'Delete this expense?',
+                body: `${expense.description} — ${formatCurrency(expense.amount)} will be refunded to your balance.`,
+                confirmText: 'Delete',
+                danger: true,
+            });
+            if (ok) callbacks.onDelete(expense.id);
+        } finally {
+            deleting = false;
+        }
+    });
+
+    row.appendChild(info);
+    row.appendChild(amt);
+    row.appendChild(editBtn);
+    row.appendChild(delBtn);
+    return row;
+}
+
+// showConfirm replaces the native confirm() dialog with the app's modal
+// system. Returns a Promise<boolean> that resolves to true on confirm,
+// false on cancel/Escape/backdrop. Used for any destructive action where
+// the native dialog's styling clashes with the PWA look (jarring on iOS
+// standalone). No undo is wired up here — the user got a styled,
+// localized prompt instead of the OS chrome.
+export function showConfirm({ title, body, confirmText = 'Confirm', cancelText = 'Cancel', danger = false } = {}) {
+    return new Promise((resolve) => {
+        const modal = document.getElementById('confirm-modal');
+        document.getElementById('confirm-modal-title').textContent = title || 'Are you sure?';
+        document.getElementById('confirm-modal-body').textContent = body || '';
+        const confirmBtn = document.getElementById('confirm-modal-confirm');
+        const cancelBtn = document.getElementById('confirm-modal-cancel');
+        confirmBtn.textContent = confirmText;
+        cancelBtn.textContent = cancelText;
+        confirmBtn.classList.toggle('btn-danger', !!danger);
+
+        // Reset listeners each call by replacing the buttons with clones —
+        // simple way to avoid stacking handlers across consecutive confirms.
+        const newConfirm = confirmBtn.cloneNode(true);
+        const newCancel = cancelBtn.cloneNode(true);
+        confirmBtn.parentNode.replaceChild(newConfirm, confirmBtn);
+        cancelBtn.parentNode.replaceChild(newCancel, cancelBtn);
+
+        function close(result) {
+            hideModal('confirm-modal');
+            resolve(result);
+        }
+        newConfirm.addEventListener('click', () => close(true));
+        newCancel.addEventListener('click', () => close(false));
+        modal.querySelector('.modal-backdrop').addEventListener(
+            'click', () => close(false), { once: true });
+
+        showModal('confirm-modal');
+        newConfirm.focus();
     });
 }
 
 export function renderMonthsList(months, currentMonth, onSelect, nextCursor = null, onLoadMore = null) {
     const container = document.getElementById('months-list');
+    container.replaceChildren();
 
     if (!months || months.length === 0) {
-        container.innerHTML = '<li class="month-item"><span>No history yet</span></li>';
+        const li = document.createElement('li');
+        li.className = 'month-item';
+        const span = document.createElement('span');
+        span.textContent = 'No history yet';
+        li.appendChild(span);
+        container.appendChild(li);
         return;
     }
 
-    container.innerHTML = months.map(month => `
-        <li class="month-item ${month.month === currentMonth ? 'active' : ''}" data-month="${month.month}" data-saved="${month.monthly_saved}">
-            <span class="month-name">${formatMonthName(month.month)}</span>
-            <span class="month-balance">${formatCurrency(month.monthly_saved)}</span>
-        </li>
-    `).join('');
-
-    // Apply negative-balance styling to month history entries
-    container.querySelectorAll('.month-item').forEach(item => {
-        const saved = parseFloat(item.dataset.saved);
-        item.querySelector('.month-balance').classList.toggle('balance-negative', saved < 0);
-    });
+    for (const month of months) {
+        container.appendChild(buildMonthRow(month, currentMonth, onSelect));
+    }
 
     if (nextCursor && onLoadMore) {
         const loadMoreItem = document.createElement('li');
         loadMoreItem.id = 'load-more-months';
         loadMoreItem.className = 'month-item load-more-item';
-        loadMoreItem.innerHTML = '<span>Load More...</span>';
-        loadMoreItem.addEventListener('click', () => {
-            onLoadMore(nextCursor);
-        });
+        const span = document.createElement('span');
+        span.textContent = 'Load More...';
+        loadMoreItem.appendChild(span);
+        loadMoreItem.addEventListener('click', () => onLoadMore(nextCursor));
         container.appendChild(loadMoreItem);
     }
+}
 
-    container.querySelectorAll('.month-item:not(.load-more-item)').forEach(item => {
-        item.addEventListener('click', () => {
-            onSelect(item.dataset.month);
-        });
-    });
+export function buildMonthRow(month, currentMonth, onSelect) {
+    const li = document.createElement('li');
+    li.className = 'month-item' + (month.month === currentMonth ? ' active' : '');
+    li.setAttribute('data-month', month.month);
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'month-name';
+    nameEl.textContent = formatMonthName(month.month);
+
+    const saved = parseFloat(month.monthly_saved);
+    const balanceEl = document.createElement('span');
+    balanceEl.className = 'month-balance' + (saved < 0 ? ' balance-negative' : '');
+    balanceEl.textContent = formatCurrency(month.monthly_saved);
+
+    li.appendChild(nameEl);
+    li.appendChild(balanceEl);
+    if (typeof onSelect === 'function') {
+        li.addEventListener('click', () => onSelect(month.month));
+    }
+    return li;
 }
 
 export function populateEditExpenseModal(amount, description) {

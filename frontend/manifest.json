@@ -2,7 +2,7 @@
   "name": "My Passbook",
   "short_name": "Passbook",
   "description": "Track allowance and expenses",
-  "start_url": "/passbook/",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#f5f7fa",
   "theme_color": "#4A90A4",

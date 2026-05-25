@@ -228,8 +228,29 @@ class App {
         document.getElementById('new-month-input').addEventListener('input', () => ui.hideError('create-month-error'));
         document.getElementById('funds-amount').addEventListener('input', () => ui.hideError('add-funds-error'));
 
-        // Session expired
+        // Escape key closes the topmost visible modal. Without this,
+        // keyboard users had no way to dismiss a modal without finding
+        // the Cancel button.
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            const visibleModal = Array.from(document.querySelectorAll('.modal'))
+                .reverse()
+                .find(m => !m.classList.contains('hidden'));
+            if (visibleModal) {
+                ui.hideModal(visibleModal.id);
+                if (visibleModal.id === 'edit-expense-modal') this.editingExpenseId = null;
+            }
+        });
+
+        // Session expired: close every modal, re-enable any disabled submit
+        // buttons (so the user doesn't return to an action-frozen UI after
+        // re-auth), then bounce to the PIN screen.
         window.addEventListener('session-expired', () => {
+            document.querySelectorAll('.modal:not(.hidden)').forEach(m => ui.hideModal(m.id));
+            document.querySelectorAll('button[type="submit"]').forEach(btn => {
+                btn.disabled = false;
+            });
+            this.editingExpenseId = null;
             ui.showToast('Session expired. Please log in again.', 'error');
             ui.showScreen('auth-screen');
         });
@@ -296,15 +317,9 @@ class App {
             if (loadMoreItem) loadMoreItem.remove();
 
             for (const month of data.months) {
-                const li = document.createElement('li');
-                li.className = `month-item ${month.month === this.currentMonth ? 'active' : ''}`;
-                li.dataset.month = month.month;
-                li.innerHTML = `
-                    <span class="month-name">${ui.formatMonthName(month.month)}</span>
-                    <span class="month-balance">${ui.formatCurrency(month.monthly_saved)}</span>
-                `;
-                li.addEventListener('click', () => this.selectMonth(month.month));
-                container.appendChild(li);
+                container.appendChild(
+                    ui.buildMonthRow(month, this.currentMonth, (m) => this.selectMonth(m))
+                );
             }
 
             if (data.next_cursor) {

@@ -3,7 +3,9 @@
  *
  * Provides methods for all backend HTTP interactions including authentication,
  * expense management, month management, and balance queries. Uses session-token-based
- * authentication stored in sessionStorage.
+ * authentication stored in sessionStorage, namespaced per instance so that
+ * the kids and eatout deployments on the same vppillai.github.io origin
+ * don't share or clobber each other's tokens.
  *
  * @module api
  */
@@ -11,10 +13,30 @@
 // API_BASE will be injected during build, defaulting to empty for local testing
 const API_BASE = window.PASSBOOK_API_URL || '';
 
+// Per-instance storage key. The app is served from /passbook/<instance>/ on
+// GitHub Pages — splitting the pathname gives us the instance name without
+// needing another build-time injected global.
+function detectInstance() {
+    // /passbook/kids/  → ['', 'passbook', 'kids', '']
+    const parts = window.location.pathname.split('/').filter(Boolean);
+    if (parts.length >= 2 && parts[0] === 'passbook') return parts[1];
+    return parts[parts.length - 1] || 'default';
+}
+const INSTANCE = detectInstance();
+const SESSION_KEY = `passbook_session_${INSTANCE}`;
+
+// Network request timeout. Without this, a flaky mobile connection makes
+// the spinner / disabled submit-button persist until the OS TCP timeout
+// (~2 min). 15s is long enough for a slow API GW cold start, short enough
+// to fail visibly rather than hang.
+const REQUEST_TIMEOUT_MS = 15000;
+
 class Api {
     constructor() {
-        /** @type {string|null} Session token for authenticated requests, persisted in sessionStorage */
-        this.sessionToken = localStorage.getItem('session') || null;
+        /** @type {string|null} Session token for authenticated requests.
+         *  Stored in sessionStorage (not localStorage) so it dies on tab
+         *  close, matching the explicit "Lock" UX. */
+        this.sessionToken = sessionStorage.getItem(SESSION_KEY) || null;
     }
 
     /**
@@ -28,7 +50,7 @@ class Api {
      * @param {string} endpoint - API endpoint path (e.g. '/api/balance')
      * @param {Object|null} [body=null] - Request body to be JSON-serialized, or null for no body
      * @returns {Promise<Object>} Parsed JSON response from the server
-     * @throws {Error} If the response is not OK or the session has expired
+     * @throws {Error} If the response is not OK, the session has expired, or the request timed out
      */
     async request(method, endpoint, body = null) {
         const headers = {
@@ -43,13 +65,23 @@ class Api {
             method,
             headers,
             credentials: 'omit', // Don't send cookies
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         };
 
         if (body) {
             options.body = JSON.stringify(body);
         }
 
-        const response = await fetch(`${API_BASE}${endpoint}`, options);
+        let response;
+        try {
+            response = await fetch(`${API_BASE}${endpoint}`, options);
+        } catch (err) {
+            // AbortSignal.timeout throws a TimeoutError on expiry.
+            if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+                throw new Error('Request timed out. Check your connection and try again.');
+            }
+            throw err;
+        }
 
         // Handle unauthorized
         if (response.status === 401) {
@@ -68,20 +100,21 @@ class Api {
     }
 
     /**
-     * Stores the session token in memory and sessionStorage for persistence across page reloads.
+     * Stores the session token in memory and per-instance sessionStorage.
      * @param {string} token - The session token returned from a successful PIN verification
      */
     setSession(token) {
         this.sessionToken = token;
-        localStorage.setItem('session', token);
+        sessionStorage.setItem(SESSION_KEY, token);
     }
 
     /**
-     * Removes the session token from memory and sessionStorage, effectively logging out.
+     * Removes the session token from memory and per-instance sessionStorage,
+     * effectively logging out.
      */
     clearSession() {
         this.sessionToken = null;
-        localStorage.removeItem('session');
+        sessionStorage.removeItem(SESSION_KEY);
     }
 
     /**
@@ -200,14 +233,19 @@ class Api {
     }
 
     /**
-     * Adds a new expense to the current month. If no month exists for the current
-     * calendar month, the backend will automatically create one.
+     * Adds a new expense. The client computes the user's LOCAL current month
+     * (e.g. "2026-02") and sends it explicitly — without this, the backend
+     * falls back to its UTC clock, so an expense added at 11pm Jan 31 PST
+     * (= 07:00 Feb 1 UTC) would silently land in the February bucket.
+     *
      * @param {number} amount - Expense amount in dollars (must be positive)
      * @param {string} description - Human-readable description of the expense
      * @returns {Promise<Object>} The created expense record
      */
     async addExpense(amount, description) {
-        return this.request('POST', '/api/expense', { amount, description });
+        const now = new Date();
+        const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        return this.request('POST', '/api/expense', { amount, description, month });
     }
 
     /**
