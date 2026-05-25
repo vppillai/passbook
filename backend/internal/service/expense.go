@@ -36,13 +36,13 @@ var (
 )
 
 type ExpenseService struct {
-	repo              *repository.Repository
+	repo              repository.RepositoryInterface
 	monthlyAllowance  float64
 	allowOverspending bool
 	carryOverBalance  bool
 }
 
-func NewExpenseService(repo *repository.Repository, monthlyAllowance float64, allowOverspending bool, carryOverBalance bool) *ExpenseService {
+func NewExpenseService(repo repository.RepositoryInterface, monthlyAllowance float64, allowOverspending bool, carryOverBalance bool) *ExpenseService {
 	return &ExpenseService{
 		repo:              repo,
 		monthlyAllowance:  monthlyAllowance,

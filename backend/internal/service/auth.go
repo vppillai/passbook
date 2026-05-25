@@ -45,10 +45,10 @@ var (
 )
 
 type AuthService struct {
-	repo *repository.Repository
+	repo repository.RepositoryInterface
 }
 
-func NewAuthService(repo *repository.Repository) *AuthService {
+func NewAuthService(repo repository.RepositoryInterface) *AuthService {
 	return &AuthService{repo: repo}
 }
 
