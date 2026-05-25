@@ -45,6 +45,17 @@ Parameters:
     AllowedValues: ["true", "false"]
     Description: When "true", new months inherit previous month's ending balance as starting balance
 
+  AlertEmail:
+    Type: String
+    Default: ""
+    Description: |
+      Optional email address that receives CloudWatch alarm notifications
+      (Lambda errors, API 5xx). Empty disables the SNS subscription
+      but the topic is still created so alarms can route somewhere.
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+
 Resources:
   #===========================================
   # DynamoDB Table
@@ -208,6 +219,73 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
+
+  #===========================================
+  # Observability — alarms + SNS topic
+  #
+  # Without these, the Lambda can 500 for days and no one notices.
+  # The 10 free CloudWatch alarms per account cover both alarms here.
+  # If AlertEmail is supplied, an SNS subscription is created and the
+  # user must click the confirmation link in the inbox once.
+  #===========================================
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'passbook-alerts-${InstanceName}-${Environment}'
+      DisplayName: !Sub 'Passbook ${InstanceName} alerts'
+      Tags:
+        - Key: Application
+          Value: Passbook
+
+  AlertEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  LambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'passbook-lambda-errors-${InstanceName}-${Environment}'
+      AlarmDescription: !Sub 'Lambda Errors > 0 in 5 min for ${InstanceName}'
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref PassbookFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertTopic
+      OKActions:
+        - !Ref AlertTopic
+
+  ApiGateway5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'passbook-api-5xx-${InstanceName}-${Environment}'
+      AlarmDescription: !Sub 'API Gateway 5XX > 0 in 5 min for ${InstanceName}'
+      Namespace: AWS/ApiGateway
+      MetricName: 5xx
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref HttpApi
+        - Name: Stage
+          Value: '$default'
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertTopic
 
 Outputs:
   ApiEndpoint:
