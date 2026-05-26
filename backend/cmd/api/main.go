@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -141,7 +142,12 @@ type bodyReader struct {
 
 func (b *bodyReader) Read(p []byte) (n int, err error) {
 	if b.pos >= len(b.data) {
-		return 0, nil
+		// Must return io.EOF at end-of-data (per io.Reader contract).
+		// Returning (0, nil) was tolerated by json.Decoder.Decode but
+		// causes json.Decoder.More() — added in PR-6's decodeStrict
+		// helper — to loop forever in refill(), hanging the Lambda
+		// until the 10s timeout.
+		return 0, io.EOF
 	}
 	n = copy(p, b.data[b.pos:])
 	b.pos += n

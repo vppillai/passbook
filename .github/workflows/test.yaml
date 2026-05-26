@@ -22,6 +22,14 @@ jobs:
 
       - name: Run tests
         working-directory: backend
+        # Required env vars: cmd/api's init() reads these and log.Fatal's
+        # if unset. Tests link package main so init runs regardless of
+        # which test file is being executed. Values are arbitrary — no
+        # AWS calls are actually made by these tests.
+        env:
+          TABLE_NAME: test-table
+          ALLOWED_ORIGIN: https://example.com
+          AWS_REGION: us-west-2
         run: |
           go test -v -race -coverprofile=coverage.out ./...
           go tool cover -func=coverage.out
