@@ -56,9 +56,16 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          if [ -f frontend/VERSION ]; then
+          # Prefer the latest git tag reachable from this commit. This way
+          # `git tag vX.Y.Z && git push --tags` is enough to update the
+          # footer — no separate VERSION-file bump required. The file
+          # only gets used as a fallback when there's no tag yet (e.g.
+          # very early in a repo's history).
+          VERSION=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          if [ -z "$VERSION" ] && [ -f frontend/VERSION ]; then
             VERSION=$(cat frontend/VERSION | tr -d '[:space:]')
-          else
+          fi
+          if [ -z "$VERSION" ]; then
             VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
