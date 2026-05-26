@@ -33,6 +33,11 @@ var (
 	ErrMonthNotFound      = errors.New("month not found")
 	ErrInvalidMonth       = errors.New("invalid month format")
 	ErrFundsNotPositive   = errors.New("funds amount must be positive")
+	// ErrInvalidCursor is returned when a paginated endpoint receives an
+	// opaque cursor that decodes but doesn't refer to a valid resume
+	// point (e.g. cursorMonth not found in the current month list).
+	// Handler maps to 400. Replaces the previous strings.Contains check.
+	ErrInvalidCursor = errors.New("invalid pagination cursor")
 )
 
 type ExpenseService struct {
@@ -132,7 +137,7 @@ func (s *ExpenseService) GetMonthData(ctx context.Context, month string, limit i
 	if cursorStr != "" {
 		cursor, err = decodeCursor(cursorStr)
 		if err != nil {
-			return nil, fmt.Errorf("invalid cursor: %w", err)
+			return nil, fmt.Errorf("%w: %v", ErrInvalidCursor, err)
 		}
 	}
 
@@ -439,14 +444,23 @@ func (s *ExpenseService) ListMonths(ctx context.Context, limit int, cursorMonth 
 		return allMonths[i].Month > allMonths[j].Month
 	})
 
-	// Apply cursor: skip months until we pass the cursor
+	// Apply cursor: skip months until we pass the cursor.
+	// If the cursorMonth doesn't appear in the list (deleted month,
+	// fabricated cursor, stale copy from a long-ago response), return
+	// ErrInvalidCursor instead of silently returning page 1 — that
+	// behavior caused infinite-loop pagination bugs in the past.
 	startIdx := 0
 	if cursorMonth != "" {
+		found := false
 		for i, m := range allMonths {
 			if m.Month == cursorMonth {
 				startIdx = i + 1
+				found = true
 				break
 			}
+		}
+		if !found {
+			return nil, ErrInvalidCursor
 		}
 	}
 

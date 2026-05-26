@@ -68,6 +68,10 @@ func (rt *Router) handleListMonths(w http.ResponseWriter, r *http.Request) {
 
 	response, err := rt.expenseService.ListMonths(r.Context(), limit, cursorMonth)
 	if err != nil {
+		if errors.Is(err, service.ErrInvalidCursor) {
+			http.Error(w, `{"error":"Invalid pagination cursor"}`, http.StatusBadRequest)
+			return
+		}
 		log.Printf("months.list: %v", err)
 		http.Error(w, `{"error":"Failed to list months"}`, http.StatusInternalServerError)
 		return
@@ -95,7 +99,7 @@ func (rt *Router) handleGetMonth(w http.ResponseWriter, r *http.Request) {
 
 	response, err := rt.expenseService.GetMonthData(r.Context(), month, limit, cursor)
 	if err != nil {
-		if strings.Contains(err.Error(), "invalid cursor") {
+		if errors.Is(err, service.ErrInvalidCursor) {
 			http.Error(w, `{"error":"Invalid pagination cursor"}`, http.StatusBadRequest)
 			return
 		}

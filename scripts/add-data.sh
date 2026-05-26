@@ -269,7 +269,12 @@ add_funds() {
 
     if [ -z "$current" ] || [ "$current" = "{}" ]; then
         echo "Month $month not found. Creating it with funds=$amount"
-        add_month "$month" "0" "$amount" "0"
+        # add_month signature is (month, allowance, expenses) — 3 args.
+        # The previous call passed 4 args with allowance=0 and treated
+        # $amount as expenses, producing a month with allowance=0 and
+        # ending_balance = -$amount. Correct intent: this is a top-up,
+        # so the requested amount IS the allowance.
+        add_month "$month" "$amount" "0"
         return
     fi
 
