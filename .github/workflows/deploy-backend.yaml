@@ -28,6 +28,14 @@ jobs:
           cache: false
       - name: Test
         working-directory: backend
+        # Required env vars: cmd/api's init() reads these and log.Fatal's
+        # if unset. Linked into every test binary regardless of which
+        # file under cmd/api is being tested. Values are arbitrary — no
+        # AWS calls are made by the tests themselves.
+        env:
+          TABLE_NAME: test-table
+          ALLOWED_ORIGIN: https://example.com
+          AWS_REGION: us-west-2
         run: |
           go mod tidy
           go test -v -race ./...
