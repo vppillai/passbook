@@ -213,8 +213,19 @@ func (s *AuthService) VerifyPIN(ctx context.Context, pin string, sourceIP string
 // verifyPINHash directly (not VerifyPIN) so wrong-current-PIN attempts do
 // NOT increment the login rate-limit counter (which would lock the
 // account from its own owner) and do NOT mint stray session tokens.
-// On success, all existing sessions are revoked so that a stolen token
-// cannot survive a PIN rotation.
+//
+// Order of operations is deliberately revoke-then-update:
+//  1. Revoke every session. If this fails, we abort — the user will
+//     see an error and can retry. The PIN is unchanged.
+//  2. Update the PIN hash. If this fails, sessions are already gone
+//     and the user has to re-authenticate with the OLD PIN. That's
+//     recoverable.
+//
+// The OLD ordering (update PIN first, then revoke) silently logged
+// session-revoke failures and returned success. A stolen token could
+// then survive the PIN rotation while the API reported the change
+// completed — a defense-in-depth failure for the only mechanism the
+// user has to invalidate compromised sessions.
 func (s *AuthService) ChangePIN(ctx context.Context, currentPIN, newPIN string) error {
 	if err := validatePIN(newPIN); err != nil {
 		return err
@@ -240,13 +251,18 @@ func (s *AuthService) ChangePIN(ctx context.Context, currentPIN, newPIN string) 
 	if err != nil {
 		return fmt.Errorf("failed to hash PIN: %w", err)
 	}
+
+	// Step 1: revoke every session. Hard failure aborts the change.
+	if err := s.repo.DeleteAllSessions(ctx); err != nil {
+		return fmt.Errorf("failed to revoke sessions: %w", err)
+	}
+
+	// Step 2: update the PIN hash. If this fails after the revoke,
+	// the user has to re-authenticate with the old PIN — annoying but
+	// not a security problem.
 	config.PinHash = hash
 	if err := s.repo.SaveConfig(ctx, config); err != nil {
 		return err
-	}
-
-	if err := s.repo.DeleteAllSessions(ctx); err != nil {
-		log.Printf("warn: DeleteAllSessions on ChangePIN failed: %v", err)
 	}
 	return nil
 }

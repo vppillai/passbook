@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -17,18 +19,27 @@ import (
 	"github.com/vppillai/passbook/backend/internal/service"
 )
 
-var router *handler.Router
+var (
+	router     *handler.Router
+	setupOnce  sync.Once
+	setupErr   error
+)
 
-func init() {
-	// Load configuration
+// setupRouter constructs the router on first call. Previously this lived
+// in init(), which called log.Fatal on missing env vars or AWS config
+// failure — that's a process-killing crash on cold start AND makes the
+// package impossible to import in tests without setting every env var.
+// Now: lazy + returns errors; handleRequest converts an init failure
+// into a 500 response instead of crashing the function.
+func setupRouter() error {
 	tableName := os.Getenv("TABLE_NAME")
 	if tableName == "" {
-		log.Fatal("TABLE_NAME environment variable is required")
+		return errors.New("TABLE_NAME environment variable is required")
 	}
 
 	allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
 	if allowedOrigin == "" {
-		log.Fatal("ALLOWED_ORIGIN environment variable is required")
+		return errors.New("ALLOWED_ORIGIN environment variable is required")
 	}
 
 	monthlyAllowance := 100.0
@@ -48,27 +59,31 @@ func init() {
 		carryOverBalance = false
 	}
 
-	// Initialize AWS SDK
 	cfg, err := config.LoadDefaultConfig(context.Background())
 	if err != nil {
-		log.Fatalf("Failed to load AWS config: %v", err)
+		return fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
-	// Create DynamoDB client
 	dynamoClient := dynamodb.NewFromConfig(cfg)
-
-	// Create repository
 	repo := repository.NewRepository(dynamoClient, tableName)
-
-	// Create services
 	authService := service.NewAuthService(repo)
 	expenseService := service.NewExpenseService(repo, monthlyAllowance, allowOverspending, carryOverBalance)
-
-	// Create router
 	router = handler.NewRouter(authService, expenseService, allowedOrigin)
+	return nil
 }
 
 func handleRequest(ctx context.Context, event events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+	// Lazy init on first invocation. Errors become 500 instead of a
+	// process-killing log.Fatal — Lambda will then retry the cold start.
+	setupOnce.Do(func() { setupErr = setupRouter() })
+	if setupErr != nil {
+		return events.APIGatewayV2HTTPResponse{
+			StatusCode: http.StatusInternalServerError,
+			Body:       `{"error":"Service initialization failed"}`,
+			Headers:    map[string]string{"Content-Type": "application/json"},
+		}, nil
+	}
+
 	// Reject oversized request bodies (32 KB limit)
 	if len(event.Body) > 32*1024 {
 		return events.APIGatewayV2HTTPResponse{
@@ -127,10 +142,10 @@ func convertToHTTPRequest(ctx context.Context, event events.APIGatewayV2HTTPRequ
 	// per client.
 	req.Header.Set("X-Source-Ip", event.RequestContext.HTTP.SourceIP)
 
-	// Set body
-	if event.Body != "" {
-		req.Body = &bodyReader{data: []byte(event.Body)}
-	}
+	// Always set a non-nil body. decodeStrict and any future handler
+	// using json.NewDecoder(r.Body) would crash on a nil body —
+	// guard at the boundary instead of in every handler.
+	req.Body = &bodyReader{data: []byte(event.Body)}
 
 	return req, nil
 }

@@ -119,7 +119,14 @@ func (rt *Router) handleChangePIN(w http.ResponseWriter, r *http.Request) {
 func (rt *Router) handleLogout(w http.ResponseWriter, r *http.Request) {
 	token := middleware.GetSessionToken(r.Context())
 	if token != "" {
-		rt.authService.Logout(r.Context(), token)
+		if err := rt.authService.Logout(r.Context(), token); err != nil {
+			// Don't claim logout succeeded if the DDB delete failed —
+			// the token may still be valid server-side and a client
+			// that trusts our success would stop trying to revoke.
+			log.Printf("auth.logout: %v", err)
+			http.Error(w, `{"error":"Failed to revoke session"}`, http.StatusInternalServerError)
+			return
+		}
 	}
 	json.NewEncoder(w).Encode(model.SuccessResponse{Success: true})
 }

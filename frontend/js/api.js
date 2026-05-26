@@ -90,10 +90,25 @@ class Api {
             throw new Error('Session expired');
         }
 
-        const data = await response.json();
+        // Parse defensively. The previous unconditional `response.json()`
+        // would throw an opaque SyntaxError if the backend ever returned
+        // 204 No Content, an HTML error page from an upstream proxy
+        // (CloudFront, WAF challenge), or any non-JSON body. That masked
+        // the real HTTP status from the caller. Now: 204 → null,
+        // empty body → null, non-JSON → null, JSON → parsed object.
+        let data = null;
+        if (response.status !== 204) {
+            const text = await response.text();
+            if (text) {
+                try { data = JSON.parse(text); }
+                catch { /* leave data as null; the !response.ok branch
+                           below surfaces the HTTP status to the user */ }
+            }
+        }
 
         if (!response.ok) {
-            throw new Error(data.error || 'Request failed');
+            const msg = (data && data.error) || `Request failed (HTTP ${response.status})`;
+            throw new Error(msg);
         }
 
         return data;
