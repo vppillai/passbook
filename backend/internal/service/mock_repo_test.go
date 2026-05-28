@@ -343,16 +343,6 @@ func (m *mockRepo) IncrementFailedAttempts(_ context.Context, sourceIP string) (
 	return &out, nil
 }
 
-func (m *mockRepo) SetLockout(_ context.Context, sourceIP string, _ int) error {
-	r, ok := m.rateLimits[sourceIP]
-	if !ok {
-		r = &model.RateLimitEntry{}
-		m.rateLimits[sourceIP] = r
-	}
-	r.LockedAt = 4000000000 // Far future
-	return nil
-}
-
 func (m *mockRepo) ClearRateLimit(_ context.Context, sourceIP string) error {
 	delete(m.rateLimits, sourceIP)
 	return nil

@@ -228,10 +228,10 @@ class Auth {
                 ui.showPinError('auth-pin-display');
                 this.pin = '';
 
-                if (result.locked_until) {
-                    const lockTime = new Date(result.locked_until * 1000);
-                    ui.showError('auth-error', `Account locked until ${lockTime.toLocaleTimeString()}`);
-                } else if (result.attempts_remaining !== undefined) {
+                // attempts_remaining is omitted (omitempty) once it hits 0,
+                // so the cap message falls through to result.error
+                // ("Too many attempts. Please wait.").
+                if (result.attempts_remaining !== undefined) {
                     ui.showError('auth-error', `Invalid PIN. ${result.attempts_remaining} attempts remaining.`);
                 } else {
                     ui.showError('auth-error', result.error || 'Invalid PIN');

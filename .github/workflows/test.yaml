@@ -18,18 +18,17 @@ jobs:
 
       - name: Download dependencies
         working-directory: backend
-        run: go mod tidy
+        # go.sum is committed, so this builds in the default -mod=readonly
+        # mode and verifies module checksums. `go mod tidy` belongs on a
+        # dev machine, not in CI (it can silently rewrite go.mod/go.sum).
+        run: go mod download
 
       - name: Run tests
         working-directory: backend
-        # Required env vars: cmd/api's init() reads these and log.Fatal's
-        # if unset. Tests link package main so init runs regardless of
-        # which test file is being executed. Values are arbitrary — no
-        # AWS calls are actually made by these tests.
-        env:
-          TABLE_NAME: test-table
-          ALLOWED_ORIGIN: https://example.com
-          AWS_REGION: us-west-2
+        # No env vars or AWS access needed: service tests run against an
+        # in-memory fake repo and cmd/api tests only exercise bodyReader.
+        # Router setup is lazy (setupRouter), so nothing reads TABLE_NAME /
+        # ALLOWED_ORIGIN at test time.
         run: |
           go test -v -race -coverprofile=coverage.out ./...
           go tool cover -func=coverage.out

@@ -689,42 +689,6 @@ func (r *Repository) IncrementFailedAttempts(ctx context.Context, sourceIP strin
 	return &entry, nil
 }
 
-// SetLockout writes a hard lockout. The conditional update prevents an
-// in-flight IncrementFailedAttempts from clobbering the longer lockout TTL
-// with its shorter 15-minute window.
-func (r *Repository) SetLockout(ctx context.Context, sourceIP string, lockoutMinutes int) error {
-	now := time.Now()
-	lockoutUntil := now.Add(time.Duration(lockoutMinutes) * time.Minute)
-
-	_, err := r.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName: aws.String(r.tableName),
-		Key: map[string]types.AttributeValue{
-			"PK": &types.AttributeValueMemberS{Value: rateLimitPK(sourceIP)},
-			"SK": &types.AttributeValueMemberS{Value: SKRateLimit},
-		},
-		UpdateExpression: aws.String("SET locked_at = :locked, #ttl = :ttl, updated_at = :now"),
-		ConditionExpression: aws.String("attribute_not_exists(locked_at) OR locked_at < :now"),
-		ExpressionAttributeNames: map[string]string{
-			"#ttl": "ttl",
-		},
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":locked": &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", lockoutUntil.Unix())},
-			":ttl":    &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", lockoutUntil.Unix())},
-			":now":    &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", now.Unix())},
-		},
-	})
-	if err != nil {
-		// A pre-existing active lockout is fine — the caller's intent is
-		// satisfied either way.
-		var condErr *types.ConditionalCheckFailedException
-		if errors.As(err, &condErr) {
-			return nil
-		}
-		return fmt.Errorf("failed to set lockout: %w", err)
-	}
-	return nil
-}
-
 func (r *Repository) ClearRateLimit(ctx context.Context, sourceIP string) error {
 	_, err := r.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
 		TableName: aws.String(r.tableName),

@@ -26,10 +26,10 @@ const (
 	argonKeyLen  = 32
 	saltLen      = 16
 
-	// Rate limiting
+	// Rate limiting: 5 failed attempts per sliding 15-minute window
+	// (the RATELIMIT row's TTL), scoped per source IP. Once the cap is
+	// hit, further attempts are refused until the window's TTL expires.
 	maxAttempts     = 5
-	lockoutAttempts = 10
-	lockoutMinutes  = 30
 	sessionTTLHours = 24
 )
 
@@ -98,39 +98,16 @@ func (s *AuthService) VerifyPIN(ctx context.Context, pin string, sourceIP string
 		return nil, err
 	}
 
-	now := time.Now()
-	if rateLimit != nil {
-		// Hard lockout — refuse without burning Argon2 cycles.
-		if rateLimit.LockedAt > 0 && rateLimit.LockedAt > now.Unix() {
-			return &model.VerifyPinResponse{
-				Success:     false,
-				Error:       "Account locked. Please try again later.",
-				LockedUntil: rateLimit.LockedAt,
-			}, nil
-		}
-
-		// Soft cap reached — return immediately. The original code computed
-		// `remaining` here but fell through to verifyPIN(), giving 10 attempts
-		// instead of the documented 5. Promote the lockout if already at the
-		// hard threshold; otherwise just refuse this attempt without
-		// incurring Argon2 cost or letting the counter slide.
-		if rateLimit.Attempts >= maxAttempts {
-			if rateLimit.Attempts >= lockoutAttempts {
-				if err := s.repo.SetLockout(ctx, sourceIP, lockoutMinutes); err != nil {
-					return nil, err
-				}
-				return &model.VerifyPinResponse{
-					Success:     false,
-					Error:       "Too many failed attempts. Account locked.",
-					LockedUntil: now.Add(lockoutMinutes * time.Minute).Unix(),
-				}, nil
-			}
-			return &model.VerifyPinResponse{
-				Success:           false,
-				Error:             "Too many attempts. Please wait.",
-				AttemptsRemaining: 0,
-			}, nil
-		}
+	if rateLimit != nil && rateLimit.Attempts >= maxAttempts {
+		// Cap reached for this 15-minute window. Refuse immediately —
+		// without burning Argon2 cycles or sliding the counter. The
+		// RATELIMIT row's TTL lifts the block automatically once the
+		// window elapses.
+		return &model.VerifyPinResponse{
+			Success:           false,
+			Error:             "Too many attempts. Please wait.",
+			AttemptsRemaining: 0,
+		}, nil
 	}
 
 	// Validate PIN format before incurring Argon2 cost. Still increments
@@ -176,16 +153,6 @@ func (s *AuthService) VerifyPIN(ctx context.Context, pin string, sourceIP string
 		remaining := maxAttempts - entry.Attempts
 		if remaining < 0 {
 			remaining = 0
-		}
-		if entry.Attempts >= lockoutAttempts {
-			if err := s.repo.SetLockout(ctx, sourceIP, lockoutMinutes); err != nil {
-				return nil, err
-			}
-			return &model.VerifyPinResponse{
-				Success:     false,
-				Error:       "Too many failed attempts. Account locked.",
-				LockedUntil: now.Add(lockoutMinutes * time.Minute).Unix(),
-			}, nil
 		}
 		return &model.VerifyPinResponse{
 			Success:           false,

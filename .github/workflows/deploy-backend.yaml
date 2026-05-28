@@ -28,16 +28,13 @@ jobs:
           cache: false
       - name: Test
         working-directory: backend
-        # Required env vars: cmd/api's init() reads these and log.Fatal's
-        # if unset. Linked into every test binary regardless of which
-        # file under cmd/api is being tested. Values are arbitrary — no
-        # AWS calls are made by the tests themselves.
-        env:
-          TABLE_NAME: test-table
-          ALLOWED_ORIGIN: https://example.com
-          AWS_REGION: us-west-2
+        # No env vars or AWS access needed: service tests run against an
+        # in-memory fake repo and cmd/api tests only exercise bodyReader.
+        # Router setup is lazy (setupRouter), so nothing reads TABLE_NAME /
+        # ALLOWED_ORIGIN at test time. go.sum is committed, so `go mod
+        # download` builds in the default -mod=readonly checksum-verified mode.
         run: |
-          go mod tidy
+          go mod download
           go test -v -race ./...
           go vet ./...
 
@@ -68,7 +65,7 @@ jobs:
       - name: Build Lambda
         working-directory: backend
         run: |
-          go mod tidy
+          go mod download
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags lambda.norpc -o bootstrap ./cmd/api
           zip function.zip bootstrap
       - name: Configure AWS credentials

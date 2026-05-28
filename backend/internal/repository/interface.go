@@ -56,7 +56,6 @@ type RepositoryInterface interface {
 	// Rate limiting — per-IP scoping (PK = "RATELIMIT#<ip>").
 	GetRateLimitEntry(ctx context.Context, sourceIP string) (*model.RateLimitEntry, error)
 	IncrementFailedAttempts(ctx context.Context, sourceIP string) (*model.RateLimitEntry, error)
-	SetLockout(ctx context.Context, sourceIP string, lockoutMinutes int) error
 	ClearRateLimit(ctx context.Context, sourceIP string) error
 }
 

@@ -371,12 +371,10 @@ export function showEmptyState() {
     emptyTotalBalanceEl.textContent = formatCurrency(0);
     emptyTotalBalanceEl.classList.remove('balance-negative');
     document.getElementById('expenses-total').textContent = `$0.00 ${labels.spent_suffix}`;
-    document.getElementById('expenses-list').innerHTML =
-        '<p class="no-expenses">No entries yet. Open the menu to create a new month.</p>';
-}
-
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    const list = document.getElementById('expenses-list');
+    list.replaceChildren();
+    const empty = document.createElement('p');
+    empty.className = 'no-expenses';
+    empty.textContent = 'No entries yet. Open the menu to create a new month.';
+    list.appendChild(empty);
 }
