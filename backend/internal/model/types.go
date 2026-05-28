@@ -55,7 +55,6 @@ type RateLimitEntry struct {
 	PK        string `dynamodbav:"PK"`
 	SK        string `dynamodbav:"SK"`
 	Attempts  int    `dynamodbav:"attempts"`
-	LockedAt  int64  `dynamodbav:"locked_at,omitempty"`
 	TTL       int64  `dynamodbav:"ttl"`
 	UpdatedAt int64  `dynamodbav:"updated_at"`
 }
@@ -75,7 +74,6 @@ type VerifyPinResponse struct {
 	Token             string `json:"token,omitempty"`
 	Error             string `json:"error,omitempty"`
 	AttemptsRemaining int    `json:"attempts_remaining,omitempty"`
-	LockedUntil       int64  `json:"locked_until,omitempty"`
 }
 
 type ChangePinRequest struct {
@@ -122,7 +120,7 @@ type ExpenseItem struct {
 
 type MonthListItem struct {
 	Month        string  `json:"month"`
-	MonthlySaved float64 `json:"monthly_saved"` // allowance_added - total_expenses
+	MonthlySaved float64 `json:"monthly_saved"` // ending_balance - starting_balance
 }
 
 // MonthsResponse is returned when listing all months. Months are sorted in

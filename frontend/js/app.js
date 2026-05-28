@@ -326,7 +326,9 @@ class App {
                 const newLoadMore = document.createElement('li');
                 newLoadMore.id = 'load-more-months';
                 newLoadMore.className = 'month-item load-more-item';
-                newLoadMore.innerHTML = '<span>Load More...</span>';
+                const span = document.createElement('span');
+                span.textContent = 'Load More...';
+                newLoadMore.appendChild(span);
                 newLoadMore.addEventListener('click', () => this.loadMoreMonths(data.next_cursor));
                 container.appendChild(newLoadMore);
             }

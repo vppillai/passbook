@@ -160,16 +160,16 @@ This app is hosted in a **public GitHub repository**. Below is a comprehensive s
 | PIN Hashing | Argon2id (16MB, 3 iterations, 1 thread) | Memory-hard, resistant to GPU attacks |
 | Salt | 16 bytes random per PIN | Unique salt prevents rainbow tables |
 | Session Tokens | UUID v4 (122 bits of randomness) | Cryptographically secure |
-| Session Storage | Server-side DynamoDB only | Token in localStorage, persists 24h across browser restarts |
+| Session Storage | Server-side in DynamoDB; client token in `sessionStorage` | Token is cleared when the tab closes (matches the "Lock" UX) |
 | Session Expiry | 24-hour TTL | Auto-deleted by DynamoDB |
 
 ### Brute Force Protection
 
 | Control | Value | Purpose |
 |---------|-------|---------|
-| Attempt limit | 5 per 15 minutes | Per source IP |
-| Lockout threshold | 10 attempts | Triggers 15-minute lockout |
-| Lockout storage | DynamoDB with TTL | Auto-expires, no manual cleanup |
+| Attempt limit | 5 failed attempts per 15-minute window | Per source IP; further attempts refused until the window's TTL elapses |
+| Counter storage | DynamoDB row with 15-minute TTL | Auto-expires, no manual cleanup |
+| Argon2id cost | 16 MB / 3 iterations | Each verification is deliberately slow |
 | API rate limit | 5 req/sec, 10 burst | API Gateway level |
 
 ### Network Security
@@ -207,7 +207,7 @@ This app is hosted in a **public GitHub repository**. Below is a comprehensive s
 
 | Vector | Risk | Mitigation |
 |--------|------|------------|
-| PIN brute force | Low | Rate limiting, lockout, Argon2id slowness |
+| PIN brute force | Low | Rate limiting (5 / 15 min per IP), Argon2id slowness |
 | Session hijacking | Low | HTTPS only, short TTL, no persistent storage |
 | XSS | Low | No user-generated HTML, minimal DOM manipulation |
 | CSRF | Low | Origin validation, no cookies used |
@@ -470,22 +470,18 @@ Deletes the instance's CloudFormation stack, DynamoDB table, and log group. Does
 
 ### Full teardown (all instances + shared resources)
 
+Use the one-shot script. It deletes every per-instance stack, the retained
+DynamoDB tables, and the bootstrap stack — and crucially **empties the
+versioned S3 bucket** (all object versions + delete markers), which a plain
+`aws s3 rm --recursive` cannot do, so `aws s3 rb` would otherwise fail:
+
 ```bash
-# 1. Cleanup each instance
-# Loop over all instances defined in config/instances/
-for f in config/instances/*.yaml; do
-  INSTANCE=$(basename "$f" .yaml)
-  ./scripts/cleanup-aws.sh --instance "$INSTANCE"
-done
-
-# 2. Empty and delete the shared S3 deployment bucket
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-aws s3 rm s3://passbook-lambda-${ACCOUNT_ID}-us-west-2 --recursive
-aws s3 rb s3://passbook-lambda-${ACCOUNT_ID}-us-west-2
-
-# 3. Delete the bootstrap stack (OIDC provider, IAM role)
-aws cloudformation delete-stack --stack-name passbook-bootstrap --region us-west-2
+./scripts/teardown.sh --dry-run   # preview everything that would be deleted
+./scripts/teardown.sh             # delete (prompts: type "DELETE EVERYTHING")
 ```
+
+DynamoDB PITR snapshots survive table deletion for 35 days and can be restored
+manually from the console if needed.
 
 ### Rehoming to another AWS account
 
@@ -507,7 +503,7 @@ aws cloudformation delete-stack --stack-name passbook-bootstrap --region us-west
 
 ### 401 Unauthorized
 - Session expired (24h limit)
-- Clear browser localStorage and re-authenticate
+- Close the tab (clears the `sessionStorage` token) and re-authenticate
 
 ### 403 Forbidden
 - Request origin doesn't match allowed origin
