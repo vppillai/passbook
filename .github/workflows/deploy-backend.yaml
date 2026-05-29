@@ -14,6 +14,14 @@ permissions:
   id-token: write
   contents: read
 
+# Serialize backend deploys: two pushes to main must not run
+# `cloudformation deploy` against the same stack at the same time. Queue
+# rather than cancel — cancelling mid-CloudFormation could strand a stack
+# in UPDATE_IN_PROGRESS.
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
 env:
   AWS_REGION: us-west-2
 
