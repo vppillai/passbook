@@ -6,6 +6,21 @@
 # Optional positionals are referenced as "${N:-}" to stay -u-safe.
 set -euo pipefail
 
+# Fail fast if a required tool is missing. Degrading mid-run causes
+# PARTIAL WRITES (observed live with a missing bc: the expense row was
+# written but the summary update was skipped) — refuse up front instead.
+for tool in aws jq awk; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "Error: required tool '$tool' not found" >&2; exit 1; }
+done
+
+# calc EXPR — decimal arithmetic via awk, printed to cents. Replaces bc
+# (not installed everywhere; its absence yielded empty values that set -e
+# could not catch, because `local x=$(...)` masks substitution failures).
+calc() { awk "BEGIN { printf \"%.2f\", $* }"; }
+
+# num_gt A B — true when A > B (decimal-aware).
+num_gt() { awk "BEGIN { exit !($1 > $2) }"; }
+
 show_help() {
     cat << 'EOF'
 Passbook CLI - Data management for passbook app
@@ -39,7 +54,7 @@ Examples:
 Prerequisites:
   - AWS CLI v2 configured with credentials
   - jq (JSON processor)
-  - bc (calculator)
+  - awk (POSIX, preinstalled everywhere)
 EOF
 }
 
@@ -157,7 +172,7 @@ add_month() {
         starting_balance="0"
     fi
 
-    local ending_balance=$(echo "$starting_balance + $allowance - $expenses" | bc)
+    local ending_balance=$(calc "$starting_balance + $allowance - $expenses")
 
     echo "Adding month $month: starting=$starting_balance (from $prev_month), allowance=$allowance, expenses=$expenses, ending=$ending_balance"
 
@@ -174,7 +189,7 @@ add_month() {
     }"
 
     # If expenses > 0, create an expense record so it shows in the frontend
-    if [ "$(echo "$expenses > 0" | bc)" -eq 1 ]; then
+    if num_gt "$expenses" 0; then
         local expense_id="EXP#$(date +%s)000000000#$(head -c 4 /dev/urandom | xxd -p)"
         echo "  Creating expense record for \$$expenses..."
         aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
@@ -243,8 +258,8 @@ add_expense() {
     # Update month summary
     local current_expenses=$(echo "$month_data" | jq -r '.Item.total_expenses.N // "0"')
     local current_ending=$(echo "$month_data" | jq -r '.Item.ending_balance.N // "0"')
-    local new_expenses=$(echo "$current_expenses + $amount" | bc)
-    local new_ending=$(echo "$current_ending - $amount" | bc)
+    local new_expenses=$(calc "$current_expenses + $amount")
+    local new_ending=$(calc "$current_ending - $amount")
 
     aws dynamodb update-item --table-name "$TABLE_NAME" --region "$REGION" \
         --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
@@ -260,7 +275,7 @@ add_expense() {
         --key '{"PK": {"S": "BALANCE"}, "SK": {"S": "BALANCE"}}' \
         --output json 2>/dev/null)
     local current_total=$(echo "$balance_item" | jq -r '.Item.total_balance.N // "0"')
-    local new_total=$(echo "$current_total - $amount" | bc)
+    local new_total=$(calc "$current_total - $amount")
 
     aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
         \"PK\": {\"S\": \"BALANCE\"},
@@ -312,8 +327,8 @@ add_funds() {
 
     local current_allowance=$(echo "$current" | jq -r '.Item.allowance_added.N // "0"')
     local current_ending=$(echo "$current" | jq -r '.Item.ending_balance.N // "0"')
-    local new_allowance=$(echo "$current_allowance + $amount" | bc)
-    local new_ending=$(echo "$current_ending + $amount" | bc)
+    local new_allowance=$(calc "$current_allowance + $amount")
+    local new_ending=$(calc "$current_ending + $amount")
 
     echo "  Current allowance: $current_allowance -> $new_allowance"
     echo "  Current ending balance: $current_ending -> $new_ending"
@@ -333,7 +348,7 @@ add_funds() {
         --output json 2>/dev/null)
 
     local current_total=$(echo "$balance_item" | jq -r '.Item.total_balance.N // "0"')
-    local new_total=$(echo "$current_total + $amount" | bc)
+    local new_total=$(calc "$current_total + $amount")
     echo "  Total balance: $current_total -> $new_total"
     set_balance "$new_total"
 }
@@ -357,8 +372,8 @@ remove_funds() {
 
     local current_allowance=$(echo "$current" | jq -r '.Item.allowance_added.N // "0"')
     local current_ending=$(echo "$current" | jq -r '.Item.ending_balance.N // "0"')
-    local new_allowance=$(echo "$current_allowance - $amount" | bc)
-    local new_ending=$(echo "$current_ending - $amount" | bc)
+    local new_allowance=$(calc "$current_allowance - $amount")
+    local new_ending=$(calc "$current_ending - $amount")
 
     echo "  Allowance: $current_allowance -> $new_allowance"
     echo "  Ending balance: $current_ending -> $new_ending"
@@ -378,7 +393,7 @@ remove_funds() {
         --output json 2>/dev/null)
 
     local current_total=$(echo "$balance_item" | jq -r '.Item.total_balance.N // "0"')
-    local new_total=$(echo "$current_total - $amount" | bc)
+    local new_total=$(calc "$current_total - $amount")
     echo "  Total balance: $current_total -> $new_total"
     set_balance "$new_total"
 }

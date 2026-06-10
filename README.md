@@ -345,7 +345,6 @@ Scripts for managing data directly in DynamoDB.
 |------|---------|--------------|
 | **AWS CLI v2** | DynamoDB access | [Install guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) |
 | **jq** | JSON parsing | `sudo apt install jq` / `brew install jq` |
-| **bc** | Arithmetic calculations | `sudo apt install bc` / `brew install bc` |
 | **xxd** | Random ID generation | Usually pre-installed (part of vim) |
 
 **AWS CLI Configuration:**

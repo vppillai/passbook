@@ -32,7 +32,7 @@ Features:
 Prerequisites:
   - AWS CLI v2 configured with credentials
   - jq (JSON processor)
-  - bc (calculator)
+  - awk (POSIX, preinstalled everywhere)
 
 Example:
   ./scripts/admin.sh --instance kids
@@ -65,6 +65,21 @@ if [[ -z "$INSTANCE" ]]; then
 fi
 
 TABLE_NAME="passbook-${INSTANCE}-prod"
+
+# Fail fast if a required tool is missing. Degrading mid-run causes
+# PARTIAL WRITES (observed live with a missing bc: the expense row was
+# written but the summary update was skipped) — refuse up front instead.
+for tool in aws jq awk; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "Error: required tool '$tool' not found" >&2; exit 1; }
+done
+
+# calc EXPR — decimal arithmetic via awk, printed to cents. Replaces bc
+# (not installed everywhere; its absence yielded empty values and the
+# partial-write failure mode above).
+calc() { awk "BEGIN { printf \"%.2f\", $* }"; }
+
+# num_gt A B — true when A > B (decimal-aware).
+num_gt() { awk "BEGIN { exit !($1 > $2) }"; }
 
 # Colors
 RED='\033[0;31m'
@@ -119,7 +134,7 @@ show_summary() {
         echo "$months_data" | jq -r '.Items | sort_by(.month.S) | reverse | .[] |
             "\(.month.S)|\(.starting_balance.N)|\(.allowance_added.N)|\(.total_expenses.N)|\(.ending_balance.N)"' 2>/dev/null | \
         while IFS='|' read -r month start allow exp ending; do
-            saved=$(echo "$allow - $exp" | bc)
+            saved=$(calc "$allow - $exp")
             printf "  %-10s │ %10s │ %10s │ %10s │ %10s │ ${GREEN}%10s${NC}\n" \
                 "$month" "\$$start" "+\$$allow" "-\$$exp" "\$$ending" "\$$saved"
         done
@@ -138,12 +153,17 @@ prompt() {
     else
         echo -ne "${YELLOW}$message${NC}: "
     fi
-    read input
+    read -r input
 
+    # printf -v assigns WITHOUT evaluating the input. The previous
+    # `eval "$var_name='$input'"` choked on any apostrophe (eval:
+    # unexpected EOF — caught live with the description "Tio's") and
+    # would execute shell code embedded in the input. read -r keeps
+    # backslashes literal for the same reason.
     if [ -z "$input" ] && [ -n "$default" ]; then
-        eval "$var_name='$default'"
+        printf -v "$var_name" '%s' "$default"
     else
-        eval "$var_name='$input'"
+        printf -v "$var_name" '%s' "$input"
     fi
 }
 
@@ -221,7 +241,7 @@ action_add_month() {
         starting_balance="0"
     fi
 
-    local ending_balance=$(echo "$starting_balance + $allowance - $expenses" | bc)
+    local ending_balance=$(calc "$starting_balance + $allowance - $expenses")
 
     echo ""
     echo -e "${CYAN}Creating month summary...${NC}"
@@ -243,7 +263,7 @@ action_add_month() {
     }"
 
     # If expenses > 0, create an expense record so it shows in the frontend
-    if [ "$(echo "$expenses > 0" | bc)" -eq 1 ]; then
+    if num_gt "$expenses" 0; then
         local expense_id="EXP#$(date +%s)000000000#$(head -c 4 /dev/urandom | xxd -p)"
         echo "  Creating expense record for \$$expenses..."
         aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
@@ -329,8 +349,8 @@ action_add_expense() {
     # Update month summary
     local current_expenses=$(echo "$month_data" | jq -r '.Item.total_expenses.N // "0"')
     local current_ending=$(echo "$month_data" | jq -r '.Item.ending_balance.N // "0"')
-    local new_expenses=$(echo "$current_expenses + $amount" | bc)
-    local new_ending=$(echo "$current_ending - $amount" | bc)
+    local new_expenses=$(calc "$current_expenses + $amount")
+    local new_ending=$(calc "$current_ending - $amount")
 
     aws dynamodb update-item --table-name "$TABLE_NAME" --region "$REGION" \
         --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
@@ -346,7 +366,7 @@ action_add_expense() {
         --key '{"PK": {"S": "BALANCE"}, "SK": {"S": "BALANCE"}}' \
         --output json 2>/dev/null)
     local current_total=$(echo "$balance_item" | jq -r '.Item.total_balance.N // "0"')
-    local new_total=$(echo "$current_total - $amount" | bc)
+    local new_total=$(calc "$current_total - $amount")
 
     aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
         \"PK\": {\"S\": \"BALANCE\"},
@@ -406,8 +426,8 @@ action_add_funds() {
     else
         local current_allowance=$(echo "$month_data" | jq -r '.Item.allowance_added.N // "0"')
         local current_ending=$(echo "$month_data" | jq -r '.Item.ending_balance.N // "0"')
-        local new_allowance=$(echo "$current_allowance + $amount" | bc)
-        local new_ending=$(echo "$current_ending + $amount" | bc)
+        local new_allowance=$(calc "$current_allowance + $amount")
+        local new_ending=$(calc "$current_ending + $amount")
 
         aws dynamodb update-item --table-name "$TABLE_NAME" --region "$REGION" \
             --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
@@ -427,7 +447,7 @@ action_add_funds() {
         --key '{"PK": {"S": "BALANCE"}, "SK": {"S": "BALANCE"}}' \
         --output json 2>/dev/null)
     local current_total=$(echo "$balance_item" | jq -r '.Item.total_balance.N // "0"')
-    local new_total=$(echo "$current_total + $amount" | bc)
+    local new_total=$(calc "$current_total + $amount")
 
     aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
         \"PK\": {\"S\": \"BALANCE\"},
@@ -676,10 +696,10 @@ action_remove_funds() {
         return
     fi
 
-    local new_allowance=$(echo "$current_allowance - $amount" | bc)
-    local new_ending=$(echo "$current_ending - $amount" | bc)
+    local new_allowance=$(calc "$current_allowance - $amount")
+    local new_ending=$(calc "$current_ending - $amount")
 
-    if [ "$(echo "$new_allowance < 0" | bc)" -eq 1 ]; then
+    if num_gt 0 "$new_allowance"; then
         echo -e "${RED}Error: Cannot remove more than current allowance (\$$current_allowance)${NC}"
         pause
         return
@@ -705,7 +725,7 @@ action_remove_funds() {
         --key '{"PK": {"S": "BALANCE"}, "SK": {"S": "BALANCE"}}' \
         --output json 2>/dev/null)
     local current_total=$(echo "$balance_item" | jq -r '.Item.total_balance.N // "0"')
-    local new_total=$(echo "$current_total - $amount" | bc)
+    local new_total=$(calc "$current_total - $amount")
 
     aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
         \"PK\": {\"S\": \"BALANCE\"},
