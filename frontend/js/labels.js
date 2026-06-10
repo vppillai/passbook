@@ -14,6 +14,7 @@ const defaultLabels = {
     monthly_allowance_hint: 'Monthly allowance will be applied automatically.',
     funds_added_toast: 'Funds added!',
     spent_suffix: 'spent',
+    carried_from: 'Carried from',
 };
 
 const overrides = (typeof window !== 'undefined' && window.PASSBOOK_LABELS) || {};

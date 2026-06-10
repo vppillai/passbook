@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"math"
+	"strconv"
 	"testing"
 
 	"github.com/vppillai/passbook/backend/internal/model"
@@ -250,5 +252,101 @@ func TestListMonths_Pagination(t *testing.T) {
 	}
 	if second.Months[0].Month != "2026-01" || second.Months[1].Month != "2025-12" {
 		t.Errorf("second page = %v, want [2026-01, 2025-12]", []string{second.Months[0].Month, second.Months[1].Month})
+	}
+}
+
+// fmtFloat renders a float64 exactly as attributevalue marshals it into
+// DynamoDB (shortest round-trip form). Cent-rounding bugs are invisible
+// to tolerance-based comparison — the dusty and clean values differ by
+// ~1 ULP — but show up plainly in this string.
+func fmtFloat(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
+
+func almostEqual(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+
+// =====================================================================
+// TestCreateMonth_RoundsCarriedBalance replays the prod incident: May
+// ended at -522.16; carrying it into June computed -522.16 + 500 in
+// float64 and marshaled -22.159999999999968 into the ledger. roundCents
+// must keep both the carried start and the computed ending clean.
+// =====================================================================
+func TestCreateMonth_RoundsCarriedBalance(t *testing.T) {
+	ctx := context.Background()
+	svc, repo := newExpenseService(t, true, true, 500)
+	seedMonth(repo, "2026-05", 0, 500, 1022.16, -522.16)
+
+	resp, err := svc.CreateMonth(ctx, "2026-06")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := fmtFloat(resp.Summary.StartingBalance); got != "-522.16" {
+		t.Errorf("StartingBalance marshals as %q, want \"-522.16\"", got)
+	}
+	if got := fmtFloat(resp.Summary.EndingBalance); got != "-22.16" {
+		t.Errorf("EndingBalance marshals as %q, want \"-22.16\"", got)
+	}
+}
+
+// =====================================================================
+// TestAddExpense_AutoCreatedMonth pins ensureMonthExists's carry
+// behavior: an expense filed into a not-yet-created month must not
+// break the carry chain when carry-over is enabled, and must still
+// start from zero when it is disabled.
+// =====================================================================
+func TestAddExpense_AutoCreatedMonth(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("carry=true inherits previous ending", func(t *testing.T) {
+		svc, repo := newExpenseService(t, true, true, 500)
+		seedMonth(repo, "2026-05", 0, 500, 1022.16, -522.16)
+
+		_, err := svc.AddExpense(ctx, &model.AddExpenseRequest{Amount: 10, Description: "tacos", Month: "2026-06"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		s := repo.months["2026-06"]
+		if s == nil {
+			t.Fatal("2026-06 was not auto-created")
+		}
+		if got := fmtFloat(s.StartingBalance); got != "-522.16" {
+			t.Errorf("StartingBalance marshals as %q, want \"-522.16\"", got)
+		}
+		if !almostEqual(s.EndingBalance, -532.16) {
+			t.Errorf("EndingBalance = %v, want -532.16 (carried -522.16 minus 10)", s.EndingBalance)
+		}
+	})
+
+	t.Run("carry=false starts from zero", func(t *testing.T) {
+		svc, repo := newExpenseService(t, true, false, 500)
+		seedMonth(repo, "2026-05", 0, 500, 1022.16, -522.16)
+
+		_, err := svc.AddExpense(ctx, &model.AddExpenseRequest{Amount: 10, Description: "tacos", Month: "2026-06"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		s := repo.months["2026-06"]
+		if s == nil {
+			t.Fatal("2026-06 was not auto-created")
+		}
+		if s.StartingBalance != 0 {
+			t.Errorf("StartingBalance = %v, want 0 (no carry)", s.StartingBalance)
+		}
+	})
+}
+
+// TestAddExpense_RoundsAmountToCents pins service-boundary rounding —
+// a client sending 12.349 must not put a 3-decimal amount in the ledger
+// while the summary delta rounds to 12.35 (a 0.001 drift per edit).
+func TestAddExpense_RoundsAmountToCents(t *testing.T) {
+	ctx := context.Background()
+	svc, repo := newExpenseService(t, true, true, 0)
+	month := GetCurrentMonth()
+	seedMonth(repo, month, 0, 500, 0, 500)
+
+	resp, err := svc.AddExpense(ctx, &model.AddExpenseRequest{Amount: 12.349, Description: "x"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := fmtFloat(resp.Expense.Amount); got != "12.35" {
+		t.Errorf("Amount marshals as %q, want \"12.35\"", got)
 	}
 }

@@ -187,7 +187,10 @@ jobs:
             # the override at all; the styles.css default (#f44336) stays as a
             # defensive fallback but never renders because the .balance-negative
             # class never toggles in practice.
-            ALLOW_OVER_BAL=$(yq '.allow_overspending // false' "$CONFIG_FILE")
+            # Raw read + explicit null check: yq's `//` would also replace
+            # an explicit `false` (see the note in deploy-backend.yaml).
+            ALLOW_OVER_BAL=$(yq -r '.allow_overspending' "$CONFIG_FILE")
+            if [ "$ALLOW_OVER_BAL" = "null" ]; then ALLOW_OVER_BAL=false; fi
             COLOR_NEGATIVE_OVERRIDE=$(yq '.colors.negative // ""' "$CONFIG_FILE")
             DEFAULT_NEGATIVE_COLOR="#991B1B"
             {

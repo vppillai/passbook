@@ -2,7 +2,12 @@ name: eatout
 display_name: Eat-Out Budget
 monthly_amount: 500
 allow_overspending: true
-carry_over_balance: false
+# Full carry-over: surpluses AND deficits roll into the next month's
+# starting balance, and the dashboard shows the carried amount as its own
+# line. (This was the de-facto behavior all along: the workflow's old
+# `yq '.carry_over_balance // true'` silently turned an explicit `false`
+# into `true`. Decision 2026-06: keep full carry, make it visible.)
+carry_over_balance: true
 pwa:
   name: Eat-Out Budget
   short_name: Eat-Out

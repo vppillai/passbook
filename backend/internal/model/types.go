@@ -93,22 +93,22 @@ type AddExpenseRequest struct {
 }
 
 type AddExpenseResponse struct {
-	Success       bool     `json:"success"`
-	Expense       *Expense `json:"expense,omitempty"`
-	MonthBalance  float64  `json:"month_balance"`
-	TotalBalance  float64  `json:"total_balance"`
-	Error         string   `json:"error,omitempty"`
+	Success      bool     `json:"success"`
+	Expense      *Expense `json:"expense,omitempty"`
+	MonthBalance float64  `json:"month_balance"`
+	TotalBalance float64  `json:"total_balance"`
+	Error        string   `json:"error,omitempty"`
 }
 
 // MonthDataResponse is returned when fetching data for a single month.
 // It includes the month summary, a paginated list of expenses, the overall
 // balance, and an opaque NextCursor for fetching the next page of expenses.
 type MonthDataResponse struct {
-	Month        string         `json:"month"`
-	Summary      *MonthSummary  `json:"summary"`
-	Expenses     []ExpenseItem  `json:"expenses"`
-	TotalBalance float64        `json:"total_balance"`
-	NextCursor   string         `json:"next_cursor,omitempty"` // Base64-encoded pagination cursor; empty when no more pages
+	Month        string        `json:"month"`
+	Summary      *MonthSummary `json:"summary"`
+	Expenses     []ExpenseItem `json:"expenses"`
+	TotalBalance float64       `json:"total_balance"`
+	NextCursor   string        `json:"next_cursor,omitempty"` // Base64-encoded pagination cursor; empty when no more pages
 }
 
 type ExpenseItem struct {
@@ -151,10 +151,10 @@ type UpdateExpenseRequest struct {
 // It includes the updated expense details along with the recalculated
 // month ending balance and overall total balance.
 type UpdateExpenseResponse struct {
-	Success      bool        `json:"success"`
+	Success      bool         `json:"success"`
 	Expense      *ExpenseItem `json:"expense,omitempty"`
-	MonthBalance float64     `json:"month_balance"`
-	TotalBalance float64     `json:"total_balance"`
+	MonthBalance float64      `json:"month_balance"`
+	TotalBalance float64      `json:"total_balance"`
 }
 
 // CreateMonthRequest is the JSON body for creating a new monthly period.

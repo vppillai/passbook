@@ -15,10 +15,10 @@ import (
 )
 
 const (
-	PKConfig     = "CONFIG"
-	SKConfig     = "CONFIG"
-	PKBalance    = "BALANCE"
-	SKBalance    = "BALANCE"
+	PKConfig  = "CONFIG"
+	SKConfig  = "CONFIG"
+	PKBalance = "BALANCE"
+	SKBalance = "BALANCE"
 	// Rate-limit rows are scoped per source IP: PK = "RATELIMIT#<ip>".
 	// A bare "RATELIMIT#" prefix (empty ip) means the caller did not provide
 	// an IP — we still serve the request but with a shared "unknown" bucket.
