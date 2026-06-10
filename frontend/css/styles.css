@@ -1,27 +1,93 @@
-/* CSS Variables */
+/* =====================================================================
+   Passbook — neo-bank minimal design system
+   =====================================================================
+   Theming contract (DO NOT RENAME — deploy-frontend.yaml writes a
+   per-instance theme.css that overrides exactly these four inputs):
+       --primary-color   instance accent
+       --primary-dark    pressed/deep accent
+       --background      instance page tint (light scheme only)
+       --negative-color  overspend red (only emitted when the instance
+                         allows overspending)
+   Everything else derives from those inputs via internal tokens, which
+   is also how dark mode works: theme.css loads after this file and only
+   touches the four inputs, so the scheme-dependent derived tokens below
+   keep authority over surfaces and ink in both schemes.
+   ===================================================================== */
+
+/* Self-hosted variable display font (OFL). CSP allows font-src 'self'
+   only — no font CDNs. */
+@font-face {
+    font-family: 'Bricolage Grotesque';
+    src: url('../assets/fonts/bricolage-grotesque-var.woff2') format('woff2');
+    font-weight: 200 800;
+    font-stretch: 75% 100%;
+    font-display: swap;
+}
+
 :root {
+    /* ---- theming inputs (overridden by per-instance theme.css) ---- */
     --primary-color: #4A90A4;
     --primary-dark: #357a8a;
-    --success-color: #4CAF50;
-    --danger-color: #f44336;
-    --warning-color: #ff9800;
-    /* Color for negative balances. Defaults to --danger-color but can be
-       overridden per-instance via theme.css (see deploy-frontend.yaml). */
-    --negative-color: #f44336;
     --background: #f5f7fa;
-    --card-bg: #ffffff;
-    --text-primary: #333333;
-    --text-secondary: #666666;
-    --text-muted: #999999;
-    --border-color: #e0e0e0;
-    --border-radius: 12px;
-    --border-radius-sm: 8px;
+    --negative-color: #e23d3d;
+
+    /* ---- semantic palette ---- */
+    --accent: var(--primary-color);
+    --accent-deep: var(--primary-dark);
+    --danger: var(--negative-color);
+    --success-color: #2e9e5b;
+    --danger-color: var(--negative-color); /* legacy alias */
+
+    /* ---- scheme tokens: light ---- */
+    --bg: var(--background);
+    --surface: #ffffff;
+    --surface-2: color-mix(in srgb, var(--accent) 7%, #ffffff);
+    --ink: #191c20;
+    --ink-2: #5a616b;
+    --ink-3: #9aa1ab;
+    --line: color-mix(in srgb, var(--ink) 9%, transparent);
+    --wash: color-mix(in srgb, var(--accent) 13%, transparent);
+    --shadow: 0 1px 2px rgba(16, 20, 28, 0.05), 0 8px 24px rgba(16, 20, 28, 0.07);
+    --shadow-lg: 0 2px 6px rgba(16, 20, 28, 0.08), 0 16px 40px rgba(16, 20, 28, 0.16);
+    --backdrop: rgba(18, 20, 26, 0.45);
+
+    /* ---- type ---- */
+    --font-display: 'Bricolage Grotesque', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+
+    /* ---- shape & rhythm ---- */
+    --r-lg: 24px;
+    --r-md: 16px;
+    --r-sm: 10px;
+    --r-pill: 999px;
+    --border-radius: var(--r-md);     /* legacy alias */
+    --border-radius-sm: var(--r-sm);  /* legacy alias */
     --spacing: 16px;
     --spacing-sm: 8px;
     --spacing-lg: 24px;
-    --shadow: 0 2px 8px rgba(0,0,0,0.1);
-    --shadow-lg: 0 4px 16px rgba(0,0,0,0.15);
-    --transition: 0.2s ease;
+
+    /* ---- motion ---- */
+    --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+    --transition: 0.18s var(--ease-spring);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        /* Dark ignores the instance --background tint and builds its own
+           accent-breathed near-black, so theme.css (which loads later but
+           only sets the four inputs) cannot fight the scheme. */
+        --bg: color-mix(in srgb, var(--accent) 4%, #0c0e12);
+        --surface: color-mix(in srgb, var(--accent) 5%, #14171d);
+        --surface-2: color-mix(in srgb, var(--accent) 11%, #181c23);
+        --ink: #e9ebee;
+        --ink-2: #a6adb8;
+        --ink-3: #6b727d;
+        --line: color-mix(in srgb, #ffffff 11%, transparent);
+        --wash: color-mix(in srgb, var(--accent) 10%, transparent);
+        --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+        --shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.5), 0 18px 48px rgba(0, 0, 0, 0.5);
+        --backdrop: rgba(4, 5, 8, 0.6);
+    }
 }
 
 /* Reset */
@@ -31,21 +97,46 @@
     padding: 0;
 }
 
-/* Base */
 html {
     font-size: 16px;
     -webkit-tap-highlight-color: transparent;
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-    background: var(--background);
-    color: var(--text-primary);
+    font-family: var(--font-body);
+    background: var(--bg);
+    color: var(--ink);
     min-height: 100vh;
     min-height: 100dvh;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+}
+
+/* Ambient accent wash — gives each instance its personality without a
+   heavy filled card. Fixed so it doesn't scroll with content. */
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background:
+        radial-gradient(420px 320px at 88% -8%, var(--wash), transparent 70%),
+        radial-gradient(360px 280px at -12% 12%, color-mix(in srgb, var(--accent) 6%, transparent), transparent 70%);
+    z-index: 0;
+}
+
+/* Keep app content above the wash */
+.screen, .menu, .modal, .toast, .overlay, .fab {
+    position: relative;
+    z-index: 1;
+}
+
+/* Focus visibility (keyboard users) */
+:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--r-sm);
 }
 
 /* Utilities */
@@ -54,13 +145,13 @@ body {
 }
 
 .error {
-    color: var(--danger-color);
+    color: var(--danger);
     font-size: 0.875rem;
     margin-top: var(--spacing-sm);
     text-align: center;
 }
 
-/* Screen Layout */
+/* Screen layout */
 .screen {
     min-height: 100vh;
     min-height: 100dvh;
@@ -69,7 +160,7 @@ body {
     flex-direction: column;
 }
 
-/* Loading Screen */
+/* Loading */
 #loading-screen {
     justify-content: center;
     align-items: center;
@@ -77,13 +168,14 @@ body {
 
 .loading-content {
     text-align: center;
+    color: var(--ink-2);
 }
 
 .spinner {
-    width: 40px;
-    height: 40px;
-    border: 3px solid var(--border-color);
-    border-top-color: var(--primary-color);
+    width: 36px;
+    height: 36px;
+    border: 3px solid var(--line);
+    border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
     margin: 0 auto var(--spacing);
@@ -93,7 +185,10 @@ body {
     to { transform: rotate(360deg); }
 }
 
-/* PIN Container */
+/* =====================================================================
+   PIN screens
+   ===================================================================== */
+
 .pin-container {
     flex: 1;
     display: flex;
@@ -106,45 +201,50 @@ body {
 }
 
 .pin-container h1 {
-    font-size: 1.75rem;
+    font-family: var(--font-display);
+    font-weight: 640;
+    font-size: 1.9rem;
+    letter-spacing: -0.02em;
     margin-bottom: var(--spacing-sm);
-    color: var(--primary-color);
+    color: var(--ink);
 }
 
 .pin-container p {
-    color: var(--text-secondary);
+    color: var(--ink-2);
     margin-bottom: var(--spacing-lg);
+    font-size: 0.95rem;
 }
 
 .pin-hint {
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--ink-3);
     margin-top: var(--spacing);
 }
 
-/* PIN Display */
 .pin-display {
     display: flex;
-    gap: 12px;
-    margin-bottom: var(--spacing-lg);
+    gap: 14px;
+    margin-bottom: calc(var(--spacing-lg) + 4px);
 }
 
 .pin-dot {
-    width: 16px;
-    height: 16px;
+    width: 13px;
+    height: 13px;
     border-radius: 50%;
-    border: 2px solid var(--primary-color);
+    border: 2px solid var(--ink-3);
     background: transparent;
     transition: var(--transition);
 }
 
 .pin-dot.filled {
-    background: var(--primary-color);
+    background: var(--accent);
+    border-color: var(--accent);
+    transform: scale(1.12);
 }
 
 .pin-dot.error {
-    border-color: var(--danger-color);
-    background: var(--danger-color);
+    border-color: var(--danger);
+    background: var(--danger);
     animation: shake 0.3s ease;
 }
 
@@ -154,26 +254,25 @@ body {
     75% { transform: translateX(4px); }
 }
 
-/* PIN Pad */
 .pin-pad {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
+    gap: 14px;
     width: 100%;
     max-width: 280px;
 }
 
 .pin-key {
-    width: 70px;
-    height: 70px;
+    width: 72px;
+    height: 72px;
     border-radius: 50%;
-    border: 2px solid var(--primary-color);
-    background: transparent;
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: var(--primary-color);
+    border: none;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    font-family: var(--font-body);
+    color: var(--ink);
     cursor: pointer;
-    transition: var(--transition);
+    transition: transform var(--transition), background var(--transition);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -184,7 +283,7 @@ body {
 }
 
 .key-num {
-    font-size: 1.5rem;
+    font-size: 1.45rem;
     font-weight: 600;
 }
 
@@ -192,32 +291,38 @@ body {
     font-size: 0.55rem;
     font-weight: 500;
     letter-spacing: 1.5px;
-    margin-top: 2px;
+    margin-top: 3px;
+    color: var(--ink-3);
 }
 
 .pin-key:active {
-    background: var(--primary-color);
-    color: white;
-    transform: scale(0.95);
+    transform: scale(0.92);
+    background: var(--surface-2);
 }
 
 .pin-key[data-value="clear"],
 .pin-key[data-value="back"] {
-    font-size: 1.25rem;
+    font-size: 1.2rem;
+    background: transparent;
+    box-shadow: none;
+    color: var(--ink-2);
 }
 
 .pin-key-submit {
-    background: var(--primary-color);
-    color: white;
+    background: var(--accent);
+    color: #fff;
     font-size: 1rem;
+    font-weight: 700;
 }
 
+.pin-key-submit .key-num { color: #fff; }
+
 .pin-key-submit:active {
-    background: var(--primary-dark);
+    background: var(--accent-deep);
 }
 
 .pin-key:disabled {
-    opacity: 0.5;
+    opacity: 0.45;
     cursor: not-allowed;
 }
 
@@ -230,14 +335,10 @@ body {
 }
 
 #auth-message .dot:nth-child(2),
-#setup-message .dot:nth-child(2) {
-    animation-delay: 0.25s;
-}
+#setup-message .dot:nth-child(2) { animation-delay: 0.25s; }
 
 #auth-message .dot:nth-child(3),
-#setup-message .dot:nth-child(3) {
-    animation-delay: 0.5s;
-}
+#setup-message .dot:nth-child(3) { animation-delay: 0.5s; }
 
 @keyframes dot-appear {
     0%, 100% { opacity: 0; transform: translateY(0); }
@@ -245,10 +346,9 @@ body {
     50%, 80% { opacity: 0; transform: translateY(0); }
 }
 
-/* PIN dots wave animation during loading */
 .pin-display.loading .pin-dot {
-    background: var(--primary-color);
-    border-color: var(--primary-color);
+    background: var(--accent);
+    border-color: var(--accent);
     animation: pin-wave 1.2s ease-in-out infinite;
     transition: none;
 }
@@ -265,18 +365,24 @@ body {
     50% { opacity: 1; transform: scale(1.15); }
 }
 
-/* Main Screen Header */
+/* =====================================================================
+   Main screen
+   ===================================================================== */
+
 header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: var(--spacing-sm) 0;
-    margin-bottom: var(--spacing);
+    margin-bottom: var(--spacing-sm);
 }
 
 header h1 {
-    font-size: 1.25rem;
-    color: var(--text-primary);
+    font-family: var(--font-display);
+    font-weight: 560;
+    font-size: 1.1rem;
+    letter-spacing: -0.01em;
+    color: var(--ink-2);
 }
 
 .icon-btn {
@@ -284,100 +390,106 @@ header h1 {
     height: 44px;
     border: none;
     background: transparent;
-    border-radius: var(--border-radius-sm);
+    border-radius: var(--r-pill);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--text-primary);
+    color: var(--ink);
     transition: var(--transition);
 }
 
 .icon-btn:active {
-    background: var(--border-color);
+    background: var(--surface-2);
+    transform: scale(0.94);
 }
 
-/* Balance Card */
-.balance-card {
-    background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
-    border-radius: var(--border-radius);
-    padding: var(--spacing-lg);
-    color: white;
-    margin-bottom: var(--spacing-lg);
-    box-shadow: var(--shadow-lg);
+/* ---- Hero: the one number that matters ---- */
+.hero {
+    padding: var(--spacing) 4px var(--spacing-lg);
 }
 
-.balance-row {
-    display: flex;
-    align-items: center;
-}
-
-.balance-item {
-    flex: 1;
-    text-align: center;
-}
-
-.balance-item .label {
+.hero-label {
     display: block;
-    font-size: 0.75rem;
-    opacity: 0.9;
-    margin-bottom: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    color: var(--ink-3);
+    margin-bottom: 6px;
 }
 
-.balance-item .amount {
-    font-size: 1.75rem;
-    font-weight: 700;
+.hero-amount {
+    display: block;
+    font-family: var(--font-display);
+    font-optical-sizing: auto;
+    font-weight: 600;
+    font-size: clamp(2.9rem, 13vw, 3.8rem);
+    line-height: 1.05;
+    letter-spacing: -0.035em;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+    animation: rise 0.5s var(--ease-spring) both;
 }
 
-.balance-item.highlight .amount {
-    font-size: 2rem;
+.hero-amount.balance-negative {
+    color: var(--danger);
 }
 
-/* Negative balance (overspend) styling.
-   Default: red text — used in contexts outside the balance card (e.g.,
-   month-history list rows). */
-.amount.balance-negative {
-    color: var(--negative-color);
-}
-
-/* When the balance card contains any negative amount, flip the entire
-   card to a dark warning gradient and keep all amounts in white. The
-   coral-on-coral contrast problem (dark crimson text on coral background)
-   gets replaced with white-on-dark-red — ~12:1 contrast, and the whole
-   card screams "over budget" at a glance. */
-.balance-card:has(.balance-negative) {
-    background: linear-gradient(135deg, var(--negative-color), color-mix(in srgb, var(--negative-color) 70%, black));
-}
-
-.balance-card .amount.balance-negative {
-    color: white;
-}
-
-/* Balance carried in from the previous month, shown as a footnote line
-   inside the balance card. Only rendered when non-zero. */
-.carryover-line {
+/* ---- Stat chips ---- */
+.stat-chips {
+    display: flex;
+    gap: 10px;
     margin-top: var(--spacing);
-    padding-top: var(--spacing-sm);
-    border-top: 1px solid rgba(255, 255, 255, 0.25);
-    text-align: center;
-    font-size: 0.8rem;
-    opacity: 0.95;
+    flex-wrap: wrap;
 }
 
-.carryover-line.carryover-negative {
+.chip {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    padding: 10px 14px;
+    min-width: 108px;
+    box-shadow: var(--shadow);
+    animation: rise 0.5s var(--ease-spring) both;
+    animation-delay: 0.06s;
+}
+
+.chip + .chip { animation-delay: 0.12s; }
+
+.chip-label {
+    display: block;
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin-bottom: 2px;
+    white-space: nowrap;
+}
+
+.chip-value {
+    display: block;
+    font-size: 1.05rem;
     font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+    white-space: nowrap;
 }
 
-.balance-divider {
-    width: 1px;
-    height: 50px;
-    background: rgba(255,255,255,0.3);
-    margin: 0 var(--spacing);
+.chip-value.balance-negative {
+    color: var(--danger);
 }
 
-/* Expenses Section */
+/* Legacy hook used outside the hero (months list). */
+.amount.balance-negative {
+    color: var(--danger);
+}
+
+/* =====================================================================
+   Expenses
+   ===================================================================== */
+
 .expenses-section {
     flex: 1;
 }
@@ -385,42 +497,73 @@ header h1 {
 .section-header {
     display: flex;
     justify-content: space-between;
-    align-items: center;
-    margin-bottom: var(--spacing);
+    align-items: baseline;
+    margin-bottom: var(--spacing-sm);
 }
 
 .section-header h2 {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text-primary);
+    font-family: var(--font-display);
+    font-size: 1.05rem;
+    font-weight: 620;
+    letter-spacing: -0.01em;
+    color: var(--ink);
 }
 
 .expenses-total {
-    font-size: 0.875rem;
-    color: var(--text-secondary);
+    font-size: 0.8rem;
+    color: var(--ink-2);
+    font-variant-numeric: tabular-nums;
 }
 
 .expenses-list {
     display: flex;
     flex-direction: column;
-    gap: var(--spacing-sm);
 }
 
 .no-expenses {
     text-align: center;
-    color: var(--text-muted);
-    padding: var(--spacing-lg);
+    color: var(--ink-3);
+    padding: calc(var(--spacing-lg) * 1.5) var(--spacing-lg);
+    font-size: 0.92rem;
 }
 
-/* Expense Item */
+/* Day group headers inside the list */
+.day-header {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding: var(--spacing) 4px 6px;
+}
+
 .expense-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: var(--spacing);
-    background: var(--card-bg);
-    border-radius: var(--border-radius-sm);
+    padding: 13px 14px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
     box-shadow: var(--shadow);
+    animation: rise 0.4s var(--ease-spring) both;
+}
+
+.expense-item + .expense-item {
+    margin-top: 8px;
+}
+
+/* Staggered entrance, capped so long lists don't crawl */
+.expense-item:nth-child(2)  { animation-delay: 0.03s; }
+.expense-item:nth-child(3)  { animation-delay: 0.06s; }
+.expense-item:nth-child(4)  { animation-delay: 0.09s; }
+.expense-item:nth-child(5)  { animation-delay: 0.12s; }
+.expense-item:nth-child(6)  { animation-delay: 0.15s; }
+.expense-item:nth-child(n+7) { animation-delay: 0.18s; }
+
+@keyframes rise {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 .expense-info {
@@ -429,72 +572,59 @@ header h1 {
 }
 
 .expense-desc {
-    font-weight: 500;
-    color: var(--text-primary);
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--ink);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
 .expense-date {
-    font-size: 0.75rem;
-    color: var(--text-muted);
+    font-size: 0.74rem;
+    color: var(--ink-3);
+    margin-top: 1px;
 }
 
 .expense-amount {
-    font-weight: 600;
-    color: var(--danger-color);
+    font-weight: 700;
+    font-size: 0.95rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
     margin-left: var(--spacing);
     white-space: nowrap;
 }
 
+.expense-edit,
 .expense-delete {
-    width: 32px;
-    height: 32px;
+    width: 34px;
+    height: 34px;
     border: none;
     background: transparent;
-    border-radius: 50%;
+    border-radius: var(--r-pill);
     cursor: pointer;
-    margin-left: var(--spacing-sm);
-    opacity: 0.5;
-    transition: var(--transition);
-}
-
-.expense-delete:active {
-    opacity: 1;
-    background: color-mix(in srgb, var(--danger-color) 10%, transparent);
-}
-
-.expense-delete svg {
-    color: var(--danger-color);
-}
-
-/* Edit button on expense items */
-.expense-edit {
-    width: 32px;
-    height: 32px;
-    border: none;
-    background: transparent;
-    border-radius: 50%;
-    cursor: pointer;
-    margin-left: var(--spacing-sm);
-    opacity: 0.5;
+    margin-left: 4px;
+    opacity: 0.45;
     transition: var(--transition);
     display: flex;
     align-items: center;
     justify-content: center;
 }
 
+.expense-edit svg { color: var(--ink-2); }
+.expense-delete svg { color: var(--danger); }
+
 .expense-edit:active {
     opacity: 1;
-    background: color-mix(in srgb, var(--primary-color) 10%, transparent);
+    background: var(--surface-2);
 }
 
-.expense-edit svg {
-    color: var(--primary-color);
+.expense-delete:active {
+    opacity: 1;
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
-/* Load More button */
+/* Load more */
 .load-more-btn {
     margin-top: var(--spacing);
     padding: 12px;
@@ -503,75 +633,76 @@ header h1 {
 
 .load-more-item {
     justify-content: center;
-    color: var(--primary-color);
-    font-weight: 500;
+    color: var(--accent);
+    font-weight: 600;
 }
 
-/* Button text (inline action) */
 .btn-text {
     background: none;
     border: none;
-    color: var(--primary-color);
-    font-weight: 500;
-    font-size: 0.875rem;
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.85rem;
     cursor: pointer;
-    padding: 4px 8px;
-    border-radius: var(--border-radius-sm);
+    padding: 6px 12px;
+    border-radius: var(--r-pill);
     transition: var(--transition);
 }
 
 .btn-text:active {
-    background: color-mix(in srgb, var(--primary-color) 10%, transparent);
+    background: var(--surface-2);
 }
 
-/* Section actions */
 .section-actions {
     display: flex;
     align-items: center;
     gap: var(--spacing-sm);
 }
 
-/* Menu header with multiple buttons */
 .menu-header-actions {
     display: flex;
     align-items: center;
     gap: var(--spacing-sm);
 }
 
-/* Form hint text */
 .form-hint {
     font-size: 0.8rem;
-    color: var(--text-muted);
+    color: var(--ink-3);
     margin-bottom: var(--spacing);
 }
 
-/* FAB Button */
+/* =====================================================================
+   FAB
+   ===================================================================== */
+
 .fab {
     position: fixed;
     bottom: 24px;
     right: 24px;
-    width: 56px;
-    height: 56px;
-    border-radius: 50%;
-    background: var(--primary-color);
-    color: white;
+    width: 60px;
+    height: 60px;
+    border-radius: 20px;
+    background: var(--accent);
+    color: #fff;
     border: none;
-    font-size: 1.75rem;
     cursor: pointer;
-    box-shadow: var(--shadow-lg);
+    box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 45%, transparent), var(--shadow);
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: var(--transition);
+    transition: transform var(--transition), background var(--transition), box-shadow var(--transition);
     z-index: 100;
 }
 
 .fab:active {
-    transform: scale(0.95);
-    background: var(--primary-dark);
+    transform: scale(0.92);
+    background: var(--accent-deep);
 }
 
-/* Modal */
+/* =====================================================================
+   Modals — bottom sheets on mobile, centered cards on desktop
+   ===================================================================== */
+
 .modal {
     position: fixed;
     inset: 0;
@@ -584,31 +715,52 @@ header h1 {
 .modal-backdrop {
     position: absolute;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--backdrop);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    animation: fade-in 0.25s ease both;
+}
+
+@keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
 .modal-content {
     position: relative;
-    background: var(--card-bg);
-    border-radius: var(--border-radius) var(--border-radius) 0 0;
-    padding: var(--spacing-lg);
+    background: var(--surface);
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    padding: calc(var(--spacing-lg) + 8px) var(--spacing-lg) var(--spacing-lg);
     width: 100%;
-    max-width: 400px;
-    animation: slideUp 0.3s ease;
+    max-width: 420px;
+    box-shadow: var(--shadow-lg);
+    animation: sheet-up 0.34s var(--ease-spring) both;
 }
 
-@keyframes slideUp {
-    from {
-        transform: translateY(100%);
-    }
-    to {
-        transform: translateY(0);
-    }
+/* Sheet drag-handle affordance */
+.modal-content::before {
+    content: '';
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 4px;
+    border-radius: var(--r-pill);
+    background: var(--line);
+}
+
+@keyframes sheet-up {
+    from { transform: translateY(48px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
 }
 
 .modal-content h2 {
+    font-family: var(--font-display);
+    font-weight: 620;
+    letter-spacing: -0.01em;
     margin-bottom: var(--spacing);
-    font-size: 1.25rem;
+    font-size: 1.3rem;
 }
 
 .form-group {
@@ -617,24 +769,28 @@ header h1 {
 
 .form-group label {
     display: block;
-    font-size: 0.875rem;
-    color: var(--text-secondary);
-    margin-bottom: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--ink-2);
+    margin-bottom: 6px;
 }
 
 .form-group input {
     width: 100%;
-    padding: 12px var(--spacing);
-    border: 1px solid var(--border-color);
-    border-radius: var(--border-radius-sm);
+    padding: 14px var(--spacing);
+    border: 1px solid var(--line);
+    background: var(--bg);
+    color: var(--ink);
+    border-radius: var(--r-sm);
     font-size: 1rem;
+    font-family: var(--font-body);
     transition: var(--transition);
 }
 
 .form-group input:focus {
     outline: none;
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 10%, transparent);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 .form-group input[type="number"]::-webkit-inner-spin-button,
@@ -665,20 +821,15 @@ header h1 {
     border: none;
     padding: 8px;
     cursor: pointer;
-    color: var(--text-muted);
+    color: var(--ink-3);
     display: flex;
     align-items: center;
     justify-content: center;
     transition: var(--transition);
 }
 
-.btn-show-pin:hover {
-    color: var(--text-secondary);
-}
-
-.btn-show-pin:active {
-    color: var(--primary-color);
-}
+.btn-show-pin:hover { color: var(--ink-2); }
+.btn-show-pin:active { color: var(--accent); }
 
 .modal-actions {
     display: flex;
@@ -686,82 +837,93 @@ header h1 {
     margin-top: var(--spacing-lg);
 }
 
-/* Buttons */
+/* =====================================================================
+   Buttons
+   ===================================================================== */
+
 .btn {
     flex: 1;
-    padding: 12px var(--spacing);
-    border-radius: var(--border-radius-sm);
-    font-size: 1rem;
-    font-weight: 500;
+    padding: 13px var(--spacing);
+    border-radius: var(--r-pill);
+    font-size: 0.95rem;
+    font-weight: 650;
+    font-family: var(--font-body);
     cursor: pointer;
     transition: var(--transition);
     border: none;
 }
 
+.btn:active { transform: scale(0.98); }
+
 .btn-primary {
-    background: var(--primary-color);
-    color: white;
+    background: var(--accent);
+    color: #fff;
 }
 
 .btn-primary:active {
-    background: var(--primary-dark);
+    background: var(--accent-deep);
 }
 
 .btn-secondary {
-    background: var(--border-color);
-    color: var(--text-primary);
+    background: var(--surface-2);
+    color: var(--ink);
 }
 
 .btn-secondary:active {
-    background: #d0d0d0;
+    background: color-mix(in srgb, var(--accent) 14%, var(--surface));
 }
 
-/* Used by the .btn-primary inside #confirm-modal when the action is
-   destructive (e.g. delete). ui.showConfirm toggles .btn-danger on. */
+/* ui.showConfirm toggles .btn-danger for destructive confirms. */
 .btn-primary.btn-danger {
-    background: var(--negative-color, #b71c1c);
+    background: var(--danger);
 }
 
 .btn-primary.btn-danger:active {
-    background: color-mix(in srgb, var(--negative-color, #b71c1c) 75%, black);
+    background: color-mix(in srgb, var(--danger) 75%, black);
 }
 
 .btn-outline {
     background: transparent;
-    border: 1px solid var(--border-color);
-    color: var(--text-primary);
+    border: 1px solid var(--line);
+    color: var(--ink);
 }
 
 .btn-outline:active {
-    background: var(--border-color);
+    background: var(--surface-2);
 }
 
 .btn-full {
     width: 100%;
 }
 
-/* Overlay */
+/* =====================================================================
+   Side menu (history)
+   ===================================================================== */
+
 .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--backdrop);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
     z-index: 500;
 }
 
-/* Side Menu */
 .menu {
     position: fixed;
     top: 0;
     right: 0;
     bottom: 0;
     width: 85%;
-    max-width: 320px;
-    background: var(--card-bg);
+    max-width: 330px;
+    background: var(--surface);
+    border-radius: var(--r-lg) 0 0 var(--r-lg);
+    box-shadow: var(--shadow-lg);
     z-index: 600;
     display: flex;
     flex-direction: column;
-    transform: translateX(100%);
-    transition: transform 0.3s ease;
+    transform: translateX(102%);
+    transition: transform 0.32s var(--ease-spring);
 }
 
 .menu.visible {
@@ -772,12 +934,14 @@ header h1 {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: var(--spacing);
-    border-bottom: 1px solid var(--border-color);
+    padding: var(--spacing) var(--spacing) var(--spacing-sm);
 }
 
 .menu-header h2 {
+    font-family: var(--font-display);
+    font-weight: 620;
     font-size: 1.25rem;
+    letter-spacing: -0.01em;
 }
 
 .months-list {
@@ -788,8 +952,8 @@ header h1 {
 }
 
 .month-item {
-    padding: var(--spacing);
-    border-radius: var(--border-radius-sm);
+    padding: 13px var(--spacing);
+    border-radius: var(--r-sm);
     cursor: pointer;
     transition: var(--transition);
     display: flex;
@@ -799,20 +963,36 @@ header h1 {
 
 .month-item:active,
 .month-item.active {
-    background: color-mix(in srgb, var(--primary-color) 10%, transparent);
+    background: var(--surface-2);
+}
+
+.month-item.active .month-name {
+    color: var(--accent);
 }
 
 .month-item .month-name {
-    font-weight: 500;
+    font-weight: 600;
+    font-size: 0.95rem;
 }
 
 .month-item .month-balance {
-    color: var(--text-secondary);
+    font-size: 0.82rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--success-color);
+    background: color-mix(in srgb, var(--success-color) 10%, transparent);
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+}
+
+.month-item .month-balance.balance-negative {
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
 .menu-footer {
     padding: var(--spacing);
-    border-top: 1px solid var(--border-color);
+    border-top: 1px solid var(--line);
     display: flex;
     flex-direction: column;
     gap: var(--spacing-sm);
@@ -820,55 +1000,59 @@ header h1 {
 
 .app-version {
     font-size: 0.7rem;
-    color: var(--text-muted);
+    color: var(--ink-3);
     text-align: center;
     margin-top: var(--spacing-sm);
 }
 
-/* Toast */
+/* =====================================================================
+   Toast
+   ===================================================================== */
+
 .toast {
     position: fixed;
     bottom: 100px;
     left: 50%;
     transform: translateX(-50%);
-    background: var(--text-primary);
-    color: white;
-    padding: 12px var(--spacing-lg);
-    border-radius: var(--border-radius);
+    background: var(--ink);
+    color: var(--bg);
+    padding: 12px 22px;
+    border-radius: var(--r-pill);
     font-size: 0.875rem;
+    font-weight: 600;
+    box-shadow: var(--shadow-lg);
     z-index: 2000;
-    animation: fadeInUp 0.3s ease;
+    animation: fadeInUp 0.3s var(--ease-spring);
 }
 
-.toast.error {
-    background: var(--danger-color);
-}
-
-.toast.success {
-    background: var(--success-color);
-}
+.toast.error { background: var(--danger); color: #fff; }
+.toast.success { background: var(--success-color); color: #fff; }
 
 @keyframes fadeInUp {
-    from {
-        opacity: 0;
-        transform: translate(-50%, 20px);
-    }
-    to {
-        opacity: 1;
-        transform: translate(-50%, 0);
-    }
+    from { opacity: 0; transform: translate(-50%, 16px); }
+    to { opacity: 1; transform: translate(-50%, 0); }
 }
 
-/* Desktop/Tablet Adjustments */
+/* =====================================================================
+   Desktop / tablet
+   ===================================================================== */
+
 @media (min-width: 768px) {
     .screen {
         max-width: 480px;
         margin: 0 auto;
     }
 
+    .modal {
+        align-items: center;
+    }
+
     .modal-content {
-        border-radius: var(--border-radius);
-        margin-bottom: var(--spacing-lg);
+        border-radius: var(--r-lg);
+    }
+
+    .modal-content::before {
+        display: none;
     }
 
     .fab {
@@ -876,26 +1060,52 @@ header h1 {
         right: calc(50% - 240px + 24px);
     }
 
+    .fab:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 32px color-mix(in srgb, var(--accent) 50%, transparent), var(--shadow-lg);
+    }
+
     .pin-key:hover {
-        background: color-mix(in srgb, var(--primary-color) 10%, transparent);
+        background: var(--surface-2);
+    }
+
+    .pin-key-submit:hover {
+        background: var(--accent-deep);
+    }
+
+    .expense-item:hover {
+        border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
     }
 
     .expense-edit:hover {
         opacity: 1;
-        background: color-mix(in srgb, var(--primary-color) 10%, transparent);
+        background: var(--surface-2);
     }
 
     .expense-delete:hover {
         opacity: 1;
-        background: color-mix(in srgb, var(--danger-color) 10%, transparent);
+        background: color-mix(in srgb, var(--danger) 12%, transparent);
     }
 
     .btn-text:hover {
-        background: color-mix(in srgb, var(--primary-color) 10%, transparent);
+        background: var(--surface-2);
     }
 
     .btn:hover {
-        opacity: 0.9;
+        filter: brightness(1.05);
+    }
+
+    .month-item:hover {
+        background: var(--surface-2);
+    }
+}
+
+/* Reduced motion: keep state, drop theatrics */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
     }
 }
 
