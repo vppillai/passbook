@@ -21,7 +21,9 @@ A simple, secure budget-tracker app. One codebase, multiple independent deployme
 - Monthly history view with pagination
 - Month management from the UI (create months, add funds)
 - PIN-protected access (4-6 digits)
-- Mobile-first responsive design
+- Mobile-first responsive design with bottom-sheet dialogs
+- Automatic dark mode (follows system preference)
+- Carried-over balance surfaced as its own dashboard chip (deficits stay visible)
 - Automatic session expiry (24h)
 
 ---

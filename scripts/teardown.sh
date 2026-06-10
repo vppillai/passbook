@@ -104,7 +104,9 @@ BUCKET=$(aws cloudformation describe-stacks --region "$REGION" \
 
 echo "Summary of what will be deleted:"
 [[ -n "$STACKS" ]] && printf "  Stack: %s\n" $STACKS
-for T in "${TABLES_TO_DELETE[@]}"; do
+# ${TABLES_TO_DELETE[@]+"..."} guards against bash 3.2 (macOS) treating an
+# empty array as unset under set -u, which would cause a fatal expansion error.
+for T in ${TABLES_TO_DELETE[@]+"${TABLES_TO_DELETE[@]}"}; do
     echo "  Table: $T  (CFN retains it; this script removes it explicitly)"
 done
 [[ -n "$BUCKET" ]] && echo "  Bucket: $BUCKET  (all object versions)"
@@ -132,7 +134,7 @@ for STACK in $STACKS; do
 done
 
 # === 2. Delete the retained DynamoDB tables.
-for TABLE in "${TABLES_TO_DELETE[@]}"; do
+for TABLE in ${TABLES_TO_DELETE[@]+"${TABLES_TO_DELETE[@]}"}; do
     echo ""
     echo "Deleting DynamoDB table: $TABLE"
     run_quiet aws dynamodb delete-table --region "$REGION" --table-name "$TABLE"

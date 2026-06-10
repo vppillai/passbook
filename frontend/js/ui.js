@@ -28,6 +28,11 @@ export function formatCurrency(amount) {
     }).format(amount);
 }
 
+/**
+ * Formats an ISO-8601 timestamp from the API as a locale time string.
+ * @param {string} dateStr - ISO-8601 timestamp (e.g. "2024-06-10T14:30:00Z")
+ * @returns {string} Time in locale h:mm AM/PM format (e.g. "2:30 PM")
+ */
 export function formatTime(dateStr) {
     return new Date(dateStr).toLocaleTimeString('en-US', {
         hour: 'numeric',
@@ -35,19 +40,43 @@ export function formatTime(dateStr) {
     });
 }
 
+/**
+ * Returns true when two Date objects fall on the same calendar day in
+ * local time. Used to decide whether a day-header separator is needed
+ * between consecutive expense rows.
+ * @param {Date} a
+ * @param {Date} b
+ * @returns {boolean}
+ */
 function sameDay(a, b) {
     return a.getFullYear() === b.getFullYear()
         && a.getMonth() === b.getMonth()
         && a.getDate() === b.getDate();
 }
 
-// dayKey identifies the calendar day of a timestamp (local time) so the
-// expense list can be grouped under day headers.
+/**
+ * Derives a string key that uniquely identifies the local calendar day of
+ * an ISO-8601 timestamp. `new Date(iso)` converts to local time, so the
+ * key reflects the device's timezone — intentional, since users think of
+ * expenses by local date. Note: the month component is 0-based (JS
+ * getMonth()), so the key is not human-readable; it is only used for
+ * adjacent-row grouping comparisons, never displayed.
+ * @param {string} dateStr - ISO-8601 timestamp
+ * @returns {string} Opaque day key (e.g. "2024-5-10" for June 10 2024)
+ */
 function dayKey(dateStr) {
     const d = new Date(dateStr);
     return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
 
+/**
+ * Returns a human-readable day label for an ISO-8601 timestamp, using
+ * local time. Returns "Today" or "Yesterday" when the date matches the
+ * current local day or the day before; otherwise falls back to a short
+ * locale string (e.g. "Mon, Jun 10").
+ * @param {string} dateStr - ISO-8601 timestamp
+ * @returns {string} Display label for the day header
+ */
 function formatDayLabel(dateStr) {
     const d = new Date(dateStr);
     const now = new Date();

@@ -149,13 +149,36 @@ prompt() {
 
 # Recalculate total balance from all months
 recalc_balance() {
-    local months_data=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
-        --filter-expression "begins_with(PK, :pk) AND SK = :sk" \
-        --expression-attribute-values '{":pk": {"S": "MONTH#"}, ":sk": {"S": "SUMMARY"}}' \
-        --output json 2>/dev/null)
+    local tmpdir=$(mktemp -d)
+    local all_items="$tmpdir/items.json"
+    echo "[]" > "$all_items"
 
-    # Sum up (allowance_added - total_expenses) for all months
-    local total=$(echo "$months_data" | jq -r '[.Items[] | ((.allowance_added.N // "0") | tonumber) - ((.total_expenses.N // "0") | tonumber)] | add // 0')
+    local next_token=""
+    local page=0
+    while :; do
+        page=$((page + 1))
+        local page_json
+        if [ -z "$next_token" ]; then
+            page_json=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
+                --filter-expression "begins_with(PK, :pk) AND SK = :sk" \
+                --expression-attribute-values '{":pk": {"S": "MONTH#"}, ":sk": {"S": "SUMMARY"}}' \
+                --output json 2>/dev/null)
+        else
+            page_json=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
+                --filter-expression "begins_with(PK, :pk) AND SK = :sk" \
+                --expression-attribute-values '{":pk": {"S": "MONTH#"}, ":sk": {"S": "SUMMARY"}}' \
+                --starting-token "$next_token" --output json 2>/dev/null)
+        fi
+        jq -s '.[0] + .[1].Items' "$all_items" <(echo "$page_json") > "$all_items.new"
+        mv "$all_items.new" "$all_items"
+        next_token=$(echo "$page_json" | jq -r '.NextToken // empty')
+        [ -z "$next_token" ] && break
+    done
+
+    # Equals sum(ending-starting) under the ledger invariant ending = starting + allowance - expenses;
+    # allowance-expenses is used because it is robust to a broken carry chain.
+    local total=$(jq -r '[.[] | ((.allowance_added.N // "0") | tonumber) - ((.total_expenses.N // "0") | tonumber)] | add // 0' "$all_items")
+    rm -rf "$tmpdir"
 
     aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
         \"PK\": {\"S\": \"BALANCE\"},
@@ -291,11 +314,15 @@ action_add_expense() {
     local random_id=$(head -c 8 /dev/urandom | xxd -p)
     local expense_id="EXP#${timestamp}#${random_id}"
 
+    # jq-encode the free-text description: a quote or backslash in it
+    # would otherwise break (or worse, restructure) the --item JSON.
+    local desc_json=$(printf '%s' "$description" | jq -Rs .)
+
     aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
         \"PK\": {\"S\": \"MONTH#$month\"},
         \"SK\": {\"S\": \"$expense_id\"},
         \"amount\": {\"N\": \"$amount\"},
-        \"description\": {\"S\": \"$description\"},
+        \"description\": {\"S\": $desc_json},
         \"created_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
     }"
 

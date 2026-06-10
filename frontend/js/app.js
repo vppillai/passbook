@@ -258,18 +258,39 @@ class App {
 
     // --- Data loading ---
 
+    /**
+     * Returns the expense-list callback object used by renderExpenses.
+     * Centralised here so loadCurrentMonth, loadMonthView, and loadMoreExpenses
+     * all share a single definition.
+     * @returns {Object} Callbacks object for use with ui.renderExpenses
+     */
+    expenseCallbacks() {
+        return {
+            onDelete: (id) => this.handleDeleteExpense(id),
+            onEdit: (id, amount, desc) => this.openEditExpense(id, amount, desc),
+            onLoadMore: (nextCursor) => this.loadMoreExpenses(nextCursor),
+        };
+    }
+
+    /**
+     * Fetches the given month from the API and refreshes the dashboard and
+     * expense list. Sets this.currentMonth before fetching so that any
+     * in-flight operations (e.g. delete/edit) target the correct month.
+     * @param {string} month - "YYYY-MM" month key
+     */
+    async loadMonthView(month) {
+        this.currentMonth = month;
+        this.monthData = await api.getMonth(month);
+        this.allExpenses = this.monthData.expenses || [];
+        this.expensesCursor = this.monthData.next_cursor || null;
+
+        ui.updateDashboard(this.monthData);
+        ui.renderExpenses(this.allExpenses, this.expenseCallbacks(), this.expensesCursor);
+    }
+
     async loadCurrentMonth() {
         try {
-            this.monthData = await api.getMonth(this.currentMonth);
-            this.allExpenses = this.monthData.expenses || [];
-            this.expensesCursor = this.monthData.next_cursor || null;
-
-            ui.updateDashboard(this.monthData);
-            ui.renderExpenses(this.allExpenses, {
-                onDelete: (id) => this.handleDeleteExpense(id),
-                onEdit: (id, amount, desc) => this.openEditExpense(id, amount, desc),
-                onLoadMore: (cursor) => this.loadMoreExpenses(cursor),
-            }, this.expensesCursor);
+            await this.loadMonthView(this.currentMonth);
         } catch (error) {
             console.error('Failed to load month data:', error);
             throw error;
@@ -298,11 +319,7 @@ class App {
             this.allExpenses = [...this.allExpenses, ...(data.expenses || [])];
             this.expensesCursor = data.next_cursor || null;
 
-            ui.renderExpenses(this.allExpenses, {
-                onDelete: (id) => this.handleDeleteExpense(id),
-                onEdit: (id, amount, desc) => this.openEditExpense(id, amount, desc),
-                onLoadMore: (cursor) => this.loadMoreExpenses(cursor),
-            }, this.expensesCursor);
+            ui.renderExpenses(this.allExpenses, this.expenseCallbacks(), this.expensesCursor);
         } catch (error) {
             ui.showToast('Failed to load more expenses', 'error');
         }
@@ -338,21 +355,10 @@ class App {
     }
 
     async selectMonth(month) {
-        this.currentMonth = month;
         ui.hideMenu();
-
         try {
-            this.monthData = await api.getMonth(month);
-            this.allExpenses = this.monthData.expenses || [];
-            this.expensesCursor = this.monthData.next_cursor || null;
-
-            ui.updateDashboard(this.monthData);
-            ui.renderExpenses(this.allExpenses, {
-                onDelete: (id) => this.handleDeleteExpense(id),
-                onEdit: (id, amount, desc) => this.openEditExpense(id, amount, desc),
-                onLoadMore: (cursor) => this.loadMoreExpenses(cursor),
-            }, this.expensesCursor);
-        } catch (error) {
+            await this.loadMonthView(month);
+        } catch {
             ui.showToast('Failed to load month data', 'error');
         }
     }
