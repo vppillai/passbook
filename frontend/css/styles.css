@@ -355,6 +355,21 @@ header h1 {
     color: white;
 }
 
+/* Balance carried in from the previous month, shown as a footnote line
+   inside the balance card. Only rendered when non-zero. */
+.carryover-line {
+    margin-top: var(--spacing);
+    padding-top: var(--spacing-sm);
+    border-top: 1px solid rgba(255, 255, 255, 0.25);
+    text-align: center;
+    font-size: 0.8rem;
+    opacity: 0.95;
+}
+
+.carryover-line.carryover-negative {
+    font-weight: 700;
+}
+
 .balance-divider {
     width: 1px;
     height: 50px;

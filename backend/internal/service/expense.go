@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -54,6 +55,16 @@ func NewExpenseService(repo repository.RepositoryInterface, monthlyAllowance flo
 		allowOverspending: allowOverspending,
 		carryOverBalance:  carryOverBalance,
 	}
+}
+
+// roundCents rounds a dollar amount to 2 decimal places. JSON inputs and
+// month arithmetic arrive/happen in float64, and attributevalue marshals
+// float64 at full precision — without rounding, a carried balance like
+// -522.16 + 500 was written to DynamoDB as -22.159999999999968 (observed
+// in prod). Repository deltas already go through %.2f; this closes the
+// remaining absolute-value writes and the service-boundary inputs.
+func roundCents(v float64) float64 {
+	return math.Round(v*100) / 100
 }
 
 // GetCurrentMonth returns the current month key in YYYY-MM format
@@ -194,13 +205,29 @@ func (s *ExpenseService) ensureMonthExists(ctx context.Context, month string) (*
 		return summary, nil
 	}
 
+	// Carry the previous month's ending balance, mirroring CreateMonth.
+	// Without this, an expense filed into a not-yet-created month broke
+	// the carry chain (start=0), and the next CreateMonth would carry
+	// from this orphan's ending instead of the real history. No global
+	// balance credit happens here — carrying moves no money.
+	startingBalance := 0.0
+	if s.carryOverBalance {
+		prevSummary, err := s.repo.GetMonthSummary(ctx, GetPreviousMonth(month))
+		if err != nil {
+			return nil, err
+		}
+		if prevSummary != nil {
+			startingBalance = roundCents(prevSummary.EndingBalance)
+		}
+	}
+
 	// Create new month summary with $0 allowance
 	summary = &model.MonthSummary{
 		Month:           month,
-		StartingBalance: 0,
+		StartingBalance: startingBalance,
 		AllowanceAdded:  0,
 		TotalExpenses:   0,
-		EndingBalance:   0,
+		EndingBalance:   startingBalance,
 	}
 
 	if err := s.repo.SaveMonthSummary(ctx, summary); err != nil {
@@ -224,6 +251,7 @@ func (s *ExpenseService) ensureMonthExists(ctx context.Context, month string) (*
 // concurrent AddExpense calls cannot both succeed at $7 each on a $10
 // balance.
 func (s *ExpenseService) AddExpense(ctx context.Context, req *model.AddExpenseRequest) (*model.AddExpenseResponse, error) {
+	req.Amount = roundCents(req.Amount)
 	if req.Amount <= 0 || req.Amount > 99999.99 {
 		return nil, ErrInvalidAmount
 	}
@@ -311,6 +339,8 @@ func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expens
 		return nil, ErrNoChanges
 	}
 	if req.Amount != nil {
+		rounded := roundCents(*req.Amount)
+		req.Amount = &rounded
 		if *req.Amount <= 0 || *req.Amount > 99999.99 {
 			return nil, ErrInvalidAmount
 		}
@@ -521,7 +551,7 @@ func (s *ExpenseService) CreateMonth(ctx context.Context, month string) (*model.
 
 	startingBalance := 0.0
 	if s.carryOverBalance && prevSummary != nil {
-		startingBalance = prevSummary.EndingBalance
+		startingBalance = roundCents(prevSummary.EndingBalance)
 	}
 	allowance := s.monthlyAllowance
 	summary := &model.MonthSummary{
@@ -529,7 +559,7 @@ func (s *ExpenseService) CreateMonth(ctx context.Context, month string) (*model.
 		StartingBalance: startingBalance,
 		AllowanceAdded:  allowance,
 		TotalExpenses:   0,
-		EndingBalance:   startingBalance + allowance,
+		EndingBalance:   roundCents(startingBalance + allowance),
 	}
 
 	if err := s.repo.AtomicCreateMonth(ctx, summary, allowance); err != nil {
@@ -553,6 +583,7 @@ func (s *ExpenseService) CreateMonth(ctx context.Context, month string) (*model.
 // AddFunds tops up an existing month's allowance and credits the global
 // balance by the same amount in a single transaction.
 func (s *ExpenseService) AddFunds(ctx context.Context, month string, amount float64) (*model.AddFundsResponse, error) {
+	amount = roundCents(amount)
 	if amount <= 0 {
 		return nil, ErrFundsNotPositive
 	}

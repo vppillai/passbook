@@ -340,6 +340,14 @@ export function populateEditExpenseModal(amount, description) {
     document.getElementById('edit-expense-amount').focus();
 }
 
+// formatPrevMonthName returns the display name of the month before the
+// given "YYYY-MM" key (JS Date handles the year rollover for January).
+function formatPrevMonthName(monthKey) {
+    const [year, month] = monthKey.split('-').map(Number);
+    const prev = new Date(year, month - 2, 1); // month-1 is this month (0-based), so month-2 is the previous one
+    return `${MONTHS[prev.getMonth()]} ${prev.getFullYear()}`;
+}
+
 export function updateDashboard(data) {
     // Update month title
     document.getElementById('month-title').textContent = formatMonthName(data.month);
@@ -356,14 +364,33 @@ export function updateDashboard(data) {
     totalBalanceEl.textContent = formatCurrency(data.total_balance);
     totalBalanceEl.classList.toggle('balance-negative', data.total_balance < 0);
 
-    // Update expenses total
+    // Balance carried in from the previous month, positive or negative.
+    // Without this line a carried deficit is invisible: "This Month" can
+    // read green while the real position (Total) is negative, and nothing
+    // explains the gap between the two tiles.
+    const carryEl = document.getElementById('carryover-line');
+    const carried = data.summary ? (data.summary.starting_balance || 0) : 0;
+    if (Math.abs(carried) >= 0.005) {
+        const sign = carried > 0 ? '+' : '';
+        carryEl.textContent = `${labels.carried_from} ${formatPrevMonthName(data.month)}: ${sign}${formatCurrency(carried)}`;
+        carryEl.classList.toggle('carryover-negative', carried < 0);
+        carryEl.classList.remove('hidden');
+    } else {
+        carryEl.classList.add('hidden');
+    }
+
+    // Update expenses total, with the month's budget for context
     const totalExpenses = data.summary ? data.summary.total_expenses : 0;
-    document.getElementById('expenses-total').textContent = `${formatCurrency(totalExpenses)} ${labels.spent_suffix}`;
+    const budget = data.summary ? (data.summary.allowance_added || 0) : 0;
+    const ofBudget = budget > 0 ? ` of ${formatCurrency(budget)}` : '';
+    document.getElementById('expenses-total').textContent =
+        `${formatCurrency(totalExpenses)} ${labels.spent_suffix}${ofBudget}`;
 }
 
 export function showEmptyState() {
     // Show empty state when no months exist
     document.getElementById('month-title').textContent = 'No Data Yet';
+    document.getElementById('carryover-line').classList.add('hidden');
     const emptyMonthBalanceEl = document.getElementById('month-balance');
     emptyMonthBalanceEl.textContent = formatCurrency(0);
     emptyMonthBalanceEl.classList.remove('balance-negative');

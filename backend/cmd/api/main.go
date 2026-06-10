@@ -20,9 +20,9 @@ import (
 )
 
 var (
-	router     *handler.Router
-	setupOnce  sync.Once
-	setupErr   error
+	router    *handler.Router
+	setupOnce sync.Once
+	setupErr  error
 )
 
 // setupRouter constructs the router on first call. Previously this lived

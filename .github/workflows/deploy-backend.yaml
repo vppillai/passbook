@@ -109,8 +109,15 @@ jobs:
         run: |
           CONFIG="config/instances/${{ matrix.instance }}.yaml"
           MONTHLY=$(yq '.monthly_amount' "$CONFIG")
-          ALLOW_OVERSPEND=$(yq '.allow_overspending // false' "$CONFIG")
-          CARRY_OVER=$(yq '.carry_over_balance // true' "$CONFIG")
+          # NOTE: yq/jq's `//` substitutes the default when the value is
+          # null OR FALSE — `false // true` evaluates to true, which made
+          # an explicit `carry_over_balance: false` silently deploy as
+          # true (shipped that way to prod for weeks). Read the raw value
+          # and only default when the key is actually absent.
+          ALLOW_OVERSPEND=$(yq -r '.allow_overspending' "$CONFIG")
+          if [ "$ALLOW_OVERSPEND" = "null" ]; then ALLOW_OVERSPEND=false; fi
+          CARRY_OVER=$(yq -r '.carry_over_balance' "$CONFIG")
+          if [ "$CARRY_OVER" = "null" ]; then CARRY_OVER=true; fi
           echo "monthly_amount=$MONTHLY" >> $GITHUB_OUTPUT
           echo "allow_overspending=$ALLOW_OVERSPEND" >> $GITHUB_OUTPUT
           echo "carry_over_balance=$CARRY_OVER" >> $GITHUB_OUTPUT
