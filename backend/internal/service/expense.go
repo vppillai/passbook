@@ -73,7 +73,10 @@ func GetCurrentMonth() string {
 	return fmt.Sprintf("%04d-%02d", now.Year(), now.Month())
 }
 
-// GetPreviousMonth returns the previous month key
+// GetPreviousMonth returns the previous month key. Input must be a validated
+// "YYYY-MM" key; behavior on malformed input is undefined (currently returns
+// a nonsense key such as "0000-12"). Callers are responsible for validating
+// with validateMonthKey/resolveMonth first.
 func GetPreviousMonth(month string) string {
 	t, _ := time.Parse("2006-01", month)
 	prev := t.AddDate(0, -1, 0)
@@ -193,8 +196,11 @@ func (s *ExpenseService) GetMonthData(ctx context.Context, month string, limit i
 	}, nil
 }
 
-// ensureMonthExists gets or creates a month summary WITHOUT adding allowance
-// Allowance should be added manually via admin scripts
+// ensureMonthExists gets or creates a month summary with $0 allowance (the
+// monthly allowance is only applied by an explicit CreateMonth). When
+// carry-over is enabled, the previous month's ending balance is carried
+// forward as the starting balance; no global balance credit occurs here —
+// carrying moves no money.
 func (s *ExpenseService) ensureMonthExists(ctx context.Context, month string) (*model.MonthSummary, error) {
 	summary, err := s.repo.GetMonthSummary(ctx, month)
 	if err != nil {

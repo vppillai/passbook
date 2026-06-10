@@ -1,7 +1,10 @@
 #!/bin/bash
 # Helper script to add data to the passbook app
 
-set -e
+# -u catches typo'd variables before they become `--table-name ""`;
+# pipefail propagates aws failures through `aws ... | jq` pipes.
+# Optional positionals are referenced as "${N:-}" to stay -u-safe.
+set -euo pipefail
 
 show_help() {
     cat << 'EOF'
@@ -41,7 +44,7 @@ EOF
 }
 
 # Show help if no args provided (will be caught by new parser for --help)
-if [[ -z "$1" ]]; then
+if [[ -z "${1:-}" ]]; then
     show_help
     exit 0
 fi
@@ -53,9 +56,9 @@ INSTANCE=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         -i|--instance)
-            INSTANCE="$2"; shift 2 ;;
+            INSTANCE="${2:?--instance requires a value}"; shift 2 ;;
         --region)
-            REGION="$2"; shift 2 ;;
+            REGION="${2:?--region requires a value}"; shift 2 ;;
         --) shift; break ;;
         -h|--help)
             echo "Usage: $0 --instance <name> <command> [args...]"
@@ -82,13 +85,38 @@ TABLE_NAME="passbook-${INSTANCE}-prod"
 recalc_balance() {
     echo "Recalculating total balance from all months..."
 
-    local months_data=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
-        --filter-expression "begins_with(PK, :pk) AND SK = :sk" \
-        --expression-attribute-values '{":pk": {"S": "MONTH#"}, ":sk": {"S": "SUMMARY"}}' \
-        --output json 2>/dev/null)
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    trap "rm -rf $tmpdir" RETURN
+    local all_items="$tmpdir/items.json"
+    echo "[]" > "$all_items"
 
-    # Sum up (allowance_added - total_expenses) for all months
-    local total=$(echo "$months_data" | jq -r '[.Items[] | ((.allowance_added.N // "0") | tonumber) - ((.total_expenses.N // "0") | tonumber)] | add // 0')
+    local next_token=""
+    local page=0
+    while :; do
+        page=$((page + 1))
+        local page_json=""
+        if [ -z "$next_token" ]; then
+            page_json=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
+                --filter-expression "begins_with(PK, :pk) AND SK = :sk" \
+                --expression-attribute-values '{":pk": {"S": "MONTH#"}, ":sk": {"S": "SUMMARY"}}' \
+                --output json 2>/dev/null)
+        else
+            page_json=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
+                --filter-expression "begins_with(PK, :pk) AND SK = :sk" \
+                --expression-attribute-values '{":pk": {"S": "MONTH#"}, ":sk": {"S": "SUMMARY"}}' \
+                --starting-token "$next_token" --output json 2>/dev/null)
+        fi
+        jq -s '.[0] + .[1].Items' "$all_items" <(echo "$page_json") > "$all_items.new"
+        mv "$all_items.new" "$all_items"
+        next_token=$(echo "$page_json" | jq -r '.NextToken // empty')
+        [ -z "$next_token" ] && break
+    done
+
+    # Equals sum(ending-starting) under the ledger invariant ending = starting + allowance - expenses;
+    # allowance-expenses is used because it is robust to a broken carry chain.
+    local total
+    total=$(jq -r '[.[] | ((.allowance_added.N // "0") | tonumber) - ((.total_expenses.N // "0") | tonumber)] | add // 0' "$all_items")
 
     echo "  Calculated total balance: $total"
 
@@ -200,11 +228,15 @@ add_expense() {
     local random_id=$(head -c 8 /dev/urandom | xxd -p)
     local expense_id="EXP#${timestamp}#${random_id}"
 
+    # jq-encode the free-text description: a quote or backslash in it
+    # would otherwise break (or worse, restructure) the --item JSON.
+    local desc_json=$(printf '%s' "$description" | jq -Rs .)
+
     aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
         \"PK\": {\"S\": \"MONTH#$month\"},
         \"SK\": {\"S\": \"$expense_id\"},
         \"amount\": {\"N\": \"$amount\"},
-        \"description\": {\"S\": \"$description\"},
+        \"description\": {\"S\": $desc_json},
         \"created_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
     }"
 
@@ -520,8 +552,9 @@ import_data() {
     fi
 }
 
-# Main command dispatch
-case "$1" in
+# Main command dispatch ("${1:-}": flags-only invocations leave $# = 0,
+# which must reach the usage branch, not trip set -u)
+case "${1:-}" in
     month)
         if [ $# -ne 4 ]; then
             echo "Usage: $0 month YYYY-MM allowance expenses"
@@ -569,7 +602,8 @@ case "$1" in
         show_data
         ;;
     export)
-        export_data "$2"
+        # Filename is optional — export_data generates a timestamped one.
+        export_data "${2:-}"
         ;;
     import)
         if [ $# -ne 2 ]; then
