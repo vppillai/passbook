@@ -37,6 +37,17 @@ jobs:
         working-directory: backend
         run: go vet ./...
 
+      - name: Check formatting
+        working-directory: backend
+        # gofmt drift slipped onto main once (3 files); fail fast instead.
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "gofmt needed on:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+
   lint-frontend:
     runs-on: ubuntu-latest
     steps:
