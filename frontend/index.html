@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="theme-color" content="#4A90A4">
     <meta name="description" content="Kids Passbook - Track allowance and expenses">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://*.execute-api.us-west-2.amazonaws.com; manifest-src 'self'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://*.execute-api.us-west-2.amazonaws.com; manifest-src 'self'">
     <meta name="referrer" content="strict-origin">
     <title data-i18n="app_title">My Passbook</title>
+    <link rel="preload" href="assets/fonts/bricolage-grotesque-var.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="css/styles.css">
     <link rel="manifest" href="manifest.json">
     <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
@@ -97,23 +98,23 @@
             </button>
         </header>
 
-        <div class="balance-card">
-            <div class="balance-row">
-                <div class="balance-item">
-                    <span class="label">This Month</span>
-                    <span id="month-balance" class="amount">$0.00</span>
+        <!-- Hero: the headline balance, then per-month stat chips.
+             ui.updateDashboard populates the IDs; the carryover chip is
+             hidden when the displayed month started from zero. -->
+        <section class="hero">
+            <span class="hero-label" data-i18n="total_savings">Total Savings</span>
+            <span id="total-balance" class="hero-amount amount">$0.00</span>
+            <div class="stat-chips">
+                <div class="chip">
+                    <span class="chip-label">This Month</span>
+                    <span id="month-balance" class="chip-value amount">$0.00</span>
                 </div>
-                <div class="balance-divider"></div>
-                <div class="balance-item highlight">
-                    <span class="label" data-i18n="total_savings">Total Savings</span>
-                    <span id="total-balance" class="amount">$0.00</span>
+                <div id="carryover-chip" class="chip hidden">
+                    <span class="chip-label">Carried over</span>
+                    <span class="chip-value">$0.00</span>
                 </div>
             </div>
-            <!-- Balance carried in from the previous month (positive or
-                 negative). Populated by ui.updateDashboard; hidden when the
-                 displayed month started from zero. -->
-            <div id="carryover-line" class="carryover-line hidden"></div>
-        </div>
+        </section>
 
         <section class="expenses-section">
             <div class="section-header">

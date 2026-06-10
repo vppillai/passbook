@@ -28,14 +28,33 @@ export function formatCurrency(amount) {
     }).format(amount);
 }
 
-export function formatDate(dateStr) {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
+export function formatTime(dateStr) {
+    return new Date(dateStr).toLocaleTimeString('en-US', {
         hour: 'numeric',
         minute: '2-digit',
     });
+}
+
+function sameDay(a, b) {
+    return a.getFullYear() === b.getFullYear()
+        && a.getMonth() === b.getMonth()
+        && a.getDate() === b.getDate();
+}
+
+// dayKey identifies the calendar day of a timestamp (local time) so the
+// expense list can be grouped under day headers.
+function dayKey(dateStr) {
+    const d = new Date(dateStr);
+    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+function formatDayLabel(dateStr) {
+    const d = new Date(dateStr);
+    const now = new Date();
+    if (sameDay(d, now)) return 'Today';
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    if (sameDay(d, yesterday)) return 'Yesterday';
+    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 export function formatMonthName(monthKey) {
@@ -153,7 +172,19 @@ export function renderExpenses(expenses, callbacks, nextCursor = null) {
     // with templated values). Server data sits in data-* attributes through
     // setAttribute, so even an adversarial backend that started returning
     // weird expense IDs cannot break out of the attribute context.
+    //
+    // Rows arrive newest-first; consecutive same-day rows are grouped
+    // under a day header (Today / Yesterday / "Mon, Jun 5").
+    let lastDay = null;
     for (const expense of expenses) {
+        const day = dayKey(expense.created_at);
+        if (day !== lastDay) {
+            const header = document.createElement('div');
+            header.className = 'day-header';
+            header.textContent = formatDayLabel(expense.created_at);
+            container.appendChild(header);
+            lastDay = day;
+        }
         container.appendChild(buildExpenseRow(expense, callbacks));
     }
 
@@ -190,7 +221,7 @@ function buildExpenseRow(expense, callbacks) {
     desc.textContent = expense.description;
     const date = document.createElement('div');
     date.className = 'expense-date';
-    date.textContent = formatDate(expense.created_at);
+    date.textContent = formatTime(expense.created_at);
     info.appendChild(desc);
     info.appendChild(date);
 
@@ -323,7 +354,7 @@ export function buildMonthRow(month, currentMonth, onSelect) {
     const saved = parseFloat(month.monthly_saved);
     const balanceEl = document.createElement('span');
     balanceEl.className = 'month-balance' + (saved < 0 ? ' balance-negative' : '');
-    balanceEl.textContent = formatCurrency(month.monthly_saved);
+    balanceEl.textContent = `${saved > 0 ? '+' : ''}${formatCurrency(month.monthly_saved)}`;
 
     li.appendChild(nameEl);
     li.appendChild(balanceEl);
@@ -357,7 +388,7 @@ export function updateDashboard(data) {
         ? (data.summary.allowance_added || 0) - (data.summary.total_expenses || 0)
         : 0;
     const monthBalanceEl = document.getElementById('month-balance');
-    monthBalanceEl.textContent = formatCurrency(monthlySaved);
+    monthBalanceEl.textContent = `${monthlySaved > 0 ? '+' : ''}${formatCurrency(monthlySaved)}`;
     monthBalanceEl.classList.toggle('balance-negative', monthlySaved < 0);
 
     const totalBalanceEl = document.getElementById('total-balance');
@@ -365,18 +396,20 @@ export function updateDashboard(data) {
     totalBalanceEl.classList.toggle('balance-negative', data.total_balance < 0);
 
     // Balance carried in from the previous month, positive or negative.
-    // Without this line a carried deficit is invisible: "This Month" can
-    // read green while the real position (Total) is negative, and nothing
-    // explains the gap between the two tiles.
-    const carryEl = document.getElementById('carryover-line');
+    // Without this chip a carried deficit is invisible: "This Month" can
+    // read green while the real position (the hero) is negative, and
+    // nothing explains the gap between the two numbers.
+    const carryChip = document.getElementById('carryover-chip');
     const carried = data.summary ? (data.summary.starting_balance || 0) : 0;
     if (Math.abs(carried) >= 0.005) {
-        const sign = carried > 0 ? '+' : '';
-        carryEl.textContent = `${labels.carried_from} ${formatPrevMonthName(data.month)}: ${sign}${formatCurrency(carried)}`;
-        carryEl.classList.toggle('carryover-negative', carried < 0);
-        carryEl.classList.remove('hidden');
+        carryChip.querySelector('.chip-label').textContent =
+            `${labels.carried_from} ${formatPrevMonthName(data.month)}`;
+        const valueEl = carryChip.querySelector('.chip-value');
+        valueEl.textContent = `${carried > 0 ? '+' : ''}${formatCurrency(carried)}`;
+        valueEl.classList.toggle('balance-negative', carried < 0);
+        carryChip.classList.remove('hidden');
     } else {
-        carryEl.classList.add('hidden');
+        carryChip.classList.add('hidden');
     }
 
     // Update expenses total, with the month's budget for context
@@ -390,7 +423,7 @@ export function updateDashboard(data) {
 export function showEmptyState() {
     // Show empty state when no months exist
     document.getElementById('month-title').textContent = 'No Data Yet';
-    document.getElementById('carryover-line').classList.add('hidden');
+    document.getElementById('carryover-chip').classList.add('hidden');
     const emptyMonthBalanceEl = document.getElementById('month-balance');
     emptyMonthBalanceEl.textContent = formatCurrency(0);
     emptyMonthBalanceEl.classList.remove('balance-negative');
