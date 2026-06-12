@@ -16,6 +16,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -28,18 +29,38 @@ var (
 	ErrInvalidAmount      = errors.New("amount must be positive")
 	ErrDescriptionTooLong = errors.New("description too long (max 100 characters)")
 	ErrExpenseNotFound    = errors.New("expense not found")
-	ErrInsufficientFunds  = errors.New("insufficient funds")
-	ErrNoChanges          = errors.New("no changes provided")
-	ErrMonthExists        = errors.New("month already exists")
-	ErrMonthNotFound      = errors.New("month not found")
-	ErrInvalidMonth       = errors.New("invalid month format")
-	ErrFundsNotPositive   = errors.New("funds amount must be positive")
+	// ErrExpenseModified means the expense was found on read but changed
+	// (or vanished) before the conditional write landed — a genuine
+	// concurrent edit. Handler maps to 409 "refresh and retry", distinct
+	// from the 404 ErrExpenseNotFound for an expense that never existed (U4).
+	ErrExpenseModified   = errors.New("expense was modified")
+	ErrInsufficientFunds = errors.New("insufficient funds")
+	ErrNoChanges         = errors.New("no changes provided")
+	ErrMonthExists       = errors.New("month already exists")
+	ErrMonthNotFound     = errors.New("month not found")
+	ErrInvalidMonth      = errors.New("invalid month format")
+	ErrFundsNotPositive  = errors.New("funds amount must be positive")
+	// ErrMonthHasExpenses is returned by DeleteMonth when the target month
+	// still has expenses; handler maps to 409 (U2).
+	ErrMonthHasExpenses = errors.New("month has expenses")
 	// ErrInvalidCursor is returned when a paginated endpoint receives an
 	// opaque cursor that decodes but doesn't refer to a valid resume
 	// point (e.g. cursorMonth not found in the current month list).
 	// Handler maps to 400. Replaces the previous strings.Contains check.
 	ErrInvalidCursor = errors.New("invalid pagination cursor")
 )
+
+// InsufficientFundsError carries the amount that WAS available when an
+// expense add/edit was refused under hard-stop, so the handler can tell the
+// user what they have to work with instead of a bare "Insufficient funds"
+// (U4). It wraps ErrInsufficientFunds so existing errors.Is checks still
+// match.
+type InsufficientFundsError struct {
+	Available float64
+}
+
+func (e *InsufficientFundsError) Error() string { return ErrInsufficientFunds.Error() }
+func (e *InsufficientFundsError) Unwrap() error { return ErrInsufficientFunds }
 
 type ExpenseService struct {
 	repo              repository.RepositoryInterface
@@ -67,10 +88,24 @@ func roundCents(v float64) float64 {
 	return math.Round(v*100) / 100
 }
 
-// GetCurrentMonth returns the current month key in YYYY-MM format
+// GetCurrentMonth returns the current month key in YYYY-MM format. Uses
+// UTC by construction so behavior is identical regardless of the host's
+// local timezone (Lambda runs UTC, but tests and local runs may not).
 func GetCurrentMonth() string {
-	now := time.Now()
+	now := time.Now().UTC()
 	return fmt.Sprintf("%04d-%02d", now.Year(), now.Month())
+}
+
+// ValidateMonth is the single source of truth for the "YYYY-MM" month-key
+// rule, used by both the HTTP handlers and the service layer (previously
+// the rule was implemented three ways: len()==7, inline time.Parse, and a
+// handler-local helper). Returns ErrInvalidMonth on anything that doesn't
+// parse as a real year-month.
+func ValidateMonth(month string) error {
+	if _, err := time.Parse("2006-01", month); err != nil {
+		return ErrInvalidMonth
+	}
+	return nil
 }
 
 // GetPreviousMonth returns the previous month key. Input must be a validated
@@ -122,6 +157,30 @@ func decodeCursor(cursor string) (map[string]types.AttributeValue, error) {
 	return key, nil
 }
 
+// validateExpenseCursor checks that a decoded expense-pagination cursor is a
+// well-formed ExclusiveStartKey for the GetExpenses query on `month`: exactly
+// the keys PK and SK, PK equal to this month's partition, and SK beginning
+// with the EXP# prefix. A fabricated or cross-month cursor returns
+// ErrInvalidCursor (→ 400) instead of reaching DynamoDB and triggering a
+// ValidationException → 500 (B5).
+func validateExpenseCursor(cursor map[string]types.AttributeValue, month string) error {
+	if len(cursor) != 2 {
+		return ErrInvalidCursor
+	}
+	pkAV, pkOK := cursor["PK"].(*types.AttributeValueMemberS)
+	skAV, skOK := cursor["SK"].(*types.AttributeValueMemberS)
+	if !pkOK || !skOK {
+		return ErrInvalidCursor
+	}
+	if pkAV.Value != repository.MonthPrefix+month {
+		return ErrInvalidCursor
+	}
+	if !strings.HasPrefix(skAV.Value, repository.ExpensePrefix) {
+		return ErrInvalidCursor
+	}
+	return nil
+}
+
 // GetMonthData retrieves the summary and a paginated list of expenses for
 // the specified month. The limit parameter controls how many expenses are
 // returned per page, and cursorStr is the opaque pagination token from a
@@ -152,6 +211,13 @@ func (s *ExpenseService) GetMonthData(ctx context.Context, month string, limit i
 		cursor, err = decodeCursor(cursorStr)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrInvalidCursor, err)
+		}
+		// Validate the decoded cursor shape so a bogus token yields a 400
+		// (ErrInvalidCursor) rather than a DynamoDB ValidationException →
+		// 500 (B5). A resume key for this query must be exactly {PK, SK}
+		// where PK is this month's partition and SK is an EXP# row.
+		if err := validateExpenseCursor(cursor, month); err != nil {
+			return nil, err
 		}
 	}
 
@@ -227,7 +293,12 @@ func (s *ExpenseService) ensureMonthExists(ctx context.Context, month string) (*
 		}
 	}
 
-	// Create new month summary with $0 allowance
+	// Create new month summary with $0 allowance using a conditional put
+	// (attribute_not_exists). If a concurrent request created the month in
+	// the gap between our Get and this write, we lose the race — re-read
+	// and return the winner so we never clobber it (B2). The old
+	// unconditional Put could overwrite a month another request just
+	// created, permanently desyncing the month vs the global balance.
 	summary = &model.MonthSummary{
 		Month:           month,
 		StartingBalance: startingBalance,
@@ -236,17 +307,146 @@ func (s *ExpenseService) ensureMonthExists(ctx context.Context, month string) (*
 		EndingBalance:   startingBalance,
 	}
 
-	if err := s.repo.SaveMonthSummary(ctx, summary); err != nil {
+	if err := s.repo.CreateMonthSummaryIfAbsent(ctx, summary); err != nil {
+		if errors.Is(err, repository.ErrMonthAlreadyExists) {
+			winner, rerr := s.repo.GetMonthSummary(ctx, month)
+			if rerr != nil {
+				return nil, rerr
+			}
+			if winner != nil {
+				return winner, nil
+			}
+			// Extremely unlikely (created then deleted); surface the
+			// original conflict rather than a nil summary.
+			return nil, err
+		}
 		return nil, err
 	}
 
 	return summary, nil
 }
 
+// fetchSummaryAndBalance reads the post-mutation month summary and the
+// global balance concurrently. Before, these were two sequential round
+// trips on the hot path of every mutation response; they're independent,
+// so running them in parallel halves the post-write latency (C3).
+func (s *ExpenseService) fetchSummaryAndBalance(ctx context.Context, month string) (*model.MonthSummary, *model.Balance, error) {
+	var (
+		summary    *model.MonthSummary
+		balance    *model.Balance
+		summaryErr error
+		balanceErr error
+		wg         sync.WaitGroup
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		summary, summaryErr = s.repo.GetMonthSummary(ctx, month)
+	}()
+	go func() {
+		defer wg.Done()
+		balance, balanceErr = s.repo.GetBalance(ctx)
+	}()
+	wg.Wait()
+	if summaryErr != nil {
+		return nil, nil, summaryErr
+	}
+	if balanceErr != nil {
+		return nil, nil, balanceErr
+	}
+	return summary, balance, nil
+}
+
+// insufficientFunds builds the rich insufficient-funds error carrying the
+// month's currently-available ending balance (U4). If the summary can't be
+// read back, it degrades to the plain sentinel — the refusal is still
+// correct, just without the available figure.
+func (s *ExpenseService) insufficientFunds(ctx context.Context, month string) error {
+	summary, err := s.repo.GetMonthSummary(ctx, month)
+	if err != nil || summary == nil {
+		return ErrInsufficientFunds
+	}
+	return &InsufficientFundsError{Available: roundCents(summary.EndingBalance)}
+}
+
+// propagateToLaterMonths shifts every month strictly after `month` by
+// endingDelta on both starting_balance and ending_balance. When carry-over
+// is enabled, editing/deleting an expense in a PAST month must ripple
+// through the carry chain — otherwise later months' starting balances stay
+// permanently wrong (B3). When carry-over is off, later months start fresh
+// from zero, so there is nothing to propagate.
+//
+// The later months are discovered from the canonical month rows
+// (monthsAfter), which are complete regardless of MONTHLIST state — so on a
+// table written before the mirror scheme (empty/partial MONTHLIST) this no
+// longer silently no-ops and leaves later months' starting_balance wrong.
+//
+// Each later month is then shifted via a conditional DELTA update applied to
+// both its canonical row and its mirror, all batched into ONE
+// TransactWriteItems (PropagateLaterMonthDeltas). Deltas compose with any
+// concurrent write to those months instead of clobbering it the way the
+// previous unconditioned full-object Put of a stale snapshot did.
+//
+// Atomicity caveat: the propagation transaction is separate from the
+// originating mutation's transaction (DynamoDB's 100-item cap rules out one
+// mega-transaction). The propagation itself is all-or-nothing, but a crash
+// after the mutation commits and before propagation lands would leave later
+// months stale — see PropagateLaterMonthDeltas's residual-gap note.
+func (s *ExpenseService) propagateToLaterMonths(ctx context.Context, month string, endingDelta float64) error {
+	if !s.carryOverBalance || endingDelta == 0 {
+		return nil
+	}
+	later, err := s.monthsAfter(ctx, month)
+	if err != nil {
+		return err
+	}
+	if len(later) == 0 {
+		return nil
+	}
+	// Each later month's mirror must exist before the conditional delta
+	// update runs (delta updates are not upserts). On a freshly backfilled
+	// table the mirror exists; on a partially-backfilled one this closes
+	// the gap. EnsureMonthListMirror is a no-op when the mirror is present.
+	for _, m := range later {
+		if err := s.repo.EnsureMonthListMirror(ctx, m); err != nil {
+			return err
+		}
+	}
+	return s.repo.PropagateLaterMonthDeltas(ctx, later, roundCents(endingDelta))
+}
+
+// monthsAfter returns the keys of every month strictly greater than `month`,
+// ascending. It reads the CANONICAL month rows (ListAllMonthsLegacy — the
+// full scan over MONTH#<m>/SUMMARY) rather than the MONTHLIST index.
+//
+// The index is the wrong source here: on a legacy table its partition is
+// empty or partial, and reading it would silently miss later months, leaving
+// their starting_balance permanently wrong (the HIGH defect this fix
+// targets). It would also miss months whose mirror was just back-filled for
+// THIS month but not yet for the later ones. The canonical rows are always
+// complete regardless of mirror state, so propagation always sees the true
+// set of later months. Propagation only fires when carry-over is on and a
+// PAST month was mutated (a rare edit), and months are few (one row per
+// calendar month), so the scan cost is negligible.
+func (s *ExpenseService) monthsAfter(ctx context.Context, month string) ([]string, error) {
+	canonical, err := s.repo.ListAllMonthsLegacy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var later []string
+	for _, m := range canonical {
+		if m.Month > month {
+			later = append(later, m.Month)
+		}
+	}
+	sort.Slice(later, func(i, j int) bool { return later[i] < later[j] })
+	return later, nil
+}
+
 // AddExpense adds a new expense in a single DynamoDB transaction
-// (PutExpense + UpdateMonthExpenses + UpdateBalance). Closes the
-// non-atomic 3-write window that previously could leave the ledger
-// in a corrupt state if the Lambda timed out mid-flight.
+// (expense Put + month summary + global balance + MONTHLIST mirror).
+// Closes the non-atomic multi-write window that previously could leave the
+// ledger corrupt if the Lambda timed out mid-flight.
 //
 // When req.Month is set, the expense is filed against that month
 // (client knows its local timezone). Empty Month falls back to the
@@ -256,6 +456,9 @@ func (s *ExpenseService) ensureMonthExists(ctx context.Context, month string) (*
 // expression atomically checks `ending_balance >= amount`, so two
 // concurrent AddExpense calls cannot both succeed at $7 each on a $10
 // balance.
+//
+// If the targeted month is not the latest, subsequent months' carried
+// balances are walked forward to keep the ledger consistent (B3).
 func (s *ExpenseService) AddExpense(ctx context.Context, req *model.AddExpenseRequest) (*model.AddExpenseResponse, error) {
 	req.Amount = roundCents(req.Amount)
 	if req.Amount <= 0 || req.Amount > 99999.99 {
@@ -280,6 +483,14 @@ func (s *ExpenseService) AddExpense(ctx context.Context, req *model.AddExpenseRe
 	if _, err := s.ensureMonthExists(ctx, month); err != nil {
 		return nil, err
 	}
+	// Back-fill the MONTHLIST mirror on legacy tables before the atomic
+	// transaction. ensureMonthExists only creates a mirror for months it
+	// creates; a month that already exists canonically but predates the
+	// mirror scheme has none, and AtomicAddExpense's monthListUpdate would
+	// then cancel the whole transaction (→ 500).
+	if err := s.repo.EnsureMonthListMirror(ctx, month); err != nil {
+		return nil, err
+	}
 
 	now := time.Now()
 	expense := &model.Expense{
@@ -291,17 +502,19 @@ func (s *ExpenseService) AddExpense(ctx context.Context, req *model.AddExpenseRe
 
 	if err := s.repo.AtomicAddExpense(ctx, month, expense, !s.allowOverspending); err != nil {
 		if errors.Is(err, repository.ErrInsufficientBalance) {
-			return nil, ErrInsufficientFunds
+			return nil, s.insufficientFunds(ctx, month)
 		}
 		return nil, err
 	}
 
-	// Read back the post-transaction state for an accurate response.
-	updatedSummary, err := s.repo.GetMonthSummary(ctx, month)
-	if err != nil {
+	// Adding an expense lowers this month's ending balance by the amount;
+	// ripple that through later months' carry chain.
+	if err := s.propagateToLaterMonths(ctx, month, -req.Amount); err != nil {
 		return nil, err
 	}
-	balance, err := s.repo.GetBalance(ctx)
+
+	// Read back the post-transaction state for an accurate response.
+	updatedSummary, balance, err := s.fetchSummaryAndBalance(ctx, month)
 	if err != nil {
 		return nil, err
 	}
@@ -328,8 +541,8 @@ func resolveMonth(clientMonth string) (string, error) {
 	if clientMonth == "" {
 		return GetCurrentMonth(), nil
 	}
-	if _, err := time.Parse("2006-01", clientMonth); err != nil {
-		return "", ErrInvalidMonth
+	if err := ValidateMonth(clientMonth); err != nil {
+		return "", err
 	}
 	return clientMonth, nil
 }
@@ -381,16 +594,28 @@ func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expens
 	amountDelta := newAmount - currentExpense.Amount
 
 	if amountDelta != 0 {
+		// Back-fill the MONTHLIST mirror on legacy tables so the atomic
+		// transaction's monthListUpdate condition can't cancel it (→ 500).
+		if err := s.repo.EnsureMonthListMirror(ctx, month); err != nil {
+			return nil, err
+		}
 		// Atomic transaction with optimistic concurrency on amount.
 		if err := s.repo.AtomicUpdateExpense(ctx, month, expenseID, currentExpense.Amount, newAmount, newDescription, !s.allowOverspending); err != nil {
 			switch {
 			case errors.Is(err, repository.ErrInsufficientBalance):
-				return nil, ErrInsufficientFunds
+				return nil, s.insufficientFunds(ctx, month)
 			case errors.Is(err, repository.ErrExpenseStateMismatch):
-				return nil, ErrExpenseNotFound
+				// We read the expense moments ago, so this is a genuine
+				// concurrent edit, not a missing row → 409 refresh (U4).
+				return nil, ErrExpenseModified
 			default:
 				return nil, err
 			}
+		}
+		// Changing the amount shifts this month's ending balance by
+		// -amountDelta; ripple through later months' carry chain.
+		if err := s.propagateToLaterMonths(ctx, month, -amountDelta); err != nil {
+			return nil, err
 		}
 	} else {
 		// Description-only update doesn't touch summary/balance — single write is fine.
@@ -403,11 +628,7 @@ func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expens
 		}
 	}
 
-	updatedSummary, err := s.repo.GetMonthSummary(ctx, month)
-	if err != nil {
-		return nil, err
-	}
-	balance, err := s.repo.GetBalance(ctx)
+	updatedSummary, balance, err := s.fetchSummaryAndBalance(ctx, month)
 	if err != nil {
 		return nil, err
 	}
@@ -442,10 +663,23 @@ func (s *ExpenseService) DeleteExpense(ctx context.Context, month string, expens
 		return ErrExpenseNotFound
 	}
 
+	// Back-fill the MONTHLIST mirror on legacy tables so the atomic
+	// transaction's monthListUpdate condition can't cancel it (→ 500).
+	if err := s.repo.EnsureMonthListMirror(ctx, month); err != nil {
+		return err
+	}
+
 	if err := s.repo.AtomicDeleteExpense(ctx, month, expenseID, currentExpense.Amount); err != nil {
 		if errors.Is(err, repository.ErrExpenseStateMismatch) {
-			return ErrExpenseNotFound
+			// Found on read, changed before the conditional delete → 409 (U4).
+			return ErrExpenseModified
 		}
+		return err
+	}
+
+	// Deleting refunds this month's ending balance by the amount; ripple
+	// that through later months' carry chain.
+	if err := s.propagateToLaterMonths(ctx, month, currentExpense.Amount); err != nil {
 		return err
 	}
 	return nil
@@ -463,72 +697,79 @@ func (s *ExpenseService) GetBalance(ctx context.Context) (*model.BalanceResponse
 }
 
 // ListMonths returns a paginated list of months sorted in descending order
-// (most recent first). Because DynamoDB scan results are unordered, this
-// method fetches all month summaries via ListAllMonths, sorts them in memory,
-// and then applies cursor-based pagination. The cursorMonth parameter is the
-// decoded month value (e.g. "2026-01") from a previous response's NextCursor;
-// pass an empty string for the first page. The limit controls how many months
-// are returned per page.
+// (most recent first). It is served by a single DynamoDB Query against the
+// MONTHLIST index partition — natively sorted and paginated — instead of the
+// old full-table Scan whose cost grew with every expense ever written.
+//
+// cursorMonth is the decoded month value (e.g. "2026-01") from a previous
+// response's NextCursor; pass empty for the first page. A non-empty cursor
+// that doesn't correspond to a real month returns ErrInvalidCursor (the
+// handler maps that to 400) rather than silently restarting pagination.
+//
+// Lazy migration: on a table written before the MONTHLIST index existed the
+// query returns nothing. In that case (and only on the first page) we fall
+// back to the legacy full-table scan AND backfill the MONTHLIST copies, so
+// the scan runs at most once per table.
 func (s *ExpenseService) ListMonths(ctx context.Context, limit int, cursorMonth string) (*model.MonthsResponse, error) {
-	allMonths, err := s.repo.ListAllMonths(ctx)
+	var cursor map[string]types.AttributeValue
+	if cursorMonth != "" {
+		// Validate the cursor points at a real month. A point read is O(1)
+		// and preserves the "fabricated cursor → 400" contract without a scan.
+		summary, err := s.repo.GetMonthSummary(ctx, cursorMonth)
+		if err != nil {
+			return nil, err
+		}
+		if summary == nil {
+			return nil, ErrInvalidCursor
+		}
+		cursor = map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: repository.PKMonthList},
+			"SK": &types.AttributeValueMemberS{Value: cursorMonth},
+		}
+	}
+
+	months, lastKey, err := s.repo.ListMonths(ctx, int32(limit), cursor)
 	if err != nil {
 		return nil, err
 	}
 
-	// Sort by month (descending - most recent first)
-	sort.Slice(allMonths, func(i, j int) bool {
-		return allMonths[i].Month > allMonths[j].Month
-	})
-
-	// Apply cursor: skip months until we pass the cursor.
-	// If the cursorMonth doesn't appear in the list (deleted month,
-	// fabricated cursor, stale copy from a long-ago response), return
-	// ErrInvalidCursor instead of silently returning page 1 — that
-	// behavior caused infinite-loop pagination bugs in the past.
-	startIdx := 0
-	if cursorMonth != "" {
-		found := false
-		for i, m := range allMonths {
-			if m.Month == cursorMonth {
-				startIdx = i + 1
-				found = true
-				break
+	// Lazy migration: empty MONTHLIST on the first page → fall back to the
+	// legacy scan, backfill the index, and re-query so this page is correct.
+	if len(months) == 0 && cursorMonth == "" {
+		legacy, err := s.repo.ListAllMonthsLegacy(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if len(legacy) > 0 {
+			if err := s.repo.BackfillMonthList(ctx, legacy); err != nil {
+				return nil, err
+			}
+			months, lastKey, err = s.repo.ListMonths(ctx, int32(limit), nil)
+			if err != nil {
+				return nil, err
 			}
 		}
-		if !found {
-			return nil, ErrInvalidCursor
-		}
 	}
 
-	// Apply limit
-	endIdx := len(allMonths)
-	if limit > 0 && startIdx+limit < endIdx {
-		endIdx = startIdx + limit
-	}
-
-	slice := allMonths[startIdx:endIdx]
-
-	items := make([]model.MonthListItem, len(slice))
-	for i, m := range slice {
-		// MonthlySaved is the user-visible "delta this month" — i.e. what
-		// the month contributed above (or below) its starting balance.
-		// Previously this was `AllowanceAdded - TotalExpenses`, which
-		// ignored StartingBalance entirely; with carry-over enabled the
-		// reported number understated savings, and with overspending
-		// enabled it could show "−$50 saved" for a month that ended in
-		// the black thanks to the carried-over balance. Using
-		// `EndingBalance - StartingBalance` is the consistent answer.
+	items := make([]model.MonthListItem, len(months))
+	for i, m := range months {
+		// MonthlySaved is the user-visible "delta this month" — what the
+		// month contributed above (or below) its starting balance. Using
+		// EndingBalance - StartingBalance is the carry-over-consistent
+		// answer; roundCents keeps float dust out of the JSON (B4).
 		items[i] = model.MonthListItem{
 			Month:        m.Month,
-			MonthlySaved: m.EndingBalance - m.StartingBalance,
+			MonthlySaved: roundCents(m.EndingBalance - m.StartingBalance),
 		}
 	}
 
-	// Determine next cursor
+	// Next cursor: base64 of the last month's key, matching the legacy
+	// cursor format the handler decodes.
 	nextCursor := ""
-	if endIdx < len(allMonths) && len(slice) > 0 {
-		lastMonth := slice[len(slice)-1].Month
-		nextCursor = base64.URLEncoding.EncodeToString([]byte(lastMonth))
+	if lastKey != nil {
+		if sk, ok := lastKey["SK"].(*types.AttributeValueMemberS); ok {
+			nextCursor = base64.URLEncoding.EncodeToString([]byte(sk.Value))
+		}
 	}
 
 	return &model.MonthsResponse{
@@ -541,12 +782,51 @@ func (s *ExpenseService) ListMonths(ctx context.Context, limit int, cursorMonth 
 // The month summary write and the balance credit are wrapped in a single
 // DynamoDB transaction; an attribute_not_exists condition on the put
 // prevents two concurrent creates from both succeeding.
+//
+// Idempotent allowance activation (U1): if the month already exists but
+// carries a $0 allowance — the state produced when an expense is filed
+// into a not-yet-created month, auto-creating it via ensureMonthExists —
+// CreateMonth applies the allowance via an AddFunds-style transaction
+// instead of returning 409. This closes the "allowance trap" where that
+// month's allowance was silently never granted. A month that already has
+// a non-zero allowance still returns ErrMonthExists.
 func (s *ExpenseService) CreateMonth(ctx context.Context, month string) (*model.CreateMonthResponse, error) {
-	if len(month) != 7 {
+	if err := ValidateMonth(month); err != nil {
 		return nil, ErrInvalidMonth
 	}
-	if _, err := time.Parse("2006-01", month); err != nil {
-		return nil, ErrInvalidMonth
+
+	existing, err := s.repo.GetMonthSummary(ctx, month)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		// Already activated with a real allowance — genuine duplicate.
+		if existing.AllowanceAdded != 0 {
+			return nil, ErrMonthExists
+		}
+		// Auto-created $0 month: top it up to the configured allowance.
+		allowance := roundCents(s.monthlyAllowance)
+		if allowance > 0 {
+			// Back-fill the mirror on legacy tables before the atomic top-up.
+			if err := s.repo.EnsureMonthListMirror(ctx, month); err != nil {
+				return nil, err
+			}
+			if err := s.repo.AtomicAddFunds(ctx, month, allowance); err != nil {
+				if errors.Is(err, repository.ErrExpenseStateMismatch) {
+					return nil, ErrMonthNotFound
+				}
+				return nil, err
+			}
+		}
+		updated, balance, err := s.fetchSummaryAndBalance(ctx, month)
+		if err != nil {
+			return nil, err
+		}
+		return &model.CreateMonthResponse{
+			Success:      true,
+			Summary:      updated,
+			TotalBalance: balance.TotalBalance,
+		}, nil
 	}
 
 	prevMonth := GetPreviousMonth(month)
@@ -586,6 +866,39 @@ func (s *ExpenseService) CreateMonth(ctx context.Context, month string) (*model.
 	}, nil
 }
 
+// DeleteMonth removes a month and reverses its allowance credit (U2). The
+// summary (and its MONTHLIST copy) are deleted and the global balance is
+// debited by allowance_added in one transaction, conditioned on
+// total_expenses == 0. A month that still has expenses returns
+// ErrMonthHasExpenses (handler → 409); a missing month returns
+// ErrMonthNotFound (handler → 404).
+func (s *ExpenseService) DeleteMonth(ctx context.Context, month string) error {
+	if err := ValidateMonth(month); err != nil {
+		return ErrInvalidMonth
+	}
+
+	summary, err := s.repo.GetMonthSummary(ctx, month)
+	if err != nil {
+		return err
+	}
+	if summary == nil {
+		return ErrMonthNotFound
+	}
+	if summary.TotalExpenses != 0 {
+		return ErrMonthHasExpenses
+	}
+
+	if err := s.repo.AtomicDeleteMonth(ctx, month, summary.AllowanceAdded); err != nil {
+		if errors.Is(err, repository.ErrMonthHasExpenses) {
+			// Lost a race: an expense landed (or the month vanished)
+			// between our pre-read and the conditional delete.
+			return ErrMonthHasExpenses
+		}
+		return err
+	}
+	return nil
+}
+
 // AddFunds tops up an existing month's allowance and credits the global
 // balance by the same amount in a single transaction.
 func (s *ExpenseService) AddFunds(ctx context.Context, month string, amount float64) (*model.AddFundsResponse, error) {
@@ -604,6 +917,12 @@ func (s *ExpenseService) AddFunds(ctx context.Context, month string, amount floa
 		return nil, ErrMonthNotFound
 	}
 
+	// Back-fill the MONTHLIST mirror on legacy tables so the atomic
+	// transaction's monthListUpdate condition can't cancel it (→ 500).
+	if err := s.repo.EnsureMonthListMirror(ctx, month); err != nil {
+		return nil, err
+	}
+
 	if err := s.repo.AtomicAddFunds(ctx, month, amount); err != nil {
 		if errors.Is(err, repository.ErrExpenseStateMismatch) {
 			// Month vanished between our pre-check and the transaction.
@@ -612,11 +931,7 @@ func (s *ExpenseService) AddFunds(ctx context.Context, month string, amount floa
 		return nil, err
 	}
 
-	updatedSummary, err := s.repo.GetMonthSummary(ctx, month)
-	if err != nil {
-		return nil, err
-	}
-	balance, err := s.repo.GetBalance(ctx)
+	updatedSummary, balance, err := s.fetchSummaryAndBalance(ctx, month)
 	if err != nil {
 		return nil, err
 	}

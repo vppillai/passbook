@@ -119,6 +119,53 @@ func TestConvertToHTTPRequest(t *testing.T) {
 	}
 }
 
+// TestConvertToHTTPRequest_DecodesRawPath is the B1 regression: APIGW
+// HTTP API v2 delivers RawPath still percent-encoded, so the frontend's
+// encodeURIComponent("EXP#...") arrives as "EXP%23...". convertToHTTPRequest
+// must percent-decode it before assigning URL.Path, or the literal "%23"
+// reaches the handler's EXP# prefix check and every expense PUT/DELETE 400s.
+// This must NOT use httptest.NewRequest, which decodes paths itself and so
+// would hide the bug.
+func TestConvertToHTTPRequest_DecodesRawPath(t *testing.T) {
+	event := events.APIGatewayV2HTTPRequest{
+		RawPath: "/api/expense/2026-02/EXP%231234%23abcd",
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
+				Method:   "DELETE",
+				SourceIP: "203.0.113.7",
+			},
+		},
+	}
+
+	req, err := convertToHTTPRequest(context.Background(), event)
+	if err != nil {
+		t.Fatalf("convertToHTTPRequest failed: %v", err)
+	}
+	want := "/api/expense/2026-02/EXP#1234#abcd"
+	if req.URL.Path != want {
+		t.Errorf("Path = %q, want %q (percent-encoded RawPath must be decoded)", req.URL.Path, want)
+	}
+}
+
+// TestConvertToHTTPRequest_MalformedEscapeFallsBackToRaw pins the B1
+// fallback: an un-decodable RawPath (dangling %) must not fail the request;
+// the raw value is used as-is.
+func TestConvertToHTTPRequest_MalformedEscapeFallsBackToRaw(t *testing.T) {
+	event := events.APIGatewayV2HTTPRequest{
+		RawPath: "/api/expense/2026-02/EXP%2",
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{Method: "GET"},
+		},
+	}
+	req, err := convertToHTTPRequest(context.Background(), event)
+	if err != nil {
+		t.Fatalf("convertToHTTPRequest failed: %v", err)
+	}
+	if req.URL.Path != "/api/expense/2026-02/EXP%2" {
+		t.Errorf("Path = %q, want the raw value (fallback on bad escaping)", req.URL.Path)
+	}
+}
+
 // TestResponseWriter pins the http.ResponseWriter shim: implicit 200 on
 // first Write, explicit status respected, and body accumulation.
 func TestResponseWriter(t *testing.T) {

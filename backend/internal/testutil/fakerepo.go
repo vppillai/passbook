@@ -8,7 +8,9 @@ import (
 	"context"
 	"errors"
 	"math"
+	"sort"
 	"strconv"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/vppillai/passbook/backend/internal/model"
@@ -24,9 +26,14 @@ import (
 // first (returning ErrInsufficientBalance / ErrExpenseStateMismatch on
 // failure), then all mutations together.
 type FakeRepo struct {
-	Config     *model.Config
-	Balance    *model.Balance
-	Months     map[string]*model.MonthSummary
+	Config  *model.Config
+	Balance *model.Balance
+	Months  map[string]*model.MonthSummary
+	// MonthList models the MONTHLIST index partition (PK="MONTHLIST").
+	// Kept in sync with Months by every write path, exactly like the real
+	// repository's transactional mirror. Tests can clear it to exercise
+	// the lazy-migration fallback in ListMonths.
+	MonthList  map[string]*model.MonthSummary
 	Expenses   map[string]*model.Expense
 	RateLimits map[string]*model.RateLimitEntry // keyed by sourceIP
 	Sessions   map[string]*model.Session
@@ -35,6 +42,7 @@ type FakeRepo struct {
 func NewFakeRepo() *FakeRepo {
 	return &FakeRepo{
 		Months:     make(map[string]*model.MonthSummary),
+		MonthList:  make(map[string]*model.MonthSummary),
 		Expenses:   make(map[string]*model.Expense),
 		Sessions:   make(map[string]*model.Session),
 		RateLimits: make(map[string]*model.RateLimitEntry),
@@ -48,8 +56,31 @@ var _ repository.RepositoryInterface = (*FakeRepo)(nil)
 // (month, SK). Mirrors the PK+SK addressing in DynamoDB.
 func ExpenseKey(month, sk string) string { return month + "|" + sk }
 
-// SeedMonth inserts a month summary with the given balances.
+// SeedMonth inserts a month summary with the given balances into both the
+// canonical Months map and the MonthList index (mirroring the real
+// repository's dual-write — the state of a table written under the MONTHLIST
+// scheme).
 func SeedMonth(f *FakeRepo, month string, start, allow, expenses, ending float64) {
+	s := &model.MonthSummary{
+		Month:           month,
+		StartingBalance: start,
+		AllowanceAdded:  allow,
+		TotalExpenses:   expenses,
+		EndingBalance:   ending,
+	}
+	f.Months[month] = s
+	listCopy := *s
+	f.MonthList[month] = &listCopy
+}
+
+// SeedLegacyMonth inserts ONLY the canonical month summary with NO MonthList
+// mirror — exactly the state of a live production table written before the
+// MONTHLIST scheme existed. The atomic mutation methods model DynamoDB's
+// transactional condition: a monthList delta against a missing mirror
+// CANCELS the transaction (returns errMonthListMirrorMissing), so this
+// helper exercises the legacy-table regression that EnsureMonthListMirror
+// fixes.
+func SeedLegacyMonth(f *FakeRepo, month string, start, allow, expenses, ending float64) {
 	f.Months[month] = &model.MonthSummary{
 		Month:           month,
 		StartingBalance: start,
@@ -57,6 +88,7 @@ func SeedMonth(f *FakeRepo, month string, start, allow, expenses, ending float64
 		TotalExpenses:   expenses,
 		EndingBalance:   ending,
 	}
+	delete(f.MonthList, month)
 }
 
 // FmtFloat renders a float64 exactly as attributevalue marshals it into
@@ -109,18 +141,47 @@ func (f *FakeRepo) GetBalance(_ context.Context) (*model.Balance, error) {
 	return &b, nil
 }
 
-func (f *FakeRepo) UpdateBalance(_ context.Context, delta float64) (*model.Balance, error) {
-	if f.Balance == nil {
-		f.Balance = &model.Balance{}
-	}
-	f.Balance.TotalBalance += delta
-	b := *f.Balance
-	return &b, nil
-}
-
 // =====================================================================
 // Months
 // =====================================================================
+
+// errMonthListMirrorMissing models DynamoDB cancelling a TransactWriteItems
+// because a monthListUpdate's attribute_exists(PK) condition failed — the
+// MONTHLIST mirror row does not exist (the legacy-table CRITICAL defect).
+var errMonthListMirrorMissing = errors.New("month list mirror missing: transaction cancelled")
+
+// putMonthListMirror writes a full copy of the canonical summary into the
+// MonthList index — the dual-Put done inside transactions that CREATE a
+// month (AtomicCreateMonth / CreateMonthSummaryIfAbsent / SaveMonthSummary),
+// which always materialise both rows together.
+func (f *FakeRepo) putMonthListMirror(month string) {
+	s, ok := f.Months[month]
+	if !ok {
+		delete(f.MonthList, month)
+		return
+	}
+	copy := *s
+	f.MonthList[month] = &copy
+}
+
+// applyMonthListDelta models the real monthListUpdate: a conditional delta
+// update on the mirror row whose attribute_exists(PK) guard CANCELS the
+// whole transaction when the mirror is absent. Returns
+// errMonthListMirrorMissing in that case, exactly as DynamoDB would. When
+// the mirror exists it is mutated by the supplied deltas (NOT re-synced from
+// the canonical row) so the fake faithfully reproduces independent-row
+// drift if the two ever diverge.
+func (f *FakeRepo) applyMonthListDelta(month string, totalExpensesDelta, endingDelta, allowanceDelta, startingDelta float64) error {
+	mirror, ok := f.MonthList[month]
+	if !ok {
+		return errMonthListMirrorMissing
+	}
+	mirror.TotalExpenses += totalExpensesDelta
+	mirror.EndingBalance += endingDelta
+	mirror.AllowanceAdded += allowanceDelta
+	mirror.StartingBalance += startingDelta
+	return nil
+}
 
 func (f *FakeRepo) GetMonthSummary(_ context.Context, month string) (*model.MonthSummary, error) {
 	s, ok := f.Months[month]
@@ -134,30 +195,59 @@ func (f *FakeRepo) GetMonthSummary(_ context.Context, month string) (*model.Mont
 func (f *FakeRepo) SaveMonthSummary(_ context.Context, summary *model.MonthSummary) error {
 	s := *summary
 	f.Months[summary.Month] = &s
+	f.putMonthListMirror(summary.Month)
 	return nil
 }
 
-func (f *FakeRepo) UpdateMonthExpenses(_ context.Context, month string, expenseDelta float64) error {
-	s, ok := f.Months[month]
-	if !ok {
-		return errors.New("month not found")
+func (f *FakeRepo) CreateMonthSummaryIfAbsent(_ context.Context, summary *model.MonthSummary) error {
+	if _, exists := f.Months[summary.Month]; exists {
+		return repository.ErrMonthAlreadyExists
 	}
-	s.TotalExpenses += expenseDelta
-	s.EndingBalance -= expenseDelta
+	s := *summary
+	f.Months[summary.Month] = &s
+	f.putMonthListMirror(summary.Month)
 	return nil
 }
 
-func (f *FakeRepo) UpdateMonthAllowance(_ context.Context, month string, delta float64) error {
-	s, ok := f.Months[month]
-	if !ok {
-		return errors.New("month not found")
+// ListMonths reads the MonthList index, sorts descending by month, and
+// applies native key-based pagination via the lastKey marker. The cursor
+// map carries the SK ("month") of the last item from the previous page.
+func (f *FakeRepo) ListMonths(_ context.Context, limit int32, cursor map[string]types.AttributeValue) ([]model.MonthSummary, map[string]types.AttributeValue, error) {
+	all := make([]model.MonthSummary, 0, len(f.MonthList))
+	for _, s := range f.MonthList {
+		all = append(all, *s)
 	}
-	s.AllowanceAdded += delta
-	s.EndingBalance += delta
-	return nil
+	sort.Slice(all, func(i, j int) bool { return all[i].Month > all[j].Month })
+
+	start := 0
+	if cursor != nil {
+		if sk, ok := cursor["SK"].(*types.AttributeValueMemberS); ok {
+			for i, s := range all {
+				if s.Month == sk.Value {
+					start = i + 1
+					break
+				}
+			}
+		}
+	}
+
+	end := len(all)
+	if limit > 0 && start+int(limit) < end {
+		end = start + int(limit)
+	}
+	page := all[start:end]
+
+	var lastKey map[string]types.AttributeValue
+	if end < len(all) && len(page) > 0 {
+		lastKey = map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: repository.PKMonthList},
+			"SK": &types.AttributeValueMemberS{Value: page[len(page)-1].Month},
+		}
+	}
+	return page, lastKey, nil
 }
 
-func (f *FakeRepo) ListAllMonths(_ context.Context) ([]model.MonthSummary, error) {
+func (f *FakeRepo) ListAllMonthsLegacy(_ context.Context) ([]model.MonthSummary, error) {
 	out := make([]model.MonthSummary, 0, len(f.Months))
 	for _, s := range f.Months {
 		out = append(out, *s)
@@ -165,16 +255,65 @@ func (f *FakeRepo) ListAllMonths(_ context.Context) ([]model.MonthSummary, error
 	return out, nil
 }
 
+func (f *FakeRepo) BackfillMonthList(_ context.Context, summaries []model.MonthSummary) error {
+	for i := range summaries {
+		s := summaries[i]
+		f.MonthList[s.Month] = &s
+	}
+	return nil
+}
+
+// EnsureMonthListMirror back-fills the mirror row from the canonical summary
+// when absent — the fix the service calls before every atomic mutation on a
+// legacy month. Idempotent: a present mirror is left untouched (no clobber
+// of any independent drift). A missing canonical row is tolerated (no-op),
+// matching the real repository.
+func (f *FakeRepo) EnsureMonthListMirror(_ context.Context, month string) error {
+	if _, ok := f.MonthList[month]; ok {
+		return nil
+	}
+	s, ok := f.Months[month]
+	if !ok {
+		return nil
+	}
+	copy := *s
+	f.MonthList[month] = &copy
+	return nil
+}
+
+// PropagateLaterMonthDeltas applies the carry-chain delta to both the
+// canonical row and the mirror of every named month, in one logical
+// transaction. It models DynamoDB's all-or-nothing semantics: it first
+// validates that every canonical row AND every mirror exists (a missing
+// mirror is the legacy-table failure mode), and only then mutates — so a
+// single missing mirror cancels the entire propagation with no partial
+// writes.
+func (f *FakeRepo) PropagateLaterMonthDeltas(_ context.Context, months []string, delta float64) error {
+	if len(months) == 0 || delta == 0 {
+		return nil
+	}
+	for _, m := range months {
+		if _, ok := f.Months[m]; !ok {
+			return errors.New("month not found: propagation transaction cancelled")
+		}
+		if _, ok := f.MonthList[m]; !ok {
+			return errMonthListMirrorMissing
+		}
+	}
+	for _, m := range months {
+		s := f.Months[m]
+		s.StartingBalance += delta
+		s.EndingBalance += delta
+		mirror := f.MonthList[m]
+		mirror.StartingBalance += delta
+		mirror.EndingBalance += delta
+	}
+	return nil
+}
+
 // =====================================================================
 // Expenses
 // =====================================================================
-
-func (f *FakeRepo) AddExpense(_ context.Context, month string, expense *model.Expense) error {
-	e := *expense
-	e.PK = "MONTH#" + month
-	f.Expenses[ExpenseKey(month, expense.SK)] = &e
-	return nil
-}
 
 func (f *FakeRepo) GetExpense(_ context.Context, month string, expenseID string) (*model.Expense, error) {
 	e, ok := f.Expenses[ExpenseKey(month, expenseID)]
@@ -228,11 +367,17 @@ func (f *FakeRepo) AtomicAddExpense(_ context.Context, month string, expense *mo
 	if checkBalance && s.EndingBalance < expense.Amount {
 		return repository.ErrInsufficientBalance
 	}
+	// Transaction includes the monthListUpdate: a missing mirror cancels
+	// the whole transaction before any write lands (legacy-table defect).
+	if _, ok := f.MonthList[month]; !ok {
+		return errMonthListMirrorMissing
+	}
 	e := *expense
 	e.PK = "MONTH#" + month
 	f.Expenses[ExpenseKey(month, expense.SK)] = &e
 	s.TotalExpenses += expense.Amount
 	s.EndingBalance -= expense.Amount
+	_ = f.applyMonthListDelta(month, expense.Amount, -expense.Amount, 0, 0)
 	if f.Balance == nil {
 		f.Balance = &model.Balance{}
 	}
@@ -256,10 +401,15 @@ func (f *FakeRepo) AtomicUpdateExpense(_ context.Context, month, expenseID strin
 	if checkBalance && delta > 0 && s.EndingBalance < delta {
 		return repository.ErrInsufficientBalance
 	}
+	// Missing mirror cancels the whole transaction (legacy-table defect).
+	if _, ok := f.MonthList[month]; !ok {
+		return errMonthListMirrorMissing
+	}
 	e.Amount = newAmount
 	e.Description = newDescription
 	s.TotalExpenses += delta
 	s.EndingBalance -= delta
+	_ = f.applyMonthListDelta(month, delta, -delta, 0, 0)
 	if f.Balance == nil {
 		f.Balance = &model.Balance{}
 	}
@@ -275,13 +425,19 @@ func (f *FakeRepo) AtomicDeleteExpense(_ context.Context, month, expenseID strin
 	if e.Amount != oldAmount {
 		return repository.ErrExpenseStateMismatch
 	}
-	delete(f.Expenses, ExpenseKey(month, expenseID))
 	s, ok := f.Months[month]
 	if !ok {
 		return errors.New("month not found")
 	}
+	// Missing mirror cancels the whole transaction before any write lands
+	// (legacy-table defect) — check before deleting the expense row.
+	if _, ok := f.MonthList[month]; !ok {
+		return errMonthListMirrorMissing
+	}
+	delete(f.Expenses, ExpenseKey(month, expenseID))
 	s.TotalExpenses -= oldAmount
 	s.EndingBalance += oldAmount
+	_ = f.applyMonthListDelta(month, -oldAmount, oldAmount, 0, 0)
 	if f.Balance == nil {
 		f.Balance = &model.Balance{}
 	}
@@ -295,6 +451,7 @@ func (f *FakeRepo) AtomicCreateMonth(_ context.Context, summary *model.MonthSumm
 	}
 	s := *summary
 	f.Months[summary.Month] = &s
+	f.putMonthListMirror(summary.Month)
 	if f.Balance == nil {
 		f.Balance = &model.Balance{}
 	}
@@ -307,12 +464,34 @@ func (f *FakeRepo) AtomicAddFunds(_ context.Context, month string, amount float6
 	if !ok {
 		return repository.ErrExpenseStateMismatch
 	}
+	// Missing mirror cancels the whole transaction (legacy-table defect).
+	if _, ok := f.MonthList[month]; !ok {
+		return errMonthListMirrorMissing
+	}
 	s.AllowanceAdded += amount
 	s.EndingBalance += amount
+	_ = f.applyMonthListDelta(month, 0, amount, amount, 0)
 	if f.Balance == nil {
 		f.Balance = &model.Balance{}
 	}
 	f.Balance.TotalBalance += amount
+	return nil
+}
+
+func (f *FakeRepo) AtomicDeleteMonth(_ context.Context, month string, allowanceAdded float64) error {
+	s, ok := f.Months[month]
+	if !ok {
+		return repository.ErrMonthHasExpenses
+	}
+	if s.TotalExpenses != 0 {
+		return repository.ErrMonthHasExpenses
+	}
+	delete(f.Months, month)
+	delete(f.MonthList, month)
+	if f.Balance == nil {
+		f.Balance = &model.Balance{}
+	}
+	f.Balance.TotalBalance -= allowanceAdded
 	return nil
 }
 
@@ -357,13 +536,19 @@ func (f *FakeRepo) GetRateLimitEntry(_ context.Context, sourceIP string) (*model
 	return &out, nil
 }
 
-func (f *FakeRepo) IncrementFailedAttempts(_ context.Context, sourceIP string) (*model.RateLimitEntry, error) {
+func (f *FakeRepo) IncrementFailedAttempts(_ context.Context, sourceIP string, maxAttempts int) (*model.RateLimitEntry, error) {
 	r, ok := f.RateLimits[sourceIP]
+	if ok && r.Attempts >= maxAttempts {
+		// Mirrors the real conditional increment failing at the cap (B6).
+		return nil, repository.ErrRateLimitCapReached
+	}
 	if !ok {
 		r = &model.RateLimitEntry{}
 		f.RateLimits[sourceIP] = r
 	}
 	r.Attempts++
+	// Set a window TTL on (re)increment, matching the real 15-minute window.
+	r.TTL = time.Now().Add(15 * time.Minute).Unix()
 	out := *r
 	return &out, nil
 }

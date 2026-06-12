@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/vppillai/passbook/backend/internal/model"
 	"github.com/vppillai/passbook/backend/internal/testutil"
@@ -150,8 +151,8 @@ func TestVerifyPIN(t *testing.T) {
 		if resp.Success {
 			t.Fatal("Success = true for wrong PIN")
 		}
-		if resp.AttemptsRemaining != maxAttempts-1 {
-			t.Errorf("AttemptsRemaining = %d, want %d", resp.AttemptsRemaining, maxAttempts-1)
+		if resp.AttemptsRemaining == nil || *resp.AttemptsRemaining != maxAttempts-1 {
+			t.Errorf("AttemptsRemaining = %v, want %d", resp.AttemptsRemaining, maxAttempts-1)
 		}
 		if repo.RateLimits["ip-b"] == nil || repo.RateLimits["ip-b"].Attempts != 1 {
 			t.Errorf("rate-limit counter = %+v, want Attempts=1", repo.RateLimits["ip-b"])
@@ -215,6 +216,57 @@ func TestVerifyPIN(t *testing.T) {
 			t.Error("rate-limit entry not cleared after successful login")
 		}
 	})
+}
+
+// =====================================================================
+// TestVerifyPIN_RateLimited pins U3 + B6: at the cap, VerifyPIN returns a
+// rate-limited response carrying RetryAfterSeconds (derived from the row
+// TTL) and AttemptsRemaining=0 (a non-nil *int, not dropped by omitempty).
+// =====================================================================
+func TestVerifyPIN_RateLimited(t *testing.T) {
+	ctx := context.Background()
+	svc, repo := newAuthService(t)
+	seedPIN(t, repo, "1234")
+
+	// Pre-seed a capped entry with a TTL ~10 minutes out.
+	ttl := time.Now().Add(10 * time.Minute).Unix()
+	repo.RateLimits["ip-rl"] = &model.RateLimitEntry{Attempts: maxAttempts, TTL: ttl}
+
+	resp, err := svc.VerifyPIN(ctx, "1234", "ip-rl") // correct PIN, still refused
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Success {
+		t.Fatal("Success = true past the cap")
+	}
+	if resp.AttemptsRemaining == nil || *resp.AttemptsRemaining != 0 {
+		t.Errorf("AttemptsRemaining = %v, want non-nil 0", resp.AttemptsRemaining)
+	}
+	if resp.RetryAfterSeconds == nil {
+		t.Fatal("RetryAfterSeconds = nil, want a positive wait time")
+	}
+	if *resp.RetryAfterSeconds <= 0 || *resp.RetryAfterSeconds > 600 {
+		t.Errorf("RetryAfterSeconds = %d, want (0, 600]", *resp.RetryAfterSeconds)
+	}
+}
+
+// TestVerifyPIN_ConditionalIncrementCapsExactly pins B6: the per-IP counter
+// can't exceed the cap. After maxAttempts wrong tries the counter sits at
+// the cap and the next failed attempt is reported as rate-limited (the
+// conditional increment refuses to push it past the cap).
+func TestVerifyPIN_ConditionalIncrementCapsExactly(t *testing.T) {
+	ctx := context.Background()
+	svc, repo := newAuthService(t)
+	seedPIN(t, repo, "1234")
+
+	for i := 0; i < maxAttempts+3; i++ {
+		if _, err := svc.VerifyPIN(ctx, "0000", "ip-cap"); err != nil {
+			t.Fatalf("attempt %d errored: %v", i, err)
+		}
+	}
+	if got := repo.RateLimits["ip-cap"].Attempts; got != maxAttempts {
+		t.Errorf("Attempts = %d, want exactly %d (conditional increment must cap)", got, maxAttempts)
+	}
 }
 
 // =====================================================================

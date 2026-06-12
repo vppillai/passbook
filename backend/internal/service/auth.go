@@ -103,30 +103,14 @@ func (s *AuthService) VerifyPIN(ctx context.Context, pin string, sourceIP string
 		// without burning Argon2 cycles or sliding the counter. The
 		// RATELIMIT row's TTL lifts the block automatically once the
 		// window elapses.
-		return &model.VerifyPinResponse{
-			Success:           false,
-			Error:             "Too many attempts. Please wait.",
-			AttemptsRemaining: 0,
-		}, nil
+		return rateLimitedResponse(rateLimit), nil
 	}
 
 	// Validate PIN format before incurring Argon2 cost. Still increments
 	// the failed-attempt counter so that format-vs-Argon2 timing cannot
 	// be used to enumerate valid PIN shapes.
 	if err := validatePIN(pin); err != nil {
-		entry, incErr := s.repo.IncrementFailedAttempts(ctx, sourceIP)
-		if incErr != nil {
-			return nil, incErr
-		}
-		remaining := maxAttempts - entry.Attempts
-		if remaining < 0 {
-			remaining = 0
-		}
-		return &model.VerifyPinResponse{
-			Success:           false,
-			Error:             "Invalid PIN",
-			AttemptsRemaining: remaining,
-		}, nil
+		return s.failedAttempt(ctx, sourceIP)
 	}
 
 	config, err := s.repo.GetConfig(ctx)
@@ -146,19 +130,7 @@ func (s *AuthService) VerifyPIN(ctx context.Context, pin string, sourceIP string
 	}
 
 	if !match {
-		entry, err := s.repo.IncrementFailedAttempts(ctx, sourceIP)
-		if err != nil {
-			return nil, err
-		}
-		remaining := maxAttempts - entry.Attempts
-		if remaining < 0 {
-			remaining = 0
-		}
-		return &model.VerifyPinResponse{
-			Success:           false,
-			Error:             "Invalid PIN",
-			AttemptsRemaining: remaining,
-		}, nil
+		return s.failedAttempt(ctx, sourceIP)
 	}
 
 	if err := s.repo.ClearRateLimit(ctx, sourceIP); err != nil {
@@ -174,6 +146,58 @@ func (s *AuthService) VerifyPIN(ctx context.Context, pin string, sourceIP string
 		Success: true,
 		Token:   token,
 	}, nil
+}
+
+// failedAttempt records a single failed verify and returns the
+// not-authorized response. The increment is conditional (attempts < cap):
+// if the conditional fails the cap was reached concurrently (B6), and we
+// return the rate-limited 429 response derived from the current row.
+func (s *AuthService) failedAttempt(ctx context.Context, sourceIP string) (*model.VerifyPinResponse, error) {
+	entry, err := s.repo.IncrementFailedAttempts(ctx, sourceIP, maxAttempts)
+	if err != nil {
+		if errors.Is(err, repository.ErrRateLimitCapReached) {
+			current, gerr := s.repo.GetRateLimitEntry(ctx, sourceIP)
+			if gerr != nil {
+				return nil, gerr
+			}
+			return rateLimitedResponse(current), nil
+		}
+		return nil, err
+	}
+	remaining := maxAttempts - entry.Attempts
+	if remaining < 0 {
+		remaining = 0
+	}
+	// At exactly zero remaining the next attempt is locked out — surface
+	// that as a 429 with the wait time so the client stops guessing.
+	if remaining == 0 {
+		return rateLimitedResponse(entry), nil
+	}
+	return &model.VerifyPinResponse{
+		Success:           false,
+		Error:             "Invalid PIN",
+		AttemptsRemaining: &remaining,
+	}, nil
+}
+
+// rateLimitedResponse builds the 429 "too many attempts" body, including
+// retry_after_seconds derived from the rate-limit row's TTL (U3). entry may
+// be nil (TTL omitted) in the unlikely case the row vanished.
+func rateLimitedResponse(entry *model.RateLimitEntry) *model.VerifyPinResponse {
+	zero := 0
+	resp := &model.VerifyPinResponse{
+		Success:           false,
+		Error:             "Too many attempts. Please wait.",
+		AttemptsRemaining: &zero,
+	}
+	if entry != nil && entry.TTL > 0 {
+		retry := entry.TTL - time.Now().Unix()
+		if retry < 0 {
+			retry = 0
+		}
+		resp.RetryAfterSeconds = &retry
+	}
+	return resp
 }
 
 // ChangePIN rotates the PIN after verifying the current one. Calls
@@ -275,7 +299,8 @@ func hashPIN(pin string) (string, error) {
 
 	hash := argon2.IDKey([]byte(pin), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
 
-	// Encode as $argon2id$v=19$m=65536,t=3,p=2$<salt>$<hash>
+	// Encode as PHC string: $argon2id$v=19$m=16384,t=3,p=1$<salt>$<hash>
+	// (m/t/p come from the argonMemory/argonTime/argonThreads constants).
 	b64Salt := base64.RawStdEncoding.EncodeToString(salt)
 	b64Hash := base64.RawStdEncoding.EncodeToString(hash)
 

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vppillai/passbook/backend/internal/model"
 	"github.com/vppillai/passbook/backend/internal/service"
@@ -346,6 +347,160 @@ func TestExpenseEndpoints(t *testing.T) {
 		rec = do(t, rt, http.MethodDelete, "/api/expense/2026-02/EXP%231%23abc", authed(repo, ""))
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("re-delete = %d, want 404", rec.Code)
+		}
+	})
+}
+
+// =====================================================================
+// TestDeleteMonthEndpoint pins U2: DELETE /api/month/{m} removes an empty
+// month (200) and refuses a month with expenses (409).
+// =====================================================================
+func TestDeleteMonthEndpoint(t *testing.T) {
+	rt, repo := newTestRouter(t)
+
+	t.Run("deletes an empty month", func(t *testing.T) {
+		testutil.SeedMonth(repo, "2026-04", 0, 100, 0, 100)
+		rec := do(t, rt, http.MethodDelete, "/api/month/2026-04", authed(repo, ""))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("delete = %d, want 200 (body %s)", rec.Code, rec.Body)
+		}
+		if repo.Months["2026-04"] != nil {
+			t.Error("month still present after delete")
+		}
+	})
+
+	t.Run("refuses a month with expenses (409)", func(t *testing.T) {
+		testutil.SeedMonth(repo, "2026-05", 0, 100, 30, 70)
+		rec := do(t, rt, http.MethodDelete, "/api/month/2026-05", authed(repo, ""))
+		if rec.Code != http.StatusConflict {
+			t.Errorf("delete with expenses = %d, want 409 (body %s)", rec.Code, rec.Body)
+		}
+	})
+
+	t.Run("missing month 404", func(t *testing.T) {
+		rec := do(t, rt, http.MethodDelete, "/api/month/2030-12", authed(repo, ""))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("delete missing = %d, want 404", rec.Code)
+		}
+	})
+
+	t.Run("bad month format 400", func(t *testing.T) {
+		rec := do(t, rt, http.MethodDelete, "/api/month/not-a-month", authed(repo, ""))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("bad format = %d, want 400", rec.Code)
+		}
+	})
+}
+
+// =====================================================================
+// TestCreateMonthIdempotentAllowance pins U1 end-to-end: POSTing /api/month
+// for a month auto-created by an expense (with $0 allowance) activates the
+// allowance with 201 instead of 409.
+// =====================================================================
+func TestCreateMonthIdempotentAllowance(t *testing.T) {
+	rt, repo := newTestRouter(t)
+	testutil.SeedMonth(repo, "2026-06", 0, 0, 0, 0) // $0-allowance auto-created shape
+
+	rec := do(t, rt, http.MethodPost, "/api/month", authed(repo, `{"month":"2026-06"}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("activate = %d, want 201 (body %s)", rec.Code, rec.Body)
+	}
+	var resp model.CreateMonthResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Summary.AllowanceAdded != 100 {
+		t.Errorf("AllowanceAdded = %v, want 100", resp.Summary.AllowanceAdded)
+	}
+}
+
+// =====================================================================
+// TestInsufficientFundsIncludesAvailable pins U4: a hard-stop refusal
+// returns 400 with the available balance in the body.
+// =====================================================================
+func TestInsufficientFundsIncludesAvailable(t *testing.T) {
+	rt, repo := newTestRouter(t)
+	testutil.SeedMonth(repo, "2026-02", 0, 100, 0, 100)
+
+	rec := do(t, rt, http.MethodPost, "/api/expense", authed(repo, `{"amount":500,"description":"x","month":"2026-02"}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("overspend = %d, want 400 (body %s)", rec.Code, rec.Body)
+	}
+	var body struct {
+		Error     string  `json:"error"`
+		Available float64 `json:"available"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body.Available != 100 {
+		t.Errorf("available = %v, want 100", body.Available)
+	}
+}
+
+// =====================================================================
+// TestVerifyRateLimited429 pins U3 end-to-end: once the per-IP cap is hit,
+// /api/auth/verify returns 429 with a Retry-After header and a
+// retry_after_seconds body field.
+// =====================================================================
+func TestVerifyRateLimited429(t *testing.T) {
+	rt, repo := newTestRouter(t)
+	// Setup a PIN so verify reaches the hash path.
+	rec := do(t, rt, http.MethodPost, "/api/auth/setup", reqOpts{origin: testOrigin, body: `{"pin":"1234"}`})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("setup = %d, want 200", rec.Code)
+	}
+	// Pre-cap the source-IP bucket. httptest requests carry no X-Source-Ip
+	// header, so the handler passes "" to the service, and the FakeRepo
+	// keys its rate-limit map by that raw sourceIP value.
+	ttl := time.Now().Add(10 * time.Minute).Unix()
+	repo.RateLimits[""] = &model.RateLimitEntry{Attempts: 5, TTL: ttl}
+
+	rec = do(t, rt, http.MethodPost, "/api/auth/verify", reqOpts{origin: testOrigin, body: `{"pin":"1234"}`})
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("rate-limited verify = %d, want 429 (body %s)", rec.Code, rec.Body)
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Error("Retry-After header missing on 429")
+	}
+	var vr model.VerifyPinResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &vr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if vr.RetryAfterSeconds == nil || *vr.RetryAfterSeconds <= 0 {
+		t.Errorf("retry_after_seconds = %v, want positive", vr.RetryAfterSeconds)
+	}
+	if vr.AttemptsRemaining == nil || *vr.AttemptsRemaining != 0 {
+		t.Errorf("attempts_remaining = %v, want non-nil 0 (omitempty trap fixed)", vr.AttemptsRemaining)
+	}
+}
+
+// =====================================================================
+// TestRefererOriginExactMatch pins S1: a Referer whose host merely has the
+// allowed origin as a prefix (app.example.evil.com) must be rejected; a
+// real same-origin Referer with a path must pass.
+// =====================================================================
+func TestRefererOriginExactMatch(t *testing.T) {
+	rt, _ := newTestRouter(t)
+
+	t.Run("suffix-host referer rejected", func(t *testing.T) {
+		rec := do(t, rt, http.MethodGet, "/api/auth/status", reqOpts{referer: "https://app.example.evil.com/passbook/"})
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("evil suffix referer = %d, want 403", rec.Code)
+		}
+	})
+
+	t.Run("real same-origin referer with path passes", func(t *testing.T) {
+		rec := do(t, rt, http.MethodGet, "/api/auth/status", reqOpts{referer: testOrigin + "/passbook/kids/"})
+		if rec.Code != http.StatusOK {
+			t.Errorf("same-origin referer = %d, want 200", rec.Code)
+		}
+	})
+
+	t.Run("different scheme rejected", func(t *testing.T) {
+		rec := do(t, rt, http.MethodGet, "/api/auth/status", reqOpts{referer: "http://app.example/"})
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("http (vs https) referer = %d, want 403", rec.Code)
 		}
 	})
 }

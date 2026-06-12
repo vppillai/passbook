@@ -23,17 +23,34 @@ type RepositoryInterface interface {
 
 	// Balance
 	GetBalance(ctx context.Context) (*model.Balance, error)
-	UpdateBalance(ctx context.Context, delta float64) (*model.Balance, error)
 
 	// Months
 	GetMonthSummary(ctx context.Context, month string) (*model.MonthSummary, error)
 	SaveMonthSummary(ctx context.Context, summary *model.MonthSummary) error
-	UpdateMonthExpenses(ctx context.Context, month string, expenseDelta float64) error
-	UpdateMonthAllowance(ctx context.Context, month string, fundsDelta float64) error
-	ListAllMonths(ctx context.Context) ([]model.MonthSummary, error)
+	// CreateMonthSummaryIfAbsent conditionally creates a $0-allowance
+	// month (canonical row + MONTHLIST copy); ErrMonthAlreadyExists on
+	// a concurrent create.
+	CreateMonthSummaryIfAbsent(ctx context.Context, summary *model.MonthSummary) error
+	// ListMonths queries the MONTHLIST index partition (sorted desc,
+	// natively paginated) — no full-table scan.
+	ListMonths(ctx context.Context, limit int32, cursor map[string]types.AttributeValue) ([]model.MonthSummary, map[string]types.AttributeValue, error)
+	// ListAllMonthsLegacy + BackfillMonthList power the one-time lazy
+	// migration when the MONTHLIST partition is empty on an old table.
+	ListAllMonthsLegacy(ctx context.Context) ([]model.MonthSummary, error)
+	BackfillMonthList(ctx context.Context, summaries []model.MonthSummary) error
+	// EnsureMonthListMirror back-fills the single MONTHLIST mirror row for a
+	// month (full copy of the canonical summary, race-tolerant) so the
+	// attribute_exists(PK) condition on the atomic mutations' monthListUpdate
+	// cannot cancel the transaction on legacy tables that predate the mirror.
+	EnsureMonthListMirror(ctx context.Context, month string) error
+	// PropagateLaterMonthDeltas applies a conditional delta to
+	// starting_balance + ending_balance on each named month's canonical row
+	// AND its mirror, batched into one TransactWriteItems (chunked at the
+	// 100-item cap) so carry-chain propagation is atomic and composes with
+	// concurrent writes.
+	PropagateLaterMonthDeltas(ctx context.Context, months []string, delta float64) error
 
-	// Expenses (non-atomic — used by atomic helpers + a few simple paths)
-	AddExpense(ctx context.Context, month string, expense *model.Expense) error
+	// Expenses
 	GetExpense(ctx context.Context, month string, expenseID string) (*model.Expense, error)
 	GetExpenses(ctx context.Context, month string, limit int32, cursor map[string]types.AttributeValue) ([]model.Expense, map[string]types.AttributeValue, error)
 	UpdateExpense(ctx context.Context, month string, expenseID string, amount float64, description string) (*model.Expense, error)
@@ -46,6 +63,7 @@ type RepositoryInterface interface {
 	AtomicDeleteExpense(ctx context.Context, month string, expenseID string, oldAmount float64) error
 	AtomicCreateMonth(ctx context.Context, summary *model.MonthSummary, allowance float64) error
 	AtomicAddFunds(ctx context.Context, month string, amount float64) error
+	AtomicDeleteMonth(ctx context.Context, month string, allowanceAdded float64) error
 
 	// Sessions
 	CreateSession(ctx context.Context, token string, ttlHours int) error
@@ -55,7 +73,9 @@ type RepositoryInterface interface {
 
 	// Rate limiting — per-IP scoping (PK = "RATELIMIT#<ip>").
 	GetRateLimitEntry(ctx context.Context, sourceIP string) (*model.RateLimitEntry, error)
-	IncrementFailedAttempts(ctx context.Context, sourceIP string) (*model.RateLimitEntry, error)
+	// IncrementFailedAttempts conditionally bumps the counter while it is
+	// below maxAttempts; ErrRateLimitCapReached when already at the cap (B6).
+	IncrementFailedAttempts(ctx context.Context, sourceIP string, maxAttempts int) (*model.RateLimitEntry, error)
 	ClearRateLimit(ctx context.Context, sourceIP string) error
 }
 

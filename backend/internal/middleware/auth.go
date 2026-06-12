@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"log"
 	"net/http"
 
 	"github.com/vppillai/passbook/backend/internal/service"
@@ -19,6 +20,7 @@ func Auth(authService *service.AuthService) func(http.Handler) http.Handler {
 
 			valid, err := authService.ValidateSession(r.Context(), token)
 			if err != nil {
+				log.Printf("auth.middleware: session validation failed: %v", err)
 				http.Error(w, `{"error":"Internal server error"}`, http.StatusInternalServerError)
 				return
 			}

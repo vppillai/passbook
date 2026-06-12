@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/vppillai/passbook/backend/internal/model"
 	"github.com/vppillai/passbook/backend/internal/repository"
@@ -24,14 +23,11 @@ func validateExpenseID(id string) bool {
 	return strings.HasPrefix(id, repository.ExpensePrefix) && len(id) > len(repository.ExpensePrefix)
 }
 
-// validateMonthKey rejects anything that isn't a parseable YYYY-MM.
-// Previously handlers used `len(month) != 7` which accepted "abcdefg".
-// Centralising here keeps the rule consistent across handlers.
+// validateMonthKey delegates to service.ValidateMonth — the single source
+// of truth for the YYYY-MM rule shared by the handler and the service layer
+// (Q2). Kept as a thin handler-local wrapper so the call sites stay terse.
 func validateMonthKey(month string) error {
-	if _, err := time.Parse("2006-01", month); err != nil {
-		return errors.New("invalid month")
-	}
-	return nil
+	return service.ValidateMonth(month)
 }
 
 func (rt *Router) handleGetBalance(w http.ResponseWriter, r *http.Request) {
@@ -122,10 +118,12 @@ func (rt *Router) handleAddExpense(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, service.ErrInvalidAmount):
 			http.Error(w, `{"error":"Amount must be positive"}`, http.StatusBadRequest)
+		case errors.Is(err, service.ErrInvalidMonth):
+			http.Error(w, `{"error":"Invalid month format. Use YYYY-MM"}`, http.StatusBadRequest)
 		case errors.Is(err, service.ErrDescriptionTooLong):
 			http.Error(w, `{"error":"Description too long (max 100 characters)"}`, http.StatusBadRequest)
 		case errors.Is(err, service.ErrInsufficientFunds):
-			http.Error(w, `{"error":"Insufficient funds"}`, http.StatusBadRequest)
+			writeInsufficientFunds(w, err)
 		default:
 			log.Printf("expense.add: %v", err)
 			http.Error(w, `{"error":"Failed to add expense"}`, http.StatusInternalServerError)
@@ -135,6 +133,26 @@ func (rt *Router) handleAddExpense(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(response)
+}
+
+// writeInsufficientFunds returns a 400 whose message includes the available
+// balance when the service supplied it (U4), falling back to the bare
+// message otherwise.
+func writeInsufficientFunds(w http.ResponseWriter, err error) {
+	var insufficient *service.InsufficientFundsError
+	if errors.As(err, &insufficient) {
+		body := struct {
+			Error     string  `json:"error"`
+			Available float64 `json:"available"`
+		}{
+			Error:     "Insufficient funds",
+			Available: insufficient.Available,
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(body)
+		return
+	}
+	http.Error(w, `{"error":"Insufficient funds"}`, http.StatusBadRequest)
 }
 
 func (rt *Router) handleUpdateExpense(w http.ResponseWriter, r *http.Request) {
@@ -174,7 +192,11 @@ func (rt *Router) handleUpdateExpense(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, service.ErrNoChanges):
 			http.Error(w, `{"error":"No changes provided"}`, http.StatusBadRequest)
 		case errors.Is(err, service.ErrInsufficientFunds):
-			http.Error(w, `{"error":"Insufficient funds for this amount change"}`, http.StatusBadRequest)
+			writeInsufficientFunds(w, err)
+		case errors.Is(err, service.ErrExpenseModified):
+			// Concurrent edit landed between read and write — tell the
+			// client to refresh, with 409 not a misleading 404 (U4).
+			http.Error(w, `{"error":"Expense was modified, please refresh and try again"}`, http.StatusConflict)
 		case errors.Is(err, service.ErrExpenseNotFound):
 			http.Error(w, `{"error":"Expense not found"}`, http.StatusNotFound)
 		default:
@@ -213,6 +235,8 @@ func (rt *Router) handleDeleteExpense(w http.ResponseWriter, r *http.Request) {
 
 	if err := rt.expenseService.DeleteExpense(r.Context(), month, expenseID); err != nil {
 		switch {
+		case errors.Is(err, service.ErrExpenseModified):
+			http.Error(w, `{"error":"Expense was modified, please refresh and try again"}`, http.StatusConflict)
 		case errors.Is(err, service.ErrExpenseNotFound):
 			http.Error(w, `{"error":"Expense not found"}`, http.StatusNotFound)
 		default:
@@ -282,4 +306,30 @@ func (rt *Router) handleAddFunds(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(response)
+}
+
+func (rt *Router) handleDeleteMonth(w http.ResponseWriter, r *http.Request) {
+	// Extract month from path: /api/month/{yyyy-mm}
+	path := r.URL.Path
+	month := strings.TrimPrefix(path, "/api/month/")
+
+	if err := validateMonthKey(month); err != nil {
+		http.Error(w, `{"error":"Invalid month format. Use YYYY-MM"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := rt.expenseService.DeleteMonth(r.Context(), month); err != nil {
+		switch {
+		case errors.Is(err, service.ErrMonthNotFound):
+			http.Error(w, `{"error":"Month not found"}`, http.StatusNotFound)
+		case errors.Is(err, service.ErrMonthHasExpenses):
+			http.Error(w, `{"error":"Cannot delete a month that still has expenses. Delete its expenses first."}`, http.StatusConflict)
+		default:
+			log.Printf("month.delete: %v", err)
+			http.Error(w, `{"error":"Failed to delete month"}`, http.StatusInternalServerError)
+		}
+		return
+	}
+
+	json.NewEncoder(w).Encode(model.SuccessResponse{Success: true, Message: "Month deleted"})
 }

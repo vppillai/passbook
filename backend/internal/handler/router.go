@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/vppillai/passbook/backend/internal/middleware"
@@ -62,7 +63,13 @@ func (rt *Router) route(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
 	referer := r.Header.Get("Referer")
 	originOK := origin != "" && origin == rt.allowedOrigin
-	refererOK := referer != "" && strings.HasPrefix(referer, rt.allowedOrigin)
+	// Compare the Referer's parsed origin (scheme://host[:port]) EXACTLY
+	// against the allowed origin. A bare HasPrefix let
+	// "https://app.example.evil.com/..." pass when the allowed origin was
+	// "https://app.example" (S1). Origin/Referer gating is defense-in-depth
+	// only — trivially forged outside a browser — but it should not have a
+	// bypass that looks like the real host.
+	refererOK := referer != "" && sameOrigin(referer, rt.allowedOrigin)
 	if !originOK && !refererOK {
 		http.Error(w, `{"error":"Forbidden"}`, http.StatusForbidden)
 		return
@@ -87,6 +94,25 @@ func (rt *Router) route(w http.ResponseWriter, r *http.Request) {
 		rt.protectedRoute(w, r)
 	}))
 	protectedHandler.ServeHTTP(w, r)
+}
+
+// sameOrigin reports whether refererURL has the same scheme://host[:port]
+// origin as allowedOrigin. Both are parsed; a referer with a different host,
+// scheme, or port (including a sneaky suffix like "app.example.evil.com")
+// is rejected. allowedOrigin is expected to be scheme+host with no path.
+func sameOrigin(refererURL, allowedOrigin string) bool {
+	ref, err := url.Parse(refererURL)
+	if err != nil {
+		return false
+	}
+	allowed, err := url.Parse(allowedOrigin)
+	if err != nil {
+		return false
+	}
+	if ref.Scheme == "" || ref.Host == "" {
+		return false
+	}
+	return ref.Scheme == allowed.Scheme && ref.Host == allowed.Host
 }
 
 func (rt *Router) protectedRoute(w http.ResponseWriter, r *http.Request) {
@@ -114,6 +140,9 @@ func (rt *Router) protectedRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	case strings.HasPrefix(path, "/api/month/") && method == http.MethodGet:
 		rt.handleGetMonth(w, r)
+		return
+	case strings.HasPrefix(path, "/api/month/") && method == http.MethodDelete:
+		rt.handleDeleteMonth(w, r)
 		return
 	case path == "/api/expense" && method == http.MethodPost:
 		rt.handleAddExpense(w, r)

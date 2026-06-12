@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/vppillai/passbook/backend/internal/middleware"
 	"github.com/vppillai/passbook/backend/internal/model"
@@ -86,7 +87,16 @@ func (rt *Router) handleVerifyPIN(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !response.Success {
-		w.WriteHeader(http.StatusUnauthorized)
+		// A rate-limited response carries RetryAfterSeconds → 429 so the
+		// client can show a wait time, distinct from a plain 401 wrong PIN.
+		if response.RetryAfterSeconds != nil {
+			if *response.RetryAfterSeconds > 0 {
+				w.Header().Set("Retry-After", strconv.FormatInt(*response.RetryAfterSeconds, 10))
+			}
+			w.WriteHeader(http.StatusTooManyRequests)
+		} else {
+			w.WriteHeader(http.StatusUnauthorized)
+		}
 	}
 	json.NewEncoder(w).Encode(response)
 }

@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -31,8 +33,16 @@ func TestAddExpense_BudgetMode(t *testing.T) {
 		svc, repo := newExpenseService(t, false, true, 0)
 		testutil.SeedMonth(repo, month, 0, 10, 0, 10)
 		_, err := svc.AddExpense(ctx, &model.AddExpenseRequest{Amount: 12, Description: "ice cream"})
-		if err != ErrInsufficientFunds {
+		if !errors.Is(err, ErrInsufficientFunds) {
 			t.Fatalf("expected ErrInsufficientFunds, got %v", err)
+		}
+		// U4: the rich error must carry the amount that was available.
+		var insufficient *InsufficientFundsError
+		if !errors.As(err, &insufficient) {
+			t.Fatalf("expected *InsufficientFundsError, got %T", err)
+		}
+		if insufficient.Available != 10 {
+			t.Errorf("Available = %v, want 10", insufficient.Available)
 		}
 	})
 
@@ -351,7 +361,7 @@ func TestUpdateExpense_DeltaMath(t *testing.T) {
 		svc, repo, id := setup(t)
 		newAmt := 200.0 // delta = +170, exceeds available 70
 		_, err := svc.UpdateExpense(ctx, month, id, &model.UpdateExpenseRequest{Amount: &newAmt})
-		if err != ErrInsufficientFunds {
+		if !errors.Is(err, ErrInsufficientFunds) {
 			t.Errorf("expected ErrInsufficientFunds, got %v", err)
 		}
 		// Balance untouched after rejection.
@@ -528,6 +538,451 @@ func TestListMonths_Pagination(t *testing.T) {
 		if _, err := svc.ListMonths(ctx, 2, "2020-01"); err != ErrInvalidCursor {
 			t.Errorf("expected ErrInvalidCursor, got %v", err)
 		}
+	})
+}
+
+// =====================================================================
+// TestEnsureMonthExists_ConditionalPut pins B2: ensureMonthExists must use
+// a conditional create and, on a concurrent create (ErrMonthAlreadyExists),
+// re-read and return the winner instead of clobbering it.
+// =====================================================================
+func TestEnsureMonthExists_ConditionalPut(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("creates month with $0 allowance when absent", func(t *testing.T) {
+		svc, repo := newExpenseService(t, true, true, 100)
+		s, err := svc.ensureMonthExists(ctx, "2026-07")
+		if err != nil {
+			t.Fatalf("ensureMonthExists failed: %v", err)
+		}
+		if s.AllowanceAdded != 0 {
+			t.Errorf("AllowanceAdded = %v, want 0 (auto-created months get no allowance)", s.AllowanceAdded)
+		}
+		if repo.Months["2026-07"] == nil {
+			t.Error("month not persisted")
+		}
+		// MONTHLIST mirror must exist too.
+		if repo.MonthList["2026-07"] == nil {
+			t.Error("MONTHLIST copy not written by conditional create")
+		}
+	})
+
+	t.Run("loser of a concurrent create returns the winner, not a clobber", func(t *testing.T) {
+		svc, repo := newExpenseService(t, true, true, 100)
+		// Simulate the winner: a month already created with a real
+		// allowance and some activity. ensureMonthExists must NOT overwrite
+		// it back to a $0 fresh summary.
+		testutil.SeedMonth(repo, "2026-07", 0, 100, 40, 60)
+
+		s, err := svc.ensureMonthExists(ctx, "2026-07")
+		if err != nil {
+			t.Fatalf("ensureMonthExists failed: %v", err)
+		}
+		if s.AllowanceAdded != 100 || s.TotalExpenses != 40 || s.EndingBalance != 60 {
+			t.Errorf("got %+v, want the existing winner (allow=100, exp=40, end=60) — not a clobber", s)
+		}
+	})
+}
+
+// =====================================================================
+// TestCreateMonth_IdempotentAllowance pins U1: POST /api/month on a month
+// that exists with a $0 allowance (the auto-created shape) must apply the
+// allowance idempotently instead of 409. A month with a real allowance is
+// still a duplicate.
+// =====================================================================
+func TestCreateMonth_IdempotentAllowance(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("activates a $0 auto-created month", func(t *testing.T) {
+		svc, repo := newExpenseService(t, true, true, 100)
+		// Auto-create the month via an expense (gives it $0 allowance).
+		if _, err := svc.AddExpense(ctx, &model.AddExpenseRequest{Amount: 10, Description: "x", Month: "2026-08"}); err != nil {
+			t.Fatalf("AddExpense failed: %v", err)
+		}
+		if repo.Months["2026-08"].AllowanceAdded != 0 {
+			t.Fatal("precondition: auto-created month should have $0 allowance")
+		}
+		balanceBefore := repo.Balance.TotalBalance
+
+		resp, err := svc.CreateMonth(ctx, "2026-08")
+		if err != nil {
+			t.Fatalf("CreateMonth should idempotently activate, got: %v", err)
+		}
+		if resp.Summary.AllowanceAdded != 100 {
+			t.Errorf("AllowanceAdded = %v, want 100 (allowance applied)", resp.Summary.AllowanceAdded)
+		}
+		if got := repo.Balance.TotalBalance; got != balanceBefore+100 {
+			t.Errorf("TotalBalance = %v, want %v (credited by allowance)", got, balanceBefore+100)
+		}
+	})
+
+	t.Run("month with real allowance is still a duplicate", func(t *testing.T) {
+		svc, repo := newExpenseService(t, true, true, 100)
+		testutil.SeedMonth(repo, "2026-08", 0, 100, 0, 100)
+		if _, err := svc.CreateMonth(ctx, "2026-08"); err != ErrMonthExists {
+			t.Errorf("expected ErrMonthExists, got %v", err)
+		}
+	})
+}
+
+// =====================================================================
+// TestDeleteMonth pins U2: transactional delete debits the allowance and
+// is blocked when the month still has expenses.
+// =====================================================================
+func TestDeleteMonth(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("deletes an empty month and reverses the allowance", func(t *testing.T) {
+		svc, repo := newExpenseService(t, true, true, 100)
+		testutil.SeedMonth(repo, "2026-09", 0, 100, 0, 100)
+		repo.Balance = &model.Balance{TotalBalance: 100}
+
+		if err := svc.DeleteMonth(ctx, "2026-09"); err != nil {
+			t.Fatalf("DeleteMonth failed: %v", err)
+		}
+		if repo.Months["2026-09"] != nil {
+			t.Error("month summary still present after delete")
+		}
+		if repo.MonthList["2026-09"] != nil {
+			t.Error("MONTHLIST copy still present after delete")
+		}
+		if repo.Balance.TotalBalance != 0 {
+			t.Errorf("TotalBalance = %v, want 0 (allowance reversed)", repo.Balance.TotalBalance)
+		}
+	})
+
+	t.Run("refuses a month with expenses", func(t *testing.T) {
+		svc, repo := newExpenseService(t, true, true, 100)
+		testutil.SeedMonth(repo, "2026-09", 0, 100, 30, 70)
+		if err := svc.DeleteMonth(ctx, "2026-09"); err != ErrMonthHasExpenses {
+			t.Errorf("expected ErrMonthHasExpenses, got %v", err)
+		}
+		if repo.Months["2026-09"] == nil {
+			t.Error("month deleted despite having expenses")
+		}
+	})
+
+	t.Run("missing month returns not found", func(t *testing.T) {
+		svc, _ := newExpenseService(t, true, true, 100)
+		if err := svc.DeleteMonth(ctx, "2030-01"); err != ErrMonthNotFound {
+			t.Errorf("expected ErrMonthNotFound, got %v", err)
+		}
+	})
+}
+
+// =====================================================================
+// TestGetMonthData_CursorValidation pins B5: a decoded expense cursor with
+// the wrong shape (wrong key count, wrong PK month, non-EXP# SK) maps to
+// ErrInvalidCursor (→ 400) rather than reaching DynamoDB.
+// =====================================================================
+func TestGetMonthData_CursorValidation(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newExpenseService(t, false, true, 0)
+
+	// Helper: build a base64 cursor from a key map's simple string form.
+	cursor := func(m map[string]string) string {
+		data, _ := json.Marshal(m)
+		return base64.URLEncoding.EncodeToString(data)
+	}
+
+	cases := []struct {
+		name string
+		key  map[string]string
+	}{
+		{"extra keys", map[string]string{"PK": "MONTH#2026-02", "SK": "EXP#1", "X": "y"}},
+		{"wrong month PK", map[string]string{"PK": "MONTH#2026-03", "SK": "EXP#1"}},
+		{"non-EXP SK", map[string]string{"PK": "MONTH#2026-02", "SK": "SUMMARY"}},
+		{"missing SK", map[string]string{"PK": "MONTH#2026-02"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := svc.GetMonthData(ctx, "2026-02", 50, cursor(tc.key))
+			if !errors.Is(err, ErrInvalidCursor) {
+				t.Errorf("expected ErrInvalidCursor, got %v", err)
+			}
+		})
+	}
+
+	t.Run("well-formed cursor is accepted", func(t *testing.T) {
+		_, err := svc.GetMonthData(ctx, "2026-02", 50, cursor(map[string]string{"PK": "MONTH#2026-02", "SK": "EXP#123#abc"}))
+		if err != nil {
+			t.Errorf("well-formed cursor rejected: %v", err)
+		}
+	})
+}
+
+// =====================================================================
+// TestListMonths_MigrationFallback pins the C1 lazy-migration path: when
+// the MONTHLIST index is empty (old table) but canonical month rows exist,
+// ListMonths falls back to the legacy scan, backfills the index, and then
+// serves from the index on subsequent calls.
+// =====================================================================
+func TestListMonths_MigrationFallback(t *testing.T) {
+	ctx := context.Background()
+	svc, repo := newExpenseService(t, false, true, 0)
+
+	// Seed canonical months, then wipe the MONTHLIST index to simulate a
+	// table written before the index existed.
+	for _, m := range []string{"2026-01", "2026-02", "2026-03"} {
+		testutil.SeedMonth(repo, m, 0, 100, 30, 70)
+	}
+	repo.MonthList = map[string]*model.MonthSummary{}
+
+	resp, err := svc.ListMonths(ctx, 50, "")
+	if err != nil {
+		t.Fatalf("ListMonths failed: %v", err)
+	}
+	if len(resp.Months) != 3 {
+		t.Fatalf("got %d months from fallback, want 3", len(resp.Months))
+	}
+	if resp.Months[0].Month != "2026-03" {
+		t.Errorf("first month = %q, want 2026-03 (descending)", resp.Months[0].Month)
+	}
+	// The index must have been backfilled so the next call hits the Query path.
+	if len(repo.MonthList) != 3 {
+		t.Errorf("MonthList backfill size = %d, want 3", len(repo.MonthList))
+	}
+
+	// Second call serves from the (now populated) index.
+	resp2, err := svc.ListMonths(ctx, 50, "")
+	if err != nil {
+		t.Fatalf("second ListMonths failed: %v", err)
+	}
+	if len(resp2.Months) != 3 {
+		t.Errorf("second call returned %d months, want 3", len(resp2.Months))
+	}
+}
+
+// =====================================================================
+// TestPropagateToLaterMonths pins B3: editing/deleting an expense in a PAST
+// month ripples the carried balance forward through all later months when
+// carry-over is enabled, and does nothing when it's disabled. The HIGH
+// defect fix means propagation now applies a conditional DELTA to BOTH the
+// canonical row and its MONTHLIST mirror (not an unconditioned full-object
+// Put), so this also asserts the mirror is shifted in lockstep.
+// =====================================================================
+func TestPropagateToLaterMonths(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("delete in a past month shifts later months' carry (canonical + mirror)", func(t *testing.T) {
+		svc, repo := newExpenseService(t, false, true, 0)
+		// Jan: started 0, +100 allowance, $30 expense → ending 70.
+		testutil.SeedMonth(repo, "2026-01", 0, 100, 30, 70)
+		// Feb carried 70: +100 allowance, $0 expense → ending 170.
+		testutil.SeedMonth(repo, "2026-02", 70, 100, 0, 170)
+		// Mar carried 170: +100 allowance → ending 270. Multi-month ripple.
+		testutil.SeedMonth(repo, "2026-03", 170, 100, 0, 270)
+		repo.Balance = &model.Balance{TotalBalance: 170}
+		id := "EXP#1#abc"
+		repo.Expenses[testutil.ExpenseKey("2026-01", id)] = &model.Expense{SK: id, Amount: 30}
+
+		if err := svc.DeleteExpense(ctx, "2026-01", id); err != nil {
+			t.Fatalf("DeleteExpense failed: %v", err)
+		}
+		// Jan refunded: ending 100. Feb and Mar must carry the +30 forward.
+		if got := repo.Months["2026-01"].EndingBalance; got != 100 {
+			t.Errorf("Jan ending = %v, want 100", got)
+		}
+		if got := repo.Months["2026-02"].StartingBalance; got != 100 {
+			t.Errorf("Feb starting = %v, want 100 (carry shifted by +30)", got)
+		}
+		if got := repo.Months["2026-02"].EndingBalance; got != 200 {
+			t.Errorf("Feb ending = %v, want 200 (carry shifted by +30)", got)
+		}
+		if got := repo.Months["2026-03"].StartingBalance; got != 200 {
+			t.Errorf("Mar starting = %v, want 200 (carry shifted by +30)", got)
+		}
+		if got := repo.Months["2026-03"].EndingBalance; got != 300 {
+			t.Errorf("Mar ending = %v, want 300 (carry shifted by +30)", got)
+		}
+		// The mirror rows must be shifted in lockstep — the delta is applied
+		// to MONTHLIST too, not just the canonical row.
+		if got := repo.MonthList["2026-02"].StartingBalance; got != 100 {
+			t.Errorf("Feb mirror starting = %v, want 100", got)
+		}
+		if got := repo.MonthList["2026-02"].EndingBalance; got != 200 {
+			t.Errorf("Feb mirror ending = %v, want 200", got)
+		}
+		if got := repo.MonthList["2026-03"].EndingBalance; got != 300 {
+			t.Errorf("Mar mirror ending = %v, want 300", got)
+		}
+	})
+
+	t.Run("carry disabled does not propagate", func(t *testing.T) {
+		svc, repo := newExpenseService(t, true, false, 0)
+		testutil.SeedMonth(repo, "2026-01", 0, 100, 30, 70)
+		testutil.SeedMonth(repo, "2026-02", 0, 100, 0, 100)
+		repo.Balance = &model.Balance{TotalBalance: 170}
+		id := "EXP#1#abc"
+		repo.Expenses[testutil.ExpenseKey("2026-01", id)] = &model.Expense{SK: id, Amount: 30}
+
+		if err := svc.DeleteExpense(ctx, "2026-01", id); err != nil {
+			t.Fatalf("DeleteExpense failed: %v", err)
+		}
+		if got := repo.Months["2026-02"].StartingBalance; got != 0 {
+			t.Errorf("Feb starting = %v, want 0 (no carry, no propagation)", got)
+		}
+	})
+
+	t.Run("delta composes with a concurrent write instead of clobbering it", func(t *testing.T) {
+		// The previous SaveMonthSummary path Put a snapshot read BEFORE the
+		// mutation, discarding any concurrent change to a later month. The
+		// delta path must instead ADD to whatever the row currently holds.
+		// Model that by seeding Feb already shifted by an unrelated +25
+		// concurrent write, then asserting the +30 delta lands on top.
+		svc, repo := newExpenseService(t, false, true, 0)
+		testutil.SeedMonth(repo, "2026-01", 0, 100, 30, 70)
+		// Feb's "current" state already reflects a concurrent +25 (e.g. an
+		// AddFunds that landed between this op's read and write): start 95,
+		// ending 195 rather than the 70/170 a stale snapshot would carry.
+		testutil.SeedMonth(repo, "2026-02", 95, 100, 0, 195)
+		repo.Balance = &model.Balance{TotalBalance: 195}
+		id := "EXP#1#abc"
+		repo.Expenses[testutil.ExpenseKey("2026-01", id)] = &model.Expense{SK: id, Amount: 30}
+
+		if err := svc.DeleteExpense(ctx, "2026-01", id); err != nil {
+			t.Fatalf("DeleteExpense failed: %v", err)
+		}
+		// +30 delta composes on top of the concurrent 95/195 → 125/225, NOT
+		// the 100/200 a clobbering snapshot Put would have written.
+		if got := repo.Months["2026-02"].StartingBalance; got != 125 {
+			t.Errorf("Feb starting = %v, want 125 (concurrent +25 preserved, delta +30 applied)", got)
+		}
+		if got := repo.Months["2026-02"].EndingBalance; got != 225 {
+			t.Errorf("Feb ending = %v, want 225 (concurrent +25 preserved, delta +30 applied)", got)
+		}
+	})
+
+	t.Run("legacy table: propagation backfills mirrors and still ripples", func(t *testing.T) {
+		// Earlier (buggy) code read later months straight from the MONTHLIST
+		// partition; on a legacy table that partition is empty/partial, so
+		// propagation silently no-oped and later months' starting balances
+		// stayed wrong. The fix reads later months through the backfilling
+		// service ListMonths and applies deltas to both rows.
+		svc, repo := newExpenseService(t, false, true, 0)
+		testutil.SeedLegacyMonth(repo, "2026-01", 0, 100, 30, 70)
+		testutil.SeedLegacyMonth(repo, "2026-02", 70, 100, 0, 170)
+		repo.Balance = &model.Balance{TotalBalance: 170}
+		id := "EXP#1#abc"
+		repo.Expenses[testutil.ExpenseKey("2026-01", id)] = &model.Expense{SK: id, Amount: 30}
+
+		if err := svc.DeleteExpense(ctx, "2026-01", id); err != nil {
+			t.Fatalf("DeleteExpense on legacy table failed: %v", err)
+		}
+		if got := repo.Months["2026-02"].StartingBalance; got != 100 {
+			t.Errorf("Feb starting = %v, want 100 (propagation must fire on legacy table)", got)
+		}
+		if got := repo.Months["2026-02"].EndingBalance; got != 200 {
+			t.Errorf("Feb ending = %v, want 200 (propagation must fire on legacy table)", got)
+		}
+		// Both later month's mirror must now exist and match.
+		if repo.MonthList["2026-02"] == nil {
+			t.Fatal("Feb mirror was not backfilled during propagation")
+		}
+		if got := repo.MonthList["2026-02"].EndingBalance; got != 200 {
+			t.Errorf("Feb mirror ending = %v, want 200", got)
+		}
+	})
+}
+
+// =====================================================================
+// TestLegacyMonthMirrorBackfill pins the CRITICAL defect: on a live table
+// written before the MONTHLIST scheme (canonical summary present, NO mirror
+// row), the first mutation's monthListUpdate condition (attribute_exists)
+// would cancel the entire transaction → 500. The service must back-fill the
+// mirror (EnsureMonthListMirror) before each atomic path so the mutation
+// succeeds and the mirror is created and stays consistent with the canonical
+// row.
+//
+// SeedLegacyMonth seeds the canonical row only; FakeRepo's atomic methods
+// now model DynamoDB by FAILING (errMonthListMirrorMissing) when a monthList
+// delta hits a missing mirror — so without the fix these would error.
+// =====================================================================
+func TestLegacyMonthMirrorBackfill(t *testing.T) {
+	ctx := context.Background()
+	month := "2026-02"
+
+	// assertMirrorConsistent checks the mirror exists and matches the
+	// canonical summary's balances field-for-field.
+	assertMirrorConsistent := func(t *testing.T, repo *testutil.FakeRepo, m string) {
+		t.Helper()
+		canon := repo.Months[m]
+		mirror := repo.MonthList[m]
+		if canon == nil {
+			t.Fatalf("canonical summary for %s missing", m)
+		}
+		if mirror == nil {
+			t.Fatalf("MONTHLIST mirror for %s was never created", m)
+		}
+		if !testutil.AlmostEqual(mirror.TotalExpenses, canon.TotalExpenses) ||
+			!testutil.AlmostEqual(mirror.EndingBalance, canon.EndingBalance) ||
+			!testutil.AlmostEqual(mirror.AllowanceAdded, canon.AllowanceAdded) ||
+			!testutil.AlmostEqual(mirror.StartingBalance, canon.StartingBalance) {
+			t.Errorf("mirror %+v diverged from canonical %+v", mirror, canon)
+		}
+	}
+
+	t.Run("AddExpense on legacy month creates mirror and succeeds", func(t *testing.T) {
+		svc, repo := newExpenseService(t, false, true, 0)
+		testutil.SeedLegacyMonth(repo, month, 0, 100, 0, 100)
+		repo.Balance = &model.Balance{TotalBalance: 100}
+
+		resp, err := svc.AddExpense(ctx, &model.AddExpenseRequest{Amount: 30, Description: "x", Month: month})
+		if err != nil {
+			t.Fatalf("AddExpense on legacy month failed (would 500 in prod): %v", err)
+		}
+		if resp.MonthBalance != 70 {
+			t.Errorf("MonthBalance = %v, want 70", resp.MonthBalance)
+		}
+		assertMirrorConsistent(t, repo, month)
+	})
+
+	t.Run("UpdateExpense on legacy month creates mirror and succeeds", func(t *testing.T) {
+		svc, repo := newExpenseService(t, false, true, 0)
+		testutil.SeedLegacyMonth(repo, month, 0, 100, 30, 70)
+		repo.Balance = &model.Balance{TotalBalance: 70}
+		id := "EXP#1#abc"
+		repo.Expenses[testutil.ExpenseKey(month, id)] = &model.Expense{SK: id, Amount: 30, Description: "old"}
+
+		newAmt := 50.0
+		if _, err := svc.UpdateExpense(ctx, month, id, &model.UpdateExpenseRequest{Amount: &newAmt}); err != nil {
+			t.Fatalf("UpdateExpense on legacy month failed (would 500 in prod): %v", err)
+		}
+		if got := repo.Months[month].EndingBalance; got != 50 {
+			t.Errorf("EndingBalance = %v, want 50", got)
+		}
+		assertMirrorConsistent(t, repo, month)
+	})
+
+	t.Run("DeleteExpense on legacy month creates mirror and succeeds", func(t *testing.T) {
+		svc, repo := newExpenseService(t, false, true, 0)
+		testutil.SeedLegacyMonth(repo, month, 0, 100, 30, 70)
+		repo.Balance = &model.Balance{TotalBalance: 70}
+		id := "EXP#1#abc"
+		repo.Expenses[testutil.ExpenseKey(month, id)] = &model.Expense{SK: id, Amount: 30}
+
+		if err := svc.DeleteExpense(ctx, month, id); err != nil {
+			t.Fatalf("DeleteExpense on legacy month failed (would 500 in prod): %v", err)
+		}
+		if got := repo.Months[month].EndingBalance; got != 100 {
+			t.Errorf("EndingBalance = %v, want 100 (refunded)", got)
+		}
+		assertMirrorConsistent(t, repo, month)
+	})
+
+	t.Run("AddFunds on legacy month creates mirror and succeeds", func(t *testing.T) {
+		svc, repo := newExpenseService(t, true, false, 500)
+		testutil.SeedLegacyMonth(repo, month, 0, 500, 100, 400)
+		repo.Balance = &model.Balance{TotalBalance: 400}
+
+		resp, err := svc.AddFunds(ctx, month, 50)
+		if err != nil {
+			t.Fatalf("AddFunds on legacy month failed (would 500 in prod): %v", err)
+		}
+		if resp.Summary.AllowanceAdded != 550 || resp.Summary.EndingBalance != 450 {
+			t.Errorf("got allowance=%v ending=%v, want 550/450", resp.Summary.AllowanceAdded, resp.Summary.EndingBalance)
+		}
+		assertMirrorConsistent(t, repo, month)
 	})
 }
 

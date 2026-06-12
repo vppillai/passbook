@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"sync"
@@ -46,6 +48,11 @@ func setupRouter() error {
 	if val := os.Getenv("MONTHLY_ALLOWANCE"); val != "" {
 		if parsed, err := strconv.ParseFloat(val, 64); err == nil {
 			monthlyAllowance = parsed
+		} else {
+			// Don't fail the cold start over a bad config value, but make
+			// the silent $100 fallback visible in the logs so an operator
+			// who fat-fingered the param can find out why.
+			log.Printf("warn: MONTHLY_ALLOWANCE=%q is not a valid number, falling back to %.2f: %v", val, monthlyAllowance, err)
 		}
 	}
 
@@ -126,9 +133,19 @@ func convertToHTTPRequest(ctx context.Context, event events.APIGatewayV2HTTPRequ
 		return nil, err
 	}
 
-	// Set the path directly - RawPath from API Gateway is already decoded,
-	// but we need to set it without going through URL parsing which treats # as fragment
-	req.URL.Path = event.RawPath
+	// APIGW HTTP API v2 delivers RawPath still percent-encoded (e.g. the
+	// frontend's encodeURIComponent turns "EXP#..." into "EXP%23..."). We
+	// must decode it before assigning to URL.Path — otherwise the literal
+	// "%23" reaches the handler's EXP# prefix check and every expense
+	// PUT/DELETE 400s in prod. We set Path directly (not via url.Parse)
+	// so a '#' in the decoded value isn't treated as a fragment.
+	decodedPath, decErr := url.PathUnescape(event.RawPath)
+	if decErr != nil {
+		// Malformed escaping — fall back to the raw value rather than
+		// failing the request outright.
+		decodedPath = event.RawPath
+	}
+	req.URL.Path = decodedPath
 	req.URL.RawQuery = event.RawQueryString
 
 	// Set headers

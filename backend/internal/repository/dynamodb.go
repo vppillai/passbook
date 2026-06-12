@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +29,12 @@ const (
 	SKSummary       = "SUMMARY"
 	ExpensePrefix   = "EXP#"
 	SessionPrefix   = "SESSION#"
+	// PKMonthList is the single partition under which a copy of every
+	// month summary is stored (SK = "<yyyy-mm>"). Querying this one
+	// partition (sorted, paginated by the native sort key) replaces the
+	// old full-table Scan in the months-list path — that scan's cost grew
+	// with every expense ever written.
+	PKMonthList = "MONTHLIST"
 )
 
 // ErrConfigAlreadyExists is returned by CreateConfig when a CONFIG row
@@ -48,6 +55,16 @@ var ErrExpenseStateMismatch = errors.New("expense state mismatch")
 // ErrMonthAlreadyExists is returned by AtomicCreateMonth when the month
 // summary already exists. Service layer maps to ErrMonthExists.
 var ErrMonthAlreadyExists = errors.New("month already exists")
+
+// ErrMonthHasExpenses is returned by AtomicDeleteMonth when the summary's
+// delete condition fails — the month is missing or still has expenses
+// (total_expenses != 0). Service layer maps to a 409 with a clear message.
+var ErrMonthHasExpenses = errors.New("month has expenses or does not exist")
+
+// ErrRateLimitCapReached is returned by IncrementFailedAttempts when the
+// conditional increment fails because the per-IP counter is already at the
+// cap. Lets the caller refuse atomically without burning Argon2 cycles (B6).
+var ErrRateLimitCapReached = errors.New("rate limit cap reached")
 
 // rateLimitPK returns the per-IP partition key for rate-limit rows.
 // Empty ip degrades to a shared "unknown" bucket — never collides with
@@ -174,32 +191,6 @@ func (r *Repository) GetBalance(ctx context.Context) (*model.Balance, error) {
 	return &balance, nil
 }
 
-func (r *Repository) UpdateBalance(ctx context.Context, delta float64) (*model.Balance, error) {
-	result, err := r.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName: aws.String(r.tableName),
-		Key: map[string]types.AttributeValue{
-			"PK": &types.AttributeValueMemberS{Value: PKBalance},
-			"SK": &types.AttributeValueMemberS{Value: SKBalance},
-		},
-		UpdateExpression: aws.String("SET total_balance = if_not_exists(total_balance, :zero) + :delta, updated_at = :now"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":delta": &types.AttributeValueMemberN{Value: fmt.Sprintf("%.2f", delta)},
-			":zero":  &types.AttributeValueMemberN{Value: "0"},
-			":now":   &types.AttributeValueMemberS{Value: time.Now().Format(time.RFC3339)},
-		},
-		ReturnValues: types.ReturnValueAllNew,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to update balance: %w", err)
-	}
-
-	var balance model.Balance
-	if err := attributevalue.UnmarshalMap(result.Attributes, &balance); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal balance: %w", err)
-	}
-	return &balance, nil
-}
-
 // Month operations
 
 func (r *Repository) GetMonthSummary(ctx context.Context, month string) (*model.MonthSummary, error) {
@@ -238,9 +229,18 @@ func (r *Repository) SaveMonthSummary(ctx context.Context, summary *model.MonthS
 		return fmt.Errorf("failed to marshal month summary: %w", err)
 	}
 
-	_, err = r.client.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName: aws.String(r.tableName),
-		Item:      item,
+	// Write the canonical MONTH#<m>/SUMMARY row and the MONTHLIST/<m>
+	// index copy in a single transaction so the list never drifts from
+	// the source of truth.
+	listItem, err := monthListItem(summary)
+	if err != nil {
+		return err
+	}
+	_, err = r.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+		TransactItems: []types.TransactWriteItem{
+			{Put: &types.Put{TableName: aws.String(r.tableName), Item: item}},
+			{Put: &types.Put{TableName: aws.String(r.tableName), Item: listItem}},
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to save month summary: %w", err)
@@ -248,32 +248,160 @@ func (r *Repository) SaveMonthSummary(ctx context.Context, summary *model.MonthS
 	return nil
 }
 
-func (r *Repository) UpdateMonthExpenses(ctx context.Context, month string, expenseDelta float64) error {
-	pk := MonthPrefix + month
-	_, err := r.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+// monthListItem builds the MONTHLIST index copy of a month summary: same
+// attributes as the canonical row, but keyed PK="MONTHLIST", SK="<yyyy-mm>"
+// so the list can be served by a single sorted Query instead of a Scan.
+func monthListItem(summary *model.MonthSummary) (map[string]types.AttributeValue, error) {
+	copy := *summary
+	copy.PK = PKMonthList
+	copy.SK = summary.Month
+	item, err := attributevalue.MarshalMap(&copy)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal month list item: %w", err)
+	}
+	return item, nil
+}
+
+// monthListPut returns a TransactWriteItem that upserts the MONTHLIST copy
+// of a summary. Used by AtomicCreateMonth so the index gets its first copy
+// inside the same transaction as the canonical row.
+func (r *Repository) monthListPut(summary *model.MonthSummary) (types.TransactWriteItem, error) {
+	item, err := monthListItem(summary)
+	if err != nil {
+		return types.TransactWriteItem{}, err
+	}
+	return types.TransactWriteItem{Put: &types.Put{TableName: aws.String(r.tableName), Item: item}}, nil
+}
+
+// monthListUpdate mirrors an incremental summary Update onto the MONTHLIST
+// index row for the same month. The MONTHLIST copy carries identical
+// attribute names (total_expenses, ending_balance, allowance_added,
+// updated_at), so the same UpdateExpression and values apply unchanged.
+// The condition is attribute_exists(PK): the MONTHLIST copy is created
+// alongside the canonical row (SaveMonthSummary / AtomicCreateMonth), and on
+// legacy tables that predate the mirror the service back-fills it via
+// EnsureMonthListMirror immediately before the mutation transaction — so for
+// any month that can be mutated the copy is guaranteed to exist.
+func (r *Repository) monthListUpdate(month, updateExpr string, values map[string]types.AttributeValue) types.TransactWriteItem {
+	return types.TransactWriteItem{Update: &types.Update{
 		TableName: aws.String(r.tableName),
 		Key: map[string]types.AttributeValue{
-			"PK": &types.AttributeValueMemberS{Value: pk},
-			"SK": &types.AttributeValueMemberS{Value: SKSummary},
+			"PK": &types.AttributeValueMemberS{Value: PKMonthList},
+			"SK": &types.AttributeValueMemberS{Value: month},
 		},
-		UpdateExpression: aws.String("SET total_expenses = total_expenses + :delta, ending_balance = ending_balance - :delta, updated_at = :now"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":delta": &types.AttributeValueMemberN{Value: fmt.Sprintf("%.2f", expenseDelta)},
-			":now":   &types.AttributeValueMemberS{Value: time.Now().Format(time.RFC3339)},
+		UpdateExpression:          aws.String(updateExpr),
+		ConditionExpression:       aws.String("attribute_exists(PK)"),
+		ExpressionAttributeValues: values,
+	}}
+}
+
+// EnsureMonthListMirror guarantees the MONTHLIST mirror row (PK="MONTHLIST",
+// SK="<yyyy-mm>") exists for a month before any mutation transaction that
+// delta-updates it runs. On live tables written before the MONTHLIST scheme
+// existed, the canonical MONTH#<m>/SUMMARY row has no mirror, so the
+// attribute_exists(PK) condition on monthListUpdate would cancel the whole
+// transaction (→ 500). This back-fills the single missing mirror first:
+//
+//  1. Point-read the mirror. If present, nothing to do.
+//  2. Otherwise read the canonical summary and conditional-Put a full copy
+//     of it (attribute_not_exists(PK)). The full-copy Put — never an
+//     if_not_exists arithmetic seed — means the mirror carries every
+//     attribute (starting/ending/allowance/total_expenses), so a later
+//     delta update composes against correct values instead of corrupting
+//     the month list with a partial row.
+//
+// Races are tolerated: if a concurrent caller created the mirror between our
+// read and our Put, the conditional Put fails its condition and we treat the
+// mirror as present (the concurrent copy is equally valid). A missing
+// canonical summary is also tolerated (returns nil) — the caller's mutation
+// transaction will then fail its own attribute_exists check with a precise
+// error rather than this helper masking it.
+func (r *Repository) EnsureMonthListMirror(ctx context.Context, month string) error {
+	mirror, err := r.client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(r.tableName),
+		Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: PKMonthList},
+			"SK": &types.AttributeValueMemberS{Value: month},
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to update month expenses: %w", err)
+		return fmt.Errorf("failed to read month list mirror: %w", err)
+	}
+	if mirror.Item != nil {
+		return nil
+	}
+
+	summary, err := r.GetMonthSummary(ctx, month)
+	if err != nil {
+		return err
+	}
+	if summary == nil {
+		// No canonical row to mirror. Let the caller's transaction surface
+		// the missing-month condition rather than fabricating a mirror.
+		return nil
+	}
+
+	listItem, err := monthListItem(summary)
+	if err != nil {
+		return err
+	}
+	_, err = r.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName:           aws.String(r.tableName),
+		Item:                listItem,
+		ConditionExpression: aws.String("attribute_not_exists(PK)"),
+	})
+	if err != nil {
+		var condErr *types.ConditionalCheckFailedException
+		if errors.As(err, &condErr) {
+			// Lost the race; another caller created the mirror. Fine.
+			return nil
+		}
+		return fmt.Errorf("failed to create month list mirror: %w", err)
 	}
 	return nil
 }
 
-// ListAllMonths performs a full table scan to retrieve every month summary
-// item (PK begins with "MONTH#", SK equals "SUMMARY"). It handles DynamoDB
-// pagination internally, collecting all pages before returning the complete
-// slice. The results are returned in no guaranteed order; callers should sort
-// as needed.
-func (r *Repository) ListAllMonths(ctx context.Context) ([]model.MonthSummary, error) {
+// ListMonths returns one page of month summaries from the MONTHLIST index
+// partition, sorted descending by month (most recent first) via the native
+// sort key — no full-table Scan. limit caps the page size (0 means the
+// DynamoDB default). cursor is a DynamoDB ExclusiveStartKey from a previous
+// page (nil for the first page). Returns the page, the LastEvaluatedKey for
+// the next page (nil when exhausted), and any error.
+func (r *Repository) ListMonths(ctx context.Context, limit int32, cursor map[string]types.AttributeValue) ([]model.MonthSummary, map[string]types.AttributeValue, error) {
+	input := &dynamodb.QueryInput{
+		TableName:              aws.String(r.tableName),
+		KeyConditionExpression: aws.String("PK = :pk"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":pk": &types.AttributeValueMemberS{Value: PKMonthList},
+		},
+		ScanIndexForward: aws.Bool(false), // most recent first
+	}
+	if limit > 0 {
+		input.Limit = aws.Int32(limit)
+	}
+	if cursor != nil {
+		input.ExclusiveStartKey = cursor
+	}
+
+	result, err := r.client.Query(ctx, input)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to list months: %w", err)
+	}
+
+	var months []model.MonthSummary
+	if err := attributevalue.UnmarshalListOfMaps(result.Items, &months); err != nil {
+		return nil, nil, fmt.Errorf("failed to unmarshal months: %w", err)
+	}
+	return months, result.LastEvaluatedKey, nil
+}
+
+// listAllMonthsLegacy performs the old full-table Scan over the canonical
+// MONTH#<m>/SUMMARY rows. Retained ONLY as the one-time lazy-migration
+// source for tables written before the MONTHLIST index existed: when a
+// MONTHLIST Query returns nothing, the service falls back to this scan and
+// backfills the index (see BackfillMonthList). After backfill, the scan is
+// never hit again.
+func (r *Repository) listAllMonthsLegacy(ctx context.Context) ([]model.MonthSummary, error) {
 	var allMonths []model.MonthSummary
 	var lastKey map[string]types.AttributeValue
 
@@ -310,26 +438,48 @@ func (r *Repository) ListAllMonths(ctx context.Context) ([]model.MonthSummary, e
 	return allMonths, nil
 }
 
-// Expense operations
+// ListAllMonthsLegacy is the exported entry point the service layer uses
+// for the one-time lazy migration fallback when the MONTHLIST partition is
+// empty. See listAllMonthsLegacy.
+func (r *Repository) ListAllMonthsLegacy(ctx context.Context) ([]model.MonthSummary, error) {
+	return r.listAllMonthsLegacy(ctx)
+}
 
-func (r *Repository) AddExpense(ctx context.Context, month string, expense *model.Expense) error {
-	expense.PK = MonthPrefix + month
-	// SK format: EXP#<timestamp>#<uuid> - already set by caller
-
-	item, err := attributevalue.MarshalMap(expense)
-	if err != nil {
-		return fmt.Errorf("failed to marshal expense: %w", err)
-	}
-
-	_, err = r.client.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName: aws.String(r.tableName),
-		Item:      item,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to save expense: %w", err)
+// BackfillMonthList writes a MONTHLIST index copy for each supplied summary
+// (idempotent upsert). Called once by the service when a ListMonths query
+// found an empty MONTHLIST partition but the legacy scan found canonical
+// rows — so subsequent list calls hit the Query path. Batched in chunks of
+// 25 (BatchWriteItem limit).
+func (r *Repository) BackfillMonthList(ctx context.Context, summaries []model.MonthSummary) error {
+	for i := 0; i < len(summaries); i += 25 {
+		end := i + 25
+		if end > len(summaries) {
+			end = len(summaries)
+		}
+		writes := make([]types.WriteRequest, 0, end-i)
+		for j := i; j < end; j++ {
+			s := summaries[j]
+			item, err := monthListItem(&s)
+			if err != nil {
+				return err
+			}
+			writes = append(writes, types.WriteRequest{
+				PutRequest: &types.PutRequest{Item: item},
+			})
+		}
+		_, err := r.client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
+			RequestItems: map[string][]types.WriteRequest{
+				r.tableName: writes,
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to backfill month list: %w", err)
+		}
 	}
 	return nil
 }
+
+// Expense operations
 
 // GetExpenses queries all expenses for a given month, sorted by most recent
 // first (descending sort key). It supports cursor-based pagination: pass a
@@ -430,31 +580,6 @@ func (r *Repository) UpdateExpense(ctx context.Context, month string, expenseID 
 		return nil, fmt.Errorf("failed to unmarshal old expense: %w", err)
 	}
 	return &oldExpense, nil
-}
-
-// UpdateMonthAllowance atomically increments a month's allowance_added and
-// ending_balance by fundsDelta. This is used when adding supplemental funds
-// to an existing month. The condition expression ensures the month summary
-// item exists before the update is applied.
-func (r *Repository) UpdateMonthAllowance(ctx context.Context, month string, fundsDelta float64) error {
-	pk := MonthPrefix + month
-	_, err := r.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName: aws.String(r.tableName),
-		Key: map[string]types.AttributeValue{
-			"PK": &types.AttributeValueMemberS{Value: pk},
-			"SK": &types.AttributeValueMemberS{Value: SKSummary},
-		},
-		UpdateExpression:    aws.String("SET allowance_added = allowance_added + :delta, ending_balance = ending_balance + :delta, updated_at = :now"),
-		ConditionExpression: aws.String("attribute_exists(PK)"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":delta": &types.AttributeValueMemberN{Value: fmt.Sprintf("%.2f", fundsDelta)},
-			":now":   &types.AttributeValueMemberS{Value: time.Now().Format(time.RFC3339)},
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to update month allowance: %w", err)
-	}
-	return nil
 }
 
 // DeleteExpense removes an expense row. The condition expression requires
@@ -656,7 +781,17 @@ func (r *Repository) GetRateLimitEntry(ctx context.Context, sourceIP string) (*m
 	return &entry, nil
 }
 
-func (r *Repository) IncrementFailedAttempts(ctx context.Context, sourceIP string) (*model.RateLimitEntry, error) {
+// IncrementFailedAttempts atomically bumps the per-IP failed-attempt
+// counter, but ONLY while it is still below maxAttempts. The conditional
+// `attempts < :max` (with attribute_not_exists for the first failure)
+// closes the check-then-increment race (B6): two parallel attempts that
+// both read attempts=4 can no longer both succeed to 6 — the second
+// write's condition re-evaluates against the just-incremented value and
+// fails. A failed condition means the cap was already reached; the method
+// returns ErrRateLimitCapReached so the caller can refuse without burning
+// Argon2 cycles. The 15-minute window TTL is only (re)set when the counter
+// is actually incremented, so it tracks the first failure of the window.
+func (r *Repository) IncrementFailedAttempts(ctx context.Context, sourceIP string, maxAttempts int) (*model.RateLimitEntry, error) {
 	now := time.Now()
 	ttl := now.Add(15 * time.Minute).Unix() // 15-minute window
 
@@ -666,19 +801,25 @@ func (r *Repository) IncrementFailedAttempts(ctx context.Context, sourceIP strin
 			"PK": &types.AttributeValueMemberS{Value: rateLimitPK(sourceIP)},
 			"SK": &types.AttributeValueMemberS{Value: SKRateLimit},
 		},
-		UpdateExpression: aws.String("SET attempts = if_not_exists(attempts, :zero) + :one, updated_at = :now, #ttl = :ttl"),
+		UpdateExpression:    aws.String("SET attempts = if_not_exists(attempts, :zero) + :one, updated_at = :now, #ttl = :ttl"),
+		ConditionExpression: aws.String("attribute_not_exists(attempts) OR attempts < :max"),
 		ExpressionAttributeNames: map[string]string{
 			"#ttl": "ttl",
 		},
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":zero": &types.AttributeValueMemberN{Value: "0"},
 			":one":  &types.AttributeValueMemberN{Value: "1"},
+			":max":  &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", maxAttempts)},
 			":now":  &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", now.Unix())},
 			":ttl":  &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", ttl)},
 		},
 		ReturnValues: types.ReturnValueAllNew,
 	})
 	if err != nil {
+		var condErr *types.ConditionalCheckFailedException
+		if errors.As(err, &condErr) {
+			return nil, ErrRateLimitCapReached
+		}
 		return nil, fmt.Errorf("failed to increment failed attempts: %w", err)
 	}
 
@@ -766,6 +907,16 @@ func (r *Repository) AtomicAddExpense(ctx context.Context, month string, expense
 		monthCondition = "attribute_exists(PK) AND ending_balance >= :amount"
 	}
 
+	summaryExpr := "SET total_expenses = total_expenses + :amount, ending_balance = ending_balance - :amount, updated_at = :now"
+	summaryValues := map[string]types.AttributeValue{
+		":amount": &types.AttributeValueMemberN{Value: amountStr},
+		":now":    &types.AttributeValueMemberS{Value: nowStr},
+	}
+	listValues := map[string]types.AttributeValue{
+		":amount": &types.AttributeValueMemberN{Value: amountStr},
+		":now":    &types.AttributeValueMemberS{Value: nowStr},
+	}
+
 	_, err = r.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
 		TransactItems: []types.TransactWriteItem{
 			{Put: &types.Put{
@@ -778,12 +929,9 @@ func (r *Repository) AtomicAddExpense(ctx context.Context, month string, expense
 					"PK": &types.AttributeValueMemberS{Value: pkMonth},
 					"SK": &types.AttributeValueMemberS{Value: SKSummary},
 				},
-				UpdateExpression:    aws.String("SET total_expenses = total_expenses + :amount, ending_balance = ending_balance - :amount, updated_at = :now"),
-				ConditionExpression: aws.String(monthCondition),
-				ExpressionAttributeValues: map[string]types.AttributeValue{
-					":amount": &types.AttributeValueMemberN{Value: amountStr},
-					":now":    &types.AttributeValueMemberS{Value: nowStr},
-				},
+				UpdateExpression:          aws.String(summaryExpr),
+				ConditionExpression:       aws.String(monthCondition),
+				ExpressionAttributeValues: summaryValues,
 			}},
 			{Update: &types.Update{
 				TableName: aws.String(r.tableName),
@@ -798,6 +946,7 @@ func (r *Repository) AtomicAddExpense(ctx context.Context, month string, expense
 					":now":   &types.AttributeValueMemberS{Value: nowStr},
 				},
 			}},
+			r.monthListUpdate(month, summaryExpr, listValues),
 		},
 	})
 	if err != nil {
@@ -819,7 +968,12 @@ func (r *Repository) AtomicAddExpense(ctx context.Context, month string, expense
 func (r *Repository) AtomicUpdateExpense(ctx context.Context, month string, expenseID string, oldAmount, newAmount float64, newDescription string, checkBalance bool) error {
 	pkMonth := MonthPrefix + month
 	nowStr := time.Now().Format(time.RFC3339)
-	oldAmountStr := fmt.Sprintf("%.2f", oldAmount)
+	// Format :oldAmount as the shortest round-trip of the value actually
+	// read from DynamoDB, NOT "%.2f". Legacy rows written before
+	// cent-rounding can hold e.g. 12.349999; "%.2f" would render "12.35",
+	// the amount = :oldAmount condition would never match, and that
+	// expense could never be edited or deleted (perpetual mismatch).
+	oldAmountStr := strconv.FormatFloat(oldAmount, 'f', -1, 64)
 	newAmountStr := fmt.Sprintf("%.2f", newAmount)
 	delta := newAmount - oldAmount
 	deltaStr := fmt.Sprintf("%.2f", delta)
@@ -828,6 +982,16 @@ func (r *Repository) AtomicUpdateExpense(ctx context.Context, month string, expe
 	monthCondition := "attribute_exists(PK)"
 	if checkBalance && delta > 0 {
 		monthCondition = "attribute_exists(PK) AND ending_balance >= :delta"
+	}
+
+	summaryExpr := "SET total_expenses = total_expenses + :delta, ending_balance = ending_balance - :delta, updated_at = :now"
+	summaryValues := map[string]types.AttributeValue{
+		":delta": &types.AttributeValueMemberN{Value: deltaStr},
+		":now":   &types.AttributeValueMemberS{Value: nowStr},
+	}
+	listValues := map[string]types.AttributeValue{
+		":delta": &types.AttributeValueMemberN{Value: deltaStr},
+		":now":   &types.AttributeValueMemberS{Value: nowStr},
 	}
 
 	_, err := r.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
@@ -853,12 +1017,9 @@ func (r *Repository) AtomicUpdateExpense(ctx context.Context, month string, expe
 					"PK": &types.AttributeValueMemberS{Value: pkMonth},
 					"SK": &types.AttributeValueMemberS{Value: SKSummary},
 				},
-				UpdateExpression:    aws.String("SET total_expenses = total_expenses + :delta, ending_balance = ending_balance - :delta, updated_at = :now"),
-				ConditionExpression: aws.String(monthCondition),
-				ExpressionAttributeValues: map[string]types.AttributeValue{
-					":delta": &types.AttributeValueMemberN{Value: deltaStr},
-					":now":   &types.AttributeValueMemberS{Value: nowStr},
-				},
+				UpdateExpression:          aws.String(summaryExpr),
+				ConditionExpression:       aws.String(monthCondition),
+				ExpressionAttributeValues: summaryValues,
 			}},
 			{Update: &types.Update{
 				TableName: aws.String(r.tableName),
@@ -873,6 +1034,7 @@ func (r *Repository) AtomicUpdateExpense(ctx context.Context, month string, expe
 					":now":          &types.AttributeValueMemberS{Value: nowStr},
 				},
 			}},
+			r.monthListUpdate(month, summaryExpr, listValues),
 		},
 	})
 	if err != nil {
@@ -896,8 +1058,20 @@ func (r *Repository) AtomicUpdateExpense(ctx context.Context, month string, expe
 func (r *Repository) AtomicDeleteExpense(ctx context.Context, month string, expenseID string, oldAmount float64) error {
 	pkMonth := MonthPrefix + month
 	nowStr := time.Now().Format(time.RFC3339)
-	oldAmountStr := fmt.Sprintf("%.2f", oldAmount)
-	negAmountStr := fmt.Sprintf("%.2f", -oldAmount)
+	// Shortest round-trip of the value actually read — see AtomicUpdateExpense
+	// for why "%.2f" would orphan legacy unrounded amounts (B7).
+	oldAmountStr := strconv.FormatFloat(oldAmount, 'f', -1, 64)
+	negAmountStr := strconv.FormatFloat(-oldAmount, 'f', -1, 64)
+
+	summaryExpr := "SET total_expenses = total_expenses - :amount, ending_balance = ending_balance + :amount, updated_at = :now"
+	summaryValues := map[string]types.AttributeValue{
+		":amount": &types.AttributeValueMemberN{Value: oldAmountStr},
+		":now":    &types.AttributeValueMemberS{Value: nowStr},
+	}
+	listValues := map[string]types.AttributeValue{
+		":amount": &types.AttributeValueMemberN{Value: oldAmountStr},
+		":now":    &types.AttributeValueMemberS{Value: nowStr},
+	}
 
 	_, err := r.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
 		TransactItems: []types.TransactWriteItem{
@@ -919,12 +1093,9 @@ func (r *Repository) AtomicDeleteExpense(ctx context.Context, month string, expe
 					"PK": &types.AttributeValueMemberS{Value: pkMonth},
 					"SK": &types.AttributeValueMemberS{Value: SKSummary},
 				},
-				UpdateExpression:    aws.String("SET total_expenses = total_expenses - :amount, ending_balance = ending_balance + :amount, updated_at = :now"),
-				ConditionExpression: aws.String("attribute_exists(PK)"),
-				ExpressionAttributeValues: map[string]types.AttributeValue{
-					":amount": &types.AttributeValueMemberN{Value: oldAmountStr},
-					":now":    &types.AttributeValueMemberS{Value: nowStr},
-				},
+				UpdateExpression:          aws.String(summaryExpr),
+				ConditionExpression:       aws.String("attribute_exists(PK)"),
+				ExpressionAttributeValues: summaryValues,
 			}},
 			{Update: &types.Update{
 				TableName: aws.String(r.tableName),
@@ -940,6 +1111,7 @@ func (r *Repository) AtomicDeleteExpense(ctx context.Context, month string, expe
 					":now":  &types.AttributeValueMemberS{Value: nowStr},
 				},
 			}},
+			r.monthListUpdate(month, summaryExpr, listValues),
 		},
 	})
 	if err != nil {
@@ -969,6 +1141,11 @@ func (r *Repository) AtomicCreateMonth(ctx context.Context, summary *model.Month
 	nowStr := time.Now().Format(time.RFC3339)
 	allowanceStr := fmt.Sprintf("%.2f", allowance)
 
+	listPut, err := r.monthListPut(summary)
+	if err != nil {
+		return err
+	}
+
 	_, err = r.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
 		TransactItems: []types.TransactWriteItem{
 			{Put: &types.Put{
@@ -989,6 +1166,7 @@ func (r *Repository) AtomicCreateMonth(ctx context.Context, summary *model.Month
 					":now":   &types.AttributeValueMemberS{Value: nowStr},
 				},
 			}},
+			listPut,
 		},
 	})
 	if err != nil {
@@ -1009,6 +1187,16 @@ func (r *Repository) AtomicAddFunds(ctx context.Context, month string, amount fl
 	nowStr := time.Now().Format(time.RFC3339)
 	amountStr := fmt.Sprintf("%.2f", amount)
 
+	summaryExpr := "SET allowance_added = allowance_added + :amount, ending_balance = ending_balance + :amount, updated_at = :now"
+	summaryValues := map[string]types.AttributeValue{
+		":amount": &types.AttributeValueMemberN{Value: amountStr},
+		":now":    &types.AttributeValueMemberS{Value: nowStr},
+	}
+	listValues := map[string]types.AttributeValue{
+		":amount": &types.AttributeValueMemberN{Value: amountStr},
+		":now":    &types.AttributeValueMemberS{Value: nowStr},
+	}
+
 	_, err := r.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
 		TransactItems: []types.TransactWriteItem{
 			{Update: &types.Update{
@@ -1017,12 +1205,9 @@ func (r *Repository) AtomicAddFunds(ctx context.Context, month string, amount fl
 					"PK": &types.AttributeValueMemberS{Value: pkMonth},
 					"SK": &types.AttributeValueMemberS{Value: SKSummary},
 				},
-				UpdateExpression:    aws.String("SET allowance_added = allowance_added + :amount, ending_balance = ending_balance + :amount, updated_at = :now"),
-				ConditionExpression: aws.String("attribute_exists(PK)"),
-				ExpressionAttributeValues: map[string]types.AttributeValue{
-					":amount": &types.AttributeValueMemberN{Value: amountStr},
-					":now":    &types.AttributeValueMemberS{Value: nowStr},
-				},
+				UpdateExpression:          aws.String(summaryExpr),
+				ConditionExpression:       aws.String("attribute_exists(PK)"),
+				ExpressionAttributeValues: summaryValues,
 			}},
 			{Update: &types.Update{
 				TableName: aws.String(r.tableName),
@@ -1037,6 +1222,7 @@ func (r *Repository) AtomicAddFunds(ctx context.Context, month string, amount fl
 					":now":   &types.AttributeValueMemberS{Value: nowStr},
 				},
 			}},
+			r.monthListUpdate(month, summaryExpr, listValues),
 		},
 	})
 	if err != nil {
@@ -1047,6 +1233,185 @@ func (r *Repository) AtomicAddFunds(ctx context.Context, month string, amount fl
 			return ErrExpenseStateMismatch
 		}
 		return fmt.Errorf("failed to add funds atomically: %w", err)
+	}
+	return nil
+}
+
+// maxTransactItems is DynamoDB's hard cap of 100 items per
+// TransactWriteItems call. PropagateLaterMonthDeltas chunks against it.
+const maxTransactItems = 100
+
+// PropagateLaterMonthDeltas shifts starting_balance and ending_balance by
+// the same delta on every month in `months`, applying a conditional DELTA
+// update (SET ... = ... + :d with attribute_exists(PK)) to BOTH the
+// canonical MONTH#<m>/SUMMARY row and its MONTHLIST mirror. All updates are
+// batched into a single TransactWriteItems so propagation is all-or-nothing
+// and the deltas compose with concurrent writes to those months instead of
+// clobbering them (the previous unconditioned full-object Put discarded any
+// concurrent mutation that landed between the service's read and its write).
+//
+// Each month contributes two items (canonical + mirror); to stay within the
+// 100-item transaction cap the work is chunked so each chunk holds at most
+// 50 months. The caller is responsible for ensuring each month's mirror row
+// already exists (via EnsureMonthListMirror) — these are conditional delta
+// updates, not upserts, so a missing mirror would cancel the transaction.
+//
+// Residual gap: this runs in a SEPARATE transaction from the originating
+// mutation (DynamoDB's 100-item limit makes a single mega-transaction
+// infeasible as the month count grows). If the process crashes after the
+// mutation commits but before (or between chunks of) this call, later
+// months' carried balances are left stale. The mutation itself is never
+// lost. Because the updates are now composable deltas (not snapshots),
+// re-running propagation would re-apply — so callers must not retry this
+// blindly; recovery is a one-shot recompute, out of scope here.
+func (r *Repository) PropagateLaterMonthDeltas(ctx context.Context, months []string, delta float64) error {
+	if len(months) == 0 || delta == 0 {
+		return nil
+	}
+	nowStr := time.Now().Format(time.RFC3339)
+	deltaStr := strconv.FormatFloat(delta, 'f', -1, 64)
+	expr := aws.String("SET starting_balance = starting_balance + :d, ending_balance = ending_balance + :d, updated_at = :now")
+
+	// Two transact items per month → chunk so 2*chunk <= maxTransactItems.
+	const monthsPerChunk = maxTransactItems / 2
+	for start := 0; start < len(months); start += monthsPerChunk {
+		end := start + monthsPerChunk
+		if end > len(months) {
+			end = len(months)
+		}
+		items := make([]types.TransactWriteItem, 0, (end-start)*2)
+		for _, m := range months[start:end] {
+			values := map[string]types.AttributeValue{
+				":d":   &types.AttributeValueMemberN{Value: deltaStr},
+				":now": &types.AttributeValueMemberS{Value: nowStr},
+			}
+			items = append(items, types.TransactWriteItem{Update: &types.Update{
+				TableName: aws.String(r.tableName),
+				Key: map[string]types.AttributeValue{
+					"PK": &types.AttributeValueMemberS{Value: MonthPrefix + m},
+					"SK": &types.AttributeValueMemberS{Value: SKSummary},
+				},
+				UpdateExpression:          expr,
+				ConditionExpression:       aws.String("attribute_exists(PK)"),
+				ExpressionAttributeValues: values,
+			}})
+			items = append(items, types.TransactWriteItem{Update: &types.Update{
+				TableName: aws.String(r.tableName),
+				Key: map[string]types.AttributeValue{
+					"PK": &types.AttributeValueMemberS{Value: PKMonthList},
+					"SK": &types.AttributeValueMemberS{Value: m},
+				},
+				UpdateExpression:          expr,
+				ConditionExpression:       aws.String("attribute_exists(PK)"),
+				ExpressionAttributeValues: values,
+			}})
+		}
+		_, err := r.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+			TransactItems: items,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to propagate later-month deltas: %w", err)
+		}
+	}
+	return nil
+}
+
+// CreateMonthSummaryIfAbsent puts a fresh month summary (canonical row +
+// MONTHLIST copy) only if the canonical row does not already exist. On a
+// concurrent create the loser gets ErrMonthAlreadyExists and the service
+// re-reads the winner. This replaces ensureMonthExists's old
+// Get-then-unconditional-Put, which could clobber a month another request
+// created in the gap and permanently desync month vs balance (B2). No
+// global balance credit happens here — an auto-created month carries $0
+// allowance.
+func (r *Repository) CreateMonthSummaryIfAbsent(ctx context.Context, summary *model.MonthSummary) error {
+	summary.PK = MonthPrefix + summary.Month
+	summary.SK = SKSummary
+	summary.UpdatedAt = time.Now()
+	if summary.CreatedAt.IsZero() {
+		summary.CreatedAt = summary.UpdatedAt
+	}
+	item, err := attributevalue.MarshalMap(summary)
+	if err != nil {
+		return fmt.Errorf("failed to marshal month summary: %w", err)
+	}
+	listItem, err := monthListItem(summary)
+	if err != nil {
+		return err
+	}
+
+	_, err = r.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+		TransactItems: []types.TransactWriteItem{
+			{Put: &types.Put{
+				TableName:           aws.String(r.tableName),
+				Item:                item,
+				ConditionExpression: aws.String("attribute_not_exists(PK)"),
+			}},
+			{Put: &types.Put{TableName: aws.String(r.tableName), Item: listItem}},
+		},
+	})
+	if err != nil {
+		if idx, ok := txConditionFailedIndex(err); ok && idx == 0 {
+			return ErrMonthAlreadyExists
+		}
+		return fmt.Errorf("failed to create month summary: %w", err)
+	}
+	return nil
+}
+
+// AtomicDeleteMonth removes a month: it deletes the canonical summary row
+// and its MONTHLIST copy and debits the global balance by allowanceAdded,
+// all in one transaction. The summary delete is conditioned on
+// total_expenses = :zero (and attribute_exists) so a month that still has
+// expenses cannot be deleted — the caller maps that to a 409. allowanceAdded
+// is formatted as the shortest round-trip of the value read from the summary.
+func (r *Repository) AtomicDeleteMonth(ctx context.Context, month string, allowanceAdded float64) error {
+	pkMonth := MonthPrefix + month
+	nowStr := time.Now().Format(time.RFC3339)
+	allowanceStr := strconv.FormatFloat(allowanceAdded, 'f', -1, 64)
+
+	_, err := r.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+		TransactItems: []types.TransactWriteItem{
+			{Delete: &types.Delete{
+				TableName: aws.String(r.tableName),
+				Key: map[string]types.AttributeValue{
+					"PK": &types.AttributeValueMemberS{Value: pkMonth},
+					"SK": &types.AttributeValueMemberS{Value: SKSummary},
+				},
+				ConditionExpression: aws.String("attribute_exists(PK) AND total_expenses = :zero"),
+				ExpressionAttributeValues: map[string]types.AttributeValue{
+					":zero": &types.AttributeValueMemberN{Value: "0"},
+				},
+			}},
+			{Delete: &types.Delete{
+				TableName: aws.String(r.tableName),
+				Key: map[string]types.AttributeValue{
+					"PK": &types.AttributeValueMemberS{Value: PKMonthList},
+					"SK": &types.AttributeValueMemberS{Value: month},
+				},
+			}},
+			{Update: &types.Update{
+				TableName: aws.String(r.tableName),
+				Key: map[string]types.AttributeValue{
+					"PK": &types.AttributeValueMemberS{Value: PKBalance},
+					"SK": &types.AttributeValueMemberS{Value: SKBalance},
+				},
+				UpdateExpression: aws.String("SET total_balance = if_not_exists(total_balance, :zero) - :allowance, updated_at = :now"),
+				ExpressionAttributeValues: map[string]types.AttributeValue{
+					":allowance": &types.AttributeValueMemberN{Value: allowanceStr},
+					":zero":      &types.AttributeValueMemberN{Value: "0"},
+					":now":       &types.AttributeValueMemberS{Value: nowStr},
+				},
+			}},
+		},
+	})
+	if err != nil {
+		if idx, ok := txConditionFailedIndex(err); ok && idx == 0 {
+			// Summary delete condition failed: month missing or still has
+			// expenses. Caller distinguishes via a pre-read.
+			return ErrMonthHasExpenses
+		}
+		return fmt.Errorf("failed to delete month atomically: %w", err)
 	}
 	return nil
 }

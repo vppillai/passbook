@@ -70,10 +70,17 @@ type VerifyPinRequest struct {
 }
 
 type VerifyPinResponse struct {
-	Success           bool   `json:"success"`
-	Token             string `json:"token,omitempty"`
-	Error             string `json:"error,omitempty"`
-	AttemptsRemaining int    `json:"attempts_remaining,omitempty"`
+	Success bool   `json:"success"`
+	Token   string `json:"token,omitempty"`
+	Error   string `json:"error,omitempty"`
+	// AttemptsRemaining is a pointer so that the value 0 (exactly at
+	// lockout) is serialized rather than dropped by omitempty. A nil
+	// pointer (omitted from JSON) means "not applicable" (e.g. success).
+	AttemptsRemaining *int `json:"attempts_remaining,omitempty"`
+	// RetryAfterSeconds is set on a rate-limited (429) response: the
+	// number of seconds until the per-IP window's TTL expires and the
+	// caller may try again. Omitted when not rate-limited.
+	RetryAfterSeconds *int64 `json:"retry_after_seconds,omitempty"`
 }
 
 type ChangePinRequest struct {
