@@ -101,6 +101,7 @@ Commands:
   rmfunds YYYY-MM <amount>                   Remove funds from a month
   rmmonth YYYY-MM                            Delete a month and all its expenses
   recalc                                     Recalculate total balance from all months
+  fixchain YYYY-MM                           Repair the carry chain (starting balances) from a month onward
   export [filename]                          Export all data to JSON
   import <filename>                          Import data from JSON backup
   show                                       Show all data in the table
@@ -1322,6 +1323,17 @@ case "${1:-}" in
         ;;
     recalc)
         recalc_balance
+        ;;
+    fixchain)
+        # Repair the starting/ending-balance carry chain from a month onward
+        # (e.g. after historical edits made by pre-carry-fix app versions).
+        if [ $# -ne 2 ]; then
+            echo "Usage: $0 --instance <name> fixchain YYYY-MM" >&2
+            exit 1
+        fi
+        validate_month "$2"
+        recompute_carry_chain "$2"
+        echo "Carry chain recomputed from $2 onward."
         ;;
     *)
         echo "Error: unknown command '$1'" >&2
