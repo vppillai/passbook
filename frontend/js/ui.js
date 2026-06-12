@@ -10,7 +10,6 @@
 
 import { labels } from './labels.js';
 import { roundCents } from './api.js';
-import { computePace, isCurrentMonth } from './insights.js';
 
 /**
  * Fires a vibration pattern if the device supports it and the user has not
@@ -676,56 +675,12 @@ export function updateDashboard(data) {
     document.getElementById('expenses-total').textContent =
         `${formatCurrency(totalExpenses)} ${labels.spent_suffix}${ofBudget}`;
 
-    updatePaceChip(data);
-}
-
-/**
- * Renders the spending-pace chip for the CURRENT month only; hidden for past
- * months, malformed data, or when there is no budget to pace against. Strings
- * route through labels with `{x}` replaced by a formatted amount.
- * @param {Object} data - MonthDataResponse
- */
-function updatePaceChip(data) {
-    const chip = document.getElementById('pace-chip');
-    if (!chip) return;
-    const valueEl = chip.querySelector('.chip-value');
-
-    // Past months never get a pace insight.
-    if (!data || !isCurrentMonth(data.month)) {
-        chip.classList.add('hidden');
-        chip.classList.remove('pace-overspend', 'pace-saved', 'pace-on-track');
-        return;
-    }
-
-    const pace = computePace({ month: data.month, summary: data.summary });
-    if (!pace) {
-        chip.classList.add('hidden');
-        chip.classList.remove('pace-overspend', 'pace-saved', 'pace-on-track');
-        return;
-    }
-
-    const money = formatCurrency(pace.amount);
-    let text;
-    chip.classList.remove('pace-overspend', 'pace-saved', 'pace-on-track');
-    if (pace.kind === 'overspend') {
-        text = labels.pace_overspend.replace('{x}', money);
-        chip.classList.add('pace-overspend');
-    } else if (pace.kind === 'saved') {
-        text = labels.pace_saved.replace('{x}', money);
-        chip.classList.add('pace-saved');
-    } else {
-        text = labels.pace_on_track.replace('{x}', money);
-        chip.classList.add('pace-on-track');
-    }
-    valueEl.textContent = text;
-    chip.classList.remove('hidden');
 }
 
 export function showEmptyState() {
     // Show empty state when no months exist
     document.getElementById('month-title').textContent = 'No Data Yet';
     document.getElementById('carryover-chip').classList.add('hidden');
-    document.getElementById('pace-chip').classList.add('hidden');
     const emptyMonthBalanceEl = document.getElementById('month-balance');
     emptyMonthBalanceEl.textContent = formatCurrency(0);
     emptyMonthBalanceEl.classList.remove('balance-negative');
@@ -751,7 +706,6 @@ export function showEmptyState() {
 export function showDashboardLoading() {
     document.getElementById('month-title').textContent = ' ';
     document.getElementById('carryover-chip').classList.add('hidden');
-    document.getElementById('pace-chip').classList.add('hidden');
     const monthBalanceEl = document.getElementById('month-balance');
     monthBalanceEl.textContent = ' ';
     monthBalanceEl.classList.remove('balance-negative');
@@ -788,7 +742,6 @@ export function showDashboardError(onRetry) {
     document.getElementById('month-balance').textContent = '—';
     document.getElementById('expenses-total').textContent = '';
     document.getElementById('carryover-chip').classList.add('hidden');
-    document.getElementById('pace-chip').classList.add('hidden');
     const list = document.getElementById('expenses-list');
     list.replaceChildren();
     const wrap = document.createElement('div');

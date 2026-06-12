@@ -538,25 +538,6 @@ header h1 {
     color: var(--danger);
 }
 
-/* Pace chip — same chip shell as carryover, with a value tint per state.
-   Wider than the stat chips since its value is a short sentence, not a number. */
-.pace-chip .chip-value {
-    font-size: 0.92rem;
-    white-space: normal;
-}
-
-.pace-chip.pace-overspend .chip-value {
-    color: var(--danger);
-}
-
-.pace-chip.pace-saved .chip-value {
-    color: var(--success-color);
-}
-
-.pace-chip.pace-on-track .chip-value {
-    color: var(--accent);
-}
-
 /* Legacy hook used outside the hero (months list). */
 .amount.balance-negative {
     color: var(--danger);
