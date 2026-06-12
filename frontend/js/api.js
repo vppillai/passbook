@@ -366,17 +366,23 @@ class Api {
      * The expense is identified by its month and unique ID. The ID is URL-encoded
      * because expense IDs may contain special characters (e.g. '#').
      *
+     * When an explicit `date` ("YYYY-MM-DD") is provided it re-dates the
+     * expense, mirroring the add path: the backend validates the date isn't in
+     * the future and uses it as the new timestamp; when the date's month
+     * differs from `month` the expense is moved to that month and the response
+     * carries the new `expense.month` (and possibly a new `expense.id`).
+     *
      * @param {string} month - Month key in "YYYY-MM" format that the expense belongs to
      * @param {string} expenseId - Unique identifier of the expense to update
      * @param {number} amount - New expense amount in dollars (must be positive)
      * @param {string} description - New description for the expense
+     * @param {string|null} [date] - Optional "YYYY-MM-DD" date to re-date the expense
      * @returns {Promise<Object>} The updated expense record
      */
-    async updateExpense(month, expenseId, amount, description) {
-        return this.request('PUT', `/api/expense/${month}/${encodeURIComponent(expenseId)}`, {
-            amount,
-            description,
-        });
+    async updateExpense(month, expenseId, amount, description, date = null) {
+        const body = { amount, description };
+        if (date) body.date = date;
+        return this.request('PUT', `/api/expense/${month}/${encodeURIComponent(expenseId)}`, body);
     }
 
     /**

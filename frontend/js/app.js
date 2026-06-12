@@ -45,6 +45,9 @@ class App {
         this.allExpenses = [];
         this.expensesCursor = null;
         this.editingExpenseId = null;
+        // The "YYYY-MM-DD" date shown when the edit modal opened, so a save
+        // only sends `date` when the user actually changed it.
+        this.editingOriginalDate = null;
         // Per-month authoritative data cache (review C6). Revisiting a month
         // already in the cache skips the network; a mutation to a month
         // deletes its entry so the next view refetches fresh data.
@@ -283,6 +286,7 @@ class App {
         document.getElementById('cancel-edit-expense').addEventListener('click', () => {
             ui.closeModal('edit-expense-modal');
             this.editingExpenseId = null;
+            this.editingOriginalDate = null;
         });
 
         // Create month form
@@ -331,6 +335,7 @@ class App {
                 // Reset editing state if edit modal was closed
                 if (modal.id === 'edit-expense-modal') {
                     this.editingExpenseId = null;
+                    this.editingOriginalDate = null;
                 }
             });
         });
@@ -401,6 +406,16 @@ class App {
             });
         }
 
+        // Edit-date input: show the move hint when the chosen date's month
+        // differs from the expense's current month, and clear errors on change.
+        const editDateInput = document.getElementById('edit-expense-date');
+        if (editDateInput) {
+            editDateInput.addEventListener('change', () => {
+                ui.hideError('edit-expense-error');
+                ui.setEditExpenseMonthHint(this.currentMonth, editDateInput.value || null);
+            });
+        }
+
         // Haptics for PIN error/lockout: observe when the .error class is added
         // to any .pin-dot (auth.js calls ui.showPinError which adds that class).
         // This avoids touching auth.js while still reacting to its DOM changes.
@@ -446,7 +461,10 @@ class App {
             } else {
                 ui.closeModal(visibleModal.id);
             }
-            if (visibleModal.id === 'edit-expense-modal') this.editingExpenseId = null;
+            if (visibleModal.id === 'edit-expense-modal') {
+                this.editingExpenseId = null;
+                this.editingOriginalDate = null;
+            }
         });
 
         // Pull-to-refresh on the main screen (touch only).
@@ -472,6 +490,7 @@ class App {
                 btn.disabled = false;
             });
             this.editingExpenseId = null;
+            this.editingOriginalDate = null;
             ui.showToast('Session expired. Please log in again.', 'error');
             ui.showScreen('auth-screen');
         });
@@ -861,14 +880,34 @@ class App {
 
     openEditExpense(expenseId, amount, description) {
         this.editingExpenseId = expenseId;
-        ui.populateEditExpenseModal(amount, description);
+        // Prefill the date from the expense's existing timestamp so it matches
+        // the day shown in the list. created_at is an ISO instant; new Date()
+        // renders it in LOCAL time, same as the list's day grouping, so the
+        // prefilled YYYY-MM-DD is the local calendar day the user sees.
+        const expense = this.allExpenses.find((e) => e.id === expenseId);
+        let dateStr = null;
+        if (expense && expense.created_at) {
+            const d = new Date(expense.created_at);
+            if (!isNaN(d.getTime())) {
+                dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            }
+        }
+        // Remember the originally-shown date so we only send `date` when it
+        // actually changed (an unchanged date must not re-key the SK).
+        this.editingOriginalDate = dateStr;
+        ui.populateEditExpenseModal(amount, description, dateStr);
+        // Hint compares the chosen date's month against the expense's current
+        // month; on open they match, so it starts hidden.
+        ui.setEditExpenseMonthHint(this.currentMonth, dateStr);
     }
 
     async handleEditExpense() {
         const amountInput = document.getElementById('edit-expense-amount');
         const descInput = document.getElementById('edit-expense-desc');
+        const dateInput = document.getElementById('edit-expense-date');
         const amount = roundCents(parseFloat(amountInput.value));
         const description = descInput.value.trim();
+        const chosenDate = (dateInput && dateInput.value) ? dateInput.value : null;
 
         ui.hideError('edit-expense-error');
 
@@ -887,6 +926,19 @@ class App {
             return;
         }
 
+        // Client-side future-date guard, mirroring the add path: compare the
+        // chosen ISO date string against today's LOCAL date.
+        if (chosenDate) {
+            const todayStr = (() => {
+                const n = new Date();
+                return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+            })();
+            if (chosenDate > todayStr) {
+                ui.showError('edit-expense-error', labels.expense_date_future);
+                return;
+            }
+        }
+
         const submitBtn = document.querySelector('#edit-expense-form button[type="submit"]');
         const origText = submitBtn.textContent;
         submitBtn.disabled = true;
@@ -894,19 +946,38 @@ class App {
 
         const editMonth = this.currentMonth;
         const editId = this.editingExpenseId;
+        // Send `date` only when it actually changed from what was shown on open;
+        // an unchanged date leaves the timestamp/SK untouched on the backend.
+        const dateChanged = !!(chosenDate && chosenDate !== this.editingOriginalDate);
 
         try {
-            const res = await api.updateExpense(editMonth, editId, amount, description);
+            const res = await api.updateExpense(editMonth, editId, amount, description, dateChanged ? chosenDate : null);
             ui.closeModal('edit-expense-modal');
             this.editingExpenseId = null;
-            ui.showToast('Expense updated!', 'success');
+            this.editingOriginalDate = null;
 
-            // Apply the mutation response in place rather than refetching
-            // (review C4/H1): the response carries the updated expense and the
-            // new total_balance. The cache for this month is then dropped so a
-            // later revisit refetches authoritative summary fields.
-            this.applyExpenseUpdate(editMonth, res);
-            this.invalidateMonth(editMonth);
+            // A move happened iff the response's month differs from the month
+            // being viewed. The cross-month path touches BOTH months' summaries
+            // and the months list, so an in-place patch isn't enough — drop both
+            // caches + the list and refetch the viewed month authoritatively.
+            const movedTo = res.expense && res.expense.month;
+            if (movedTo && movedTo !== editMonth) {
+                this.invalidateMonth(editMonth);
+                this.invalidateMonth(movedTo);
+                await this.loadCurrentMonth();
+                ui.showToast(
+                    labels.expense_moved_to_toast.replace('{month}', ui.formatMonthName(movedTo)),
+                    'success');
+            } else {
+                ui.showToast('Expense updated!', 'success');
+                // Same-month edit (amount/description, or a same-month re-date):
+                // apply the response in place, then drop the month's cache so a
+                // later revisit refetches authoritative summary fields. A
+                // same-month re-date can re-key the SK, so the original id is
+                // passed so applyExpenseUpdate can locate the row by it.
+                this.applyExpenseUpdate(editMonth, res, editId);
+                this.invalidateMonth(editMonth);
+            }
         } catch (error) {
             ui.showError('edit-expense-error', error.message);
         } finally {
@@ -917,15 +988,26 @@ class App {
 
     /**
      * Updates the in-memory month state from an updateExpense response and
-     * re-renders, without a refetch. No-ops if the user navigated away.
+     * re-renders, without a refetch. No-ops if the user navigated away. Only
+     * handles SAME-month responses (a cross-month move is handled by a refetch
+     * in handleEditExpense). A same-month re-date can re-key the SK and change
+     * created_at, so the row's id/created_at/order are reconciled, not just its
+     * amount/description; `originalId` locates the row when its SK changed.
      * @param {string} month
      * @param {Object} res - UpdateExpenseResponse { expense, total_balance }
+     * @param {string} [originalId] - the SK the row had before this edit
      */
-    applyExpenseUpdate(month, res) {
+    applyExpenseUpdate(month, res, originalId) {
         if (month !== this.currentMonth || !this.monthData) return;
         const updated = res.expense;
         if (updated) {
-            const idx = this.allExpenses.findIndex((e) => e.id === updated.id);
+            // Match by the updated id first (amount/description-only edit keeps
+            // the same SK); fall back to the original id when a same-month
+            // re-date re-keyed the SK.
+            let idx = this.allExpenses.findIndex((e) => e.id === updated.id);
+            if (idx === -1 && originalId) {
+                idx = this.allExpenses.findIndex((e) => e.id === originalId);
+            }
             if (idx !== -1) {
                 const prev = this.allExpenses[idx];
                 const prevAmount = parseFloat(prev.amount) || 0;
@@ -942,6 +1024,10 @@ class App {
                             (this.monthData.summary.ending_balance || 0) - delta);
                     }
                 }
+                // A re-date changes created_at, which drives the list's
+                // newest-first order and day grouping; re-sort so the row lands
+                // on its new day (descending by created_at, matching the API).
+                this.allExpenses.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             }
         }
         if (typeof res.total_balance === 'number') {

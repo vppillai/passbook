@@ -452,6 +452,95 @@ func (f *FakeRepo) AtomicDeleteExpense(_ context.Context, month, expenseID strin
 	return nil
 }
 
+// AtomicMoveExpenseSameMonth models the real same-month re-date transaction:
+// optimistic-lock the old row (amount = oldAmount → ErrExpenseStateMismatch),
+// then in one logical transaction delete the old SK, put the new SK, and
+// shift the summary + mirror + balance by the amount delta. A missing mirror
+// cancels the whole transaction (legacy-table defect); an overspend with
+// checkBalance && delta>0 returns ErrInsufficientBalance before any write.
+func (f *FakeRepo) AtomicMoveExpenseSameMonth(_ context.Context, month string, oldExpenseID string, newExpense *model.Expense, oldAmount float64, checkBalance bool) error {
+	e, ok := f.Expenses[ExpenseKey(month, oldExpenseID)]
+	if !ok {
+		return repository.ErrExpenseStateMismatch
+	}
+	if e.Amount != oldAmount {
+		return repository.ErrExpenseStateMismatch
+	}
+	s, ok := f.Months[month]
+	if !ok {
+		return errors.New("month not found")
+	}
+	delta := newExpense.Amount - oldAmount
+	if checkBalance && delta > 0 && s.EndingBalance < delta {
+		return repository.ErrInsufficientBalance
+	}
+	// Missing mirror cancels the whole transaction (legacy-table defect).
+	if _, ok := f.MonthList[month]; !ok {
+		return errMonthListMirrorMissing
+	}
+	delete(f.Expenses, ExpenseKey(month, oldExpenseID))
+	ne := *newExpense
+	ne.PK = "MONTH#" + month
+	f.Expenses[ExpenseKey(month, newExpense.SK)] = &ne
+	s.TotalExpenses += delta
+	s.EndingBalance -= delta
+	_ = f.applyMonthListDelta(month, delta, -delta, 0, 0)
+	if f.Balance == nil {
+		f.Balance = &model.Balance{}
+	}
+	f.Balance.TotalBalance -= delta
+	return nil
+}
+
+// AtomicMoveExpenseAcrossMonths models the real cross-month move transaction:
+// optimistic-lock the source row, then (all-or-nothing) delete it, refund the
+// source summary + mirror by oldAmount, put the new row in dstMonth, charge
+// the destination summary + mirror by newAmount, and shift BALANCE by
+// (oldAmount - newAmount). A missing mirror on either month cancels the whole
+// transaction; an overspend on the destination (checkBalance) returns
+// ErrInsufficientBalance before any write lands.
+func (f *FakeRepo) AtomicMoveExpenseAcrossMonths(_ context.Context, srcMonth, dstMonth, oldExpenseID string, newExpense *model.Expense, oldAmount float64, checkBalance bool) error {
+	e, ok := f.Expenses[ExpenseKey(srcMonth, oldExpenseID)]
+	if !ok {
+		return repository.ErrExpenseStateMismatch
+	}
+	if e.Amount != oldAmount {
+		return repository.ErrExpenseStateMismatch
+	}
+	src, ok := f.Months[srcMonth]
+	if !ok {
+		return errors.New("source month not found")
+	}
+	dst, ok := f.Months[dstMonth]
+	if !ok {
+		return errors.New("destination month not found")
+	}
+	if _, ok := f.MonthList[srcMonth]; !ok {
+		return errMonthListMirrorMissing
+	}
+	if _, ok := f.MonthList[dstMonth]; !ok {
+		return errMonthListMirrorMissing
+	}
+	if checkBalance && dst.EndingBalance < newExpense.Amount {
+		return repository.ErrInsufficientBalance
+	}
+	delete(f.Expenses, ExpenseKey(srcMonth, oldExpenseID))
+	ne := *newExpense
+	ne.PK = "MONTH#" + dstMonth
+	f.Expenses[ExpenseKey(dstMonth, newExpense.SK)] = &ne
+	src.TotalExpenses -= oldAmount
+	src.EndingBalance += oldAmount
+	_ = f.applyMonthListDelta(srcMonth, -oldAmount, oldAmount, 0, 0)
+	dst.TotalExpenses += newExpense.Amount
+	dst.EndingBalance -= newExpense.Amount
+	_ = f.applyMonthListDelta(dstMonth, newExpense.Amount, -newExpense.Amount, 0, 0)
+	if f.Balance == nil {
+		f.Balance = &model.Balance{}
+	}
+	f.Balance.TotalBalance += oldAmount - newExpense.Amount
+	return nil
+}
+
 func (f *FakeRepo) AtomicCreateMonth(_ context.Context, summary *model.MonthSummary, allowance float64) error {
 	if _, exists := f.Months[summary.Month]; exists {
 		return repository.ErrMonthAlreadyExists

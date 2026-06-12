@@ -31,8 +31,15 @@ const defaultLabels = {
     app_updated_toast: 'App updated — tap to refresh',
     // Action button label on the update toast.
     reload_action: 'Reload',
-    // Shown when the user picks a future date in the add-expense modal.
+    // Shown when the user picks a future date in the add/edit-expense modal.
     expense_date_future: 'Date cannot be in the future',
+    // Shown in the edit-expense modal when the chosen date's month differs from
+    // the expense's current month (i.e. saving would move it). `{month}` is the
+    // target month's display name. Instance-divergent → labels.
+    expense_moved_to_hint: 'This will be moved to {month}',
+    // Toast shown after an edit moved an expense to a different month. `{month}`
+    // is replaced with the target month's display name. Instance-divergent.
+    expense_moved_to_toast: 'Moved to {month}',
 
     // Auth error messages shown on the PIN screen.
     // `{n}` is replaced with the numeric attempts_remaining value.

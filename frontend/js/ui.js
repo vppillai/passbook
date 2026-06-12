@@ -615,11 +615,60 @@ function buildLoadMoreMonthsItem(onClick) {
 
 export { buildLoadMoreMonthsItem };
 
-export function populateEditExpenseModal(amount, description) {
+/**
+ * Populates and opens the edit-expense modal. The date field is prefilled from
+ * the expense's existing timestamp (so it matches the date shown in the list)
+ * and its `max` is pinned to today, mirroring the add modal. `dateStr` is a
+ * "YYYY-MM-DD" string in LOCAL time (derived by the caller from created_at) so
+ * the prefilled day matches what the user sees in the grouped list.
+ * @param {number} amount
+ * @param {string} description
+ * @param {string|null} [dateStr] - "YYYY-MM-DD" local date of the expense
+ */
+export function populateEditExpenseModal(amount, description, dateStr = null) {
     document.getElementById('edit-expense-amount').value = amount;
     document.getElementById('edit-expense-desc').value = description;
+    const dateInput = document.getElementById('edit-expense-date');
+    if (dateInput) {
+        const todayStr = (() => {
+            const n = new Date();
+            return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+        })();
+        dateInput.max = todayStr;
+        if (dateStr) dateInput.value = dateStr;
+    }
     showModal('edit-expense-modal');
     document.getElementById('edit-expense-amount').focus();
+}
+
+/**
+ * Shows or hides the edit-expense modal hint. Mirrors setExpenseMonthHint, but
+ * the comparison baseline is the expense's CURRENT month (the one being viewed/
+ * edited): the hint appears only when the chosen date would move the expense to
+ * a different month. The wording routes through labels (instance-divergent).
+ *
+ * @param {string|null} currentMonth - "YYYY-MM" the expense currently lives in
+ * @param {string|null} chosenDate - "YYYY-MM-DD" from the edit date input
+ */
+export function setEditExpenseMonthHint(currentMonth, chosenDate) {
+    const hint = document.getElementById('edit-expense-month-hint');
+    if (!hint) return;
+
+    let targetMonth = null;
+    if (chosenDate) {
+        const m = String(chosenDate).match(/^(\d{4}-\d{2})/);
+        targetMonth = m ? m[1] : null;
+    }
+
+    const shouldShow = !!(targetMonth && currentMonth && targetMonth !== currentMonth);
+    if (shouldShow) {
+        hint.textContent = labels.expense_moved_to_hint.replace(
+            '{month}', formatMonthName(targetMonth));
+        hint.classList.remove('hidden');
+    } else {
+        hint.textContent = '';
+        hint.classList.add('hidden');
+    }
 }
 
 // formatPrevMonthName returns the display name of the month before the

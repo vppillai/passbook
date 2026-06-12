@@ -605,14 +605,31 @@ func (s *ExpenseService) resolveMonthAndTime(clientMonth, clientDate string) (st
 	return month, time.Date(date.Year(), date.Month(), date.Day(), 12, 0, 0, 0, time.UTC), nil
 }
 
-// UpdateExpense updates an existing expense's amount and/or description.
-// Validation, read of current state, and the multi-row write
-// (expense + month summary + balance) are wrapped in a single DynamoDB
-// transaction with conditions to detect concurrent edits (amount
-// mismatch) and overspending. Returns ErrExpenseNotFound on concurrent
-// edit or stale read (the client should re-fetch and retry).
+// UpdateExpense updates an existing expense's amount, description, and/or
+// date. Validation, read of current state, and the multi-row write are wrapped
+// in a single DynamoDB transaction with conditions to detect concurrent edits
+// (amount mismatch) and overspending. Returns ErrExpenseModified on a
+// concurrent edit (409) and ErrExpenseNotFound on a stale/missing read (404).
+//
+// The optional date is validated exactly like the add path (resolveExpenseTime:
+// valid YYYY-MM-DD, not in the future in UTC, today allowed). Because an
+// expense's SK encodes its timestamp (EXP#<unixnano>#<id>), a date change to a
+// new day re-keys the row:
+//
+//   - Same target month: delete the old SK + put a new SK (keeping the random
+//     id suffix stable) in one transaction, composing any amount/description
+//     change as summary/mirror/balance deltas (AtomicMoveExpenseSameMonth).
+//   - Different target month: a full cross-month move that refunds the source
+//     month and charges the destination, leaving BALANCE shifted only by the
+//     amount diff (AtomicMoveExpenseAcrossMonths), then carry-propagates both
+//     affected months when they're not the latest.
+//
+// When the date resolves to the same calendar day the row already sits on, the
+// SK is unchanged and the edit collapses to the existing amount/description
+// path so amount-only and description-only edits keep their established
+// behavior.
 func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expenseID string, req *model.UpdateExpenseRequest) (*model.UpdateExpenseResponse, error) {
-	if req.Amount == nil && req.Description == nil {
+	if req.Amount == nil && req.Description == nil && req.Date == "" {
 		return nil, ErrNoChanges
 	}
 	if req.Amount != nil {
@@ -649,43 +666,200 @@ func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expens
 	if newDescription == "" {
 		newDescription = "Expense"
 	}
-	amountDelta := newAmount - currentExpense.Amount
 
-	if amountDelta != 0 {
-		// Back-fill the MONTHLIST mirror on legacy tables so the atomic
-		// transaction's monthListUpdate condition can't cancel it (→ 500).
+	// Resolve the (possibly new) timestamp and target month from the optional
+	// date, using the same rule as the add path. An absent date keeps the
+	// expense on its existing timestamp/month.
+	newTime := currentExpense.CreatedAt
+	targetMonth := month
+	if req.Date != "" {
+		resolvedMonth, resolvedTime, derr := s.resolveExpenseTime(req.Date)
+		if derr != nil {
+			return nil, derr
+		}
+		targetMonth = resolvedMonth
+		// Only re-stamp when the date lands on a different calendar day than
+		// the row currently carries; re-dating to the same day is a no-op for
+		// the timestamp (and avoids a needless SK churn for an unchanged day).
+		cur := currentExpense.CreatedAt.UTC()
+		if !(cur.Year() == resolvedTime.Year() && cur.YearDay() == resolvedTime.YearDay()) {
+			newTime = resolvedTime
+		}
+	}
+
+	dateChanged := !newTime.Equal(currentExpense.CreatedAt)
+	monthChanged := targetMonth != month
+
+	switch {
+	case monthChanged:
+		// Cross-month move: a full transaction that refunds the source month,
+		// charges the destination, and re-keys the expense (new SK encodes the
+		// new timestamp; keep the random id suffix stable).
+		newExpense, rerr := s.redatedExpense(currentExpense, newTime, newAmount, newDescription)
+		if rerr != nil {
+			return nil, rerr
+		}
+		// Ensure BOTH months exist + carry their MONTHLIST mirror before the
+		// atomic transaction (delta updates are not upserts).
+		if _, err := s.ensureMonthExists(ctx, month); err != nil {
+			return nil, err
+		}
 		if err := s.repo.EnsureMonthListMirror(ctx, month); err != nil {
 			return nil, err
 		}
-		// Atomic transaction with optimistic concurrency on amount.
-		if err := s.repo.AtomicUpdateExpense(ctx, month, expenseID, currentExpense.Amount, newAmount, newDescription, !s.allowOverspending); err != nil {
+		if _, err := s.ensureMonthExists(ctx, targetMonth); err != nil {
+			return nil, err
+		}
+		if err := s.repo.EnsureMonthListMirror(ctx, targetMonth); err != nil {
+			return nil, err
+		}
+		if err := s.repo.AtomicMoveExpenseAcrossMonths(ctx, month, targetMonth, expenseID, newExpense, currentExpense.Amount, !s.allowOverspending); err != nil {
 			switch {
 			case errors.Is(err, repository.ErrInsufficientBalance):
-				return nil, s.insufficientFunds(ctx, month)
+				return nil, s.insufficientFunds(ctx, targetMonth)
 			case errors.Is(err, repository.ErrExpenseStateMismatch):
-				// We read the expense moments ago, so this is a genuine
-				// concurrent edit, not a missing row → 409 refresh (U4).
 				return nil, ErrExpenseModified
 			default:
 				return nil, err
 			}
 		}
-		// Changing the amount shifts this month's ending balance by
-		// -amountDelta; ripple through later months' carry chain.
+		// The source month's ending balance rose by oldAmount (refund); the
+		// destination's fell by newAmount. Ripple each through its own carry
+		// chain when it isn't the latest month.
+		if err := s.propagateToLaterMonths(ctx, month, currentExpense.Amount); err != nil {
+			return nil, err
+		}
+		if err := s.propagateToLaterMonths(ctx, targetMonth, -newAmount); err != nil {
+			return nil, err
+		}
+		return s.updateExpenseResponse(ctx, targetMonth, newExpense.SK, newAmount, newDescription, newTime)
+
+	case dateChanged:
+		// Same-month re-date: the SK changes (it encodes the timestamp), so
+		// delete the old SK + put the new SK, composing any amount/description
+		// change in the same transaction.
+		newExpense, rerr := s.redatedExpense(currentExpense, newTime, newAmount, newDescription)
+		if rerr != nil {
+			return nil, rerr
+		}
+		if err := s.repo.EnsureMonthListMirror(ctx, month); err != nil {
+			return nil, err
+		}
+		if err := s.repo.AtomicMoveExpenseSameMonth(ctx, month, expenseID, newExpense, currentExpense.Amount, !s.allowOverspending); err != nil {
+			switch {
+			case errors.Is(err, repository.ErrInsufficientBalance):
+				return nil, s.insufficientFunds(ctx, month)
+			case errors.Is(err, repository.ErrExpenseStateMismatch):
+				return nil, ErrExpenseModified
+			default:
+				return nil, err
+			}
+		}
+		amountDelta := newAmount - currentExpense.Amount
 		if err := s.propagateToLaterMonths(ctx, month, -amountDelta); err != nil {
 			return nil, err
 		}
-	} else {
-		// Description-only update doesn't touch summary/balance — single write is fine.
-		oldExpense, err := s.repo.UpdateExpense(ctx, month, expenseID, newAmount, newDescription)
-		if err != nil {
-			return nil, err
+		return s.updateExpenseResponse(ctx, month, newExpense.SK, newAmount, newDescription, newTime)
+
+	default:
+		// No date change (or same-day re-date): the SK is stable, so this is
+		// the established amount/description path.
+		amountDelta := newAmount - currentExpense.Amount
+		if amountDelta != 0 {
+			// Back-fill the MONTHLIST mirror on legacy tables so the atomic
+			// transaction's monthListUpdate condition can't cancel it (→ 500).
+			if err := s.repo.EnsureMonthListMirror(ctx, month); err != nil {
+				return nil, err
+			}
+			// Atomic transaction with optimistic concurrency on amount.
+			if err := s.repo.AtomicUpdateExpense(ctx, month, expenseID, currentExpense.Amount, newAmount, newDescription, !s.allowOverspending); err != nil {
+				switch {
+				case errors.Is(err, repository.ErrInsufficientBalance):
+					return nil, s.insufficientFunds(ctx, month)
+				case errors.Is(err, repository.ErrExpenseStateMismatch):
+					// We read the expense moments ago, so this is a genuine
+					// concurrent edit, not a missing row → 409 refresh (U4).
+					return nil, ErrExpenseModified
+				default:
+					return nil, err
+				}
+			}
+			// Changing the amount shifts this month's ending balance by
+			// -amountDelta; ripple through later months' carry chain.
+			if err := s.propagateToLaterMonths(ctx, month, -amountDelta); err != nil {
+				return nil, err
+			}
+		} else {
+			// Description-only update doesn't touch summary/balance — single write is fine.
+			oldExpense, err := s.repo.UpdateExpense(ctx, month, expenseID, newAmount, newDescription)
+			if err != nil {
+				return nil, err
+			}
+			if oldExpense == nil {
+				return nil, ErrExpenseNotFound
+			}
 		}
-		if oldExpense == nil {
-			return nil, ErrExpenseNotFound
-		}
+		return s.updateExpenseResponse(ctx, month, currentExpense.SK, newAmount, newDescription, newTime)
+	}
+}
+
+// resolveExpenseTime validates a "YYYY-MM-DD" edit date and returns the month
+// it belongs to and the timestamp to stamp the expense with, using the same
+// rule as the add path: a past day → 12:00:00 UTC, today → the current time.
+// Mirrors resolveMonthAndTime's date branch but for an edit (no Month field to
+// cross-check, since the path month is authoritative and a divergence is a
+// legitimate move).
+func (s *ExpenseService) resolveExpenseTime(clientDate string) (string, time.Time, error) {
+	date, err := time.Parse("2006-01-02", clientDate)
+	if err != nil {
+		return "", time.Time{}, ErrInvalidDate
+	}
+	date = date.UTC()
+
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	if date.After(today) {
+		return "", time.Time{}, ErrFutureDate
 	}
 
+	targetMonth := fmt.Sprintf("%04d-%02d", date.Year(), date.Month())
+	if date.Equal(today) {
+		return targetMonth, time.Now(), nil
+	}
+	return targetMonth, time.Date(date.Year(), date.Month(), date.Day(), 12, 0, 0, 0, time.UTC), nil
+}
+
+// redatedExpense builds the replacement expense row for a re-date: a new SK
+// stamped with newTime but reusing the SAME random id suffix as the old SK so
+// the expense keeps a stable identity across the move. Falls back to a fresh
+// suffix only if the old SK is malformed (no embedded suffix).
+func (s *ExpenseService) redatedExpense(old *model.Expense, newTime time.Time, newAmount float64, newDescription string) (*model.Expense, error) {
+	suffix := expenseIDSuffix(old.SK)
+	return &model.Expense{
+		SK:          fmt.Sprintf("%s%d#%s", repository.ExpensePrefix, newTime.UnixNano(), suffix),
+		Amount:      newAmount,
+		Description: newDescription,
+		CreatedAt:   newTime,
+	}, nil
+}
+
+// expenseIDSuffix extracts the trailing random id from an
+// "EXP#<unixnano>#<id>" SK so a re-date can preserve it. Returns a fresh
+// 8-char uuid component if the SK doesn't carry one (defensive — every SK this
+// app writes has the suffix).
+func expenseIDSuffix(sk string) string {
+	trimmed := strings.TrimPrefix(sk, repository.ExpensePrefix)
+	if i := strings.IndexByte(trimmed, '#'); i >= 0 && i+1 < len(trimmed) {
+		return trimmed[i+1:]
+	}
+	return uuid.New().String()[:8]
+}
+
+// updateExpenseResponse reads back the (target) month summary + global balance
+// and assembles the UpdateExpenseResponse. The returned ExpenseItem carries
+// the possibly-new id (SK) and the target month so the client can detect a
+// cross-month move.
+func (s *ExpenseService) updateExpenseResponse(ctx context.Context, month, sk string, amount float64, description string, createdAt time.Time) (*model.UpdateExpenseResponse, error) {
 	updatedSummary, balance, err := s.fetchSummaryAndBalance(ctx, month)
 	if err != nil {
 		return nil, err
@@ -694,14 +868,14 @@ func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expens
 	if updatedSummary != nil {
 		monthBalance = updatedSummary.EndingBalance
 	}
-
 	return &model.UpdateExpenseResponse{
 		Success: true,
 		Expense: &model.ExpenseItem{
-			ID:          currentExpense.SK,
-			Amount:      newAmount,
-			Description: newDescription,
-			CreatedAt:   currentExpense.CreatedAt,
+			ID:          sk,
+			Amount:      amount,
+			Description: description,
+			CreatedAt:   createdAt,
+			Month:       month,
 		},
 		MonthBalance: monthBalance,
 		TotalBalance: balance.TotalBalance,

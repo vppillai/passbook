@@ -208,6 +208,7 @@
         <div class="modal-backdrop"></div>
         <div class="modal-content">
             <h2 id="edit-expense-modal-title">Edit Expense</h2>
+            <p id="edit-expense-month-hint" class="form-hint hidden"></p>
             <form id="edit-expense-form">
                 <div class="form-group">
                     <label for="edit-expense-amount">Amount ($)</label>
@@ -216,6 +217,10 @@
                 <div class="form-group">
                     <label for="edit-expense-desc">Description</label>
                     <input type="text" id="edit-expense-desc" placeholder="e.g., Ice cream" maxlength="100" required>
+                </div>
+                <div class="form-group form-group-date">
+                    <label for="edit-expense-date">Date</label>
+                    <input type="date" id="edit-expense-date">
                 </div>
                 <div class="modal-actions">
                     <button type="button" id="cancel-edit-expense" class="btn btn-secondary">Cancel</button>

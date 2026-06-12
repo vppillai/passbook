@@ -181,6 +181,12 @@ type ExpenseItem struct {
 	Amount      float64   `json:"amount"`
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
+	// Month is the "YYYY-MM" bucket the expense belongs to. It is populated
+	// on the UpdateExpenseResponse so a client can tell whether a date edit
+	// moved the expense to a different month (the SK/id may also have changed).
+	// Omitted from the month-data list payload, where the month is implied by
+	// the request, so existing list serialization is unaffected.
+	Month string `json:"month,omitempty"`
 }
 
 type MonthListItem struct {
@@ -210,11 +216,17 @@ type SetupStatusResponse struct {
 }
 
 // UpdateExpenseRequest is the JSON body for updating an existing expense.
-// Both fields are optional pointers: a nil field means "do not change".
-// At least one field must be non-nil for the request to be valid.
+// Amount/Description are optional pointers: a nil field means "do not change".
+// Date is an optional "YYYY-MM-DD" calendar date for re-dating the expense,
+// validated exactly like the add path (valid date, not in the future in UTC,
+// today allowed). When present it changes the expense's timestamp (and, when
+// the date's month differs from the path month, moves it to that month). An
+// absent date leaves the timestamp/month unchanged. At least one of the three
+// fields must be present for the request to be valid.
 type UpdateExpenseRequest struct {
 	Amount      *float64 `json:"amount,omitempty"`
 	Description *string  `json:"description,omitempty"`
+	Date        string   `json:"date,omitempty"`
 }
 
 // UpdateExpenseResponse is returned after a successful expense update.

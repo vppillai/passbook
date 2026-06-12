@@ -61,6 +61,23 @@ type RepositoryInterface interface {
 	AtomicAddExpense(ctx context.Context, month string, expense *model.Expense, checkBalance bool) error
 	AtomicUpdateExpense(ctx context.Context, month string, expenseID string, oldAmount, newAmount float64, newDescription string, checkBalance bool) error
 	AtomicDeleteExpense(ctx context.Context, month string, expenseID string, oldAmount float64) error
+	// AtomicMoveExpenseSameMonth re-dates an expense WITHIN one month: the SK
+	// encodes the timestamp, so the old SK is deleted and the new SK is put in
+	// a single transaction. The delete is conditioned on amount = oldAmount
+	// (optimistic lock) → ErrExpenseStateMismatch. Amount/description changes
+	// compose via the summary + balance + mirror deltas; the summary update is
+	// conditioned on ending_balance >= amountDelta when checkBalance && delta>0
+	// → ErrInsufficientBalance.
+	AtomicMoveExpenseSameMonth(ctx context.Context, month string, oldExpenseID string, newExpense *model.Expense, oldAmount float64, checkBalance bool) error
+	// AtomicMoveExpenseAcrossMonths moves an expense from srcMonth to
+	// dstMonth in a single transaction: delete the old expense (conditioned
+	// on amount = oldAmount → ErrExpenseStateMismatch), debit the source
+	// summary + mirror by oldAmount, put the new expense in dstMonth, credit
+	// the destination summary + mirror by newAmount, and shift BALANCE by
+	// (oldAmount - newAmount). When checkBalance is true the destination
+	// summary update is conditioned on ending_balance >= newAmount →
+	// ErrInsufficientBalance. Both months' mirror rows must already exist.
+	AtomicMoveExpenseAcrossMonths(ctx context.Context, srcMonth, dstMonth, oldExpenseID string, newExpense *model.Expense, oldAmount float64, checkBalance bool) error
 	AtomicCreateMonth(ctx context.Context, summary *model.MonthSummary, allowance float64) error
 	AtomicAddFunds(ctx context.Context, month string, amount float64) error
 	AtomicDeleteMonth(ctx context.Context, month string, allowanceAdded float64) error
