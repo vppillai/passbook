@@ -36,6 +36,16 @@ const (
 	// old full-table Scan in the months-list path — that scan's cost grew
 	// with every expense ever written.
 	PKMonthList = "MONTHLIST"
+
+	// WebAuthn storage keys.
+	//   WACHAL#<challenge_id> — in-flight ceremony session (TTL row).
+	//   WACRED#<credID-b64url> — a stored credential (PK=SK).
+	//   WACREDLIST — single partition mirroring every credential
+	//     (SK="<credID-b64url>") so login can enumerate all credentials
+	//     with one Query, exactly like the MONTHLIST pattern.
+	WebAuthnChallengePrefix  = "WACHAL#"
+	WebAuthnCredentialPrefix = "WACRED#"
+	PKWebAuthnCredentialList = "WACREDLIST"
 )
 
 // ErrConfigAlreadyExists is returned by CreateConfig when a CONFIG row
@@ -881,6 +891,208 @@ func (r *Repository) ClearRateLimit(ctx context.Context, sourceIP string) error 
 // Helper to extract expense ID from SK
 func ExtractExpenseID(sk string) string {
 	return strings.TrimPrefix(sk, ExpensePrefix)
+}
+
+// =====================================================================
+// WebAuthn operations
+// =====================================================================
+//
+// All WebAuthn methods use only Get/Put/Delete/Query — no new SDK
+// operation class is introduced (the IAM policy already grants these for
+// the existing session/rate-limit/month paths).
+
+// PutWebAuthnChallenge stores the in-flight ceremony session under
+// PK=SK="WACHAL#<challengeID>" with a DynamoDB TTL ttlSeconds out. The
+// short TTL self-cleans abandoned ceremonies and bounds the replay window.
+func (r *Repository) PutWebAuthnChallenge(ctx context.Context, challengeID, sessionData string, ttlSeconds int) error {
+	now := time.Now()
+	pk := WebAuthnChallengePrefix + challengeID
+	entry := model.WebAuthnChallenge{
+		PK:          pk,
+		SK:          pk,
+		SessionData: sessionData,
+		CreatedAt:   now.Unix(),
+		TTL:         now.Add(time.Duration(ttlSeconds) * time.Second).Unix(),
+	}
+	item, err := attributevalue.MarshalMap(entry)
+	if err != nil {
+		return fmt.Errorf("failed to marshal webauthn challenge: %w", err)
+	}
+	_, err = r.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(r.tableName),
+		Item:      item,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to save webauthn challenge: %w", err)
+	}
+	return nil
+}
+
+// GetWebAuthnChallenge fetches a stored ceremony session by ID. Returns
+// nil (no error) when the row is absent or has passed its TTL (DynamoDB's
+// TTL sweep is lazy, so the explicit expiry check mirrors GetSession).
+func (r *Repository) GetWebAuthnChallenge(ctx context.Context, challengeID string) (*model.WebAuthnChallenge, error) {
+	pk := WebAuthnChallengePrefix + challengeID
+	result, err := r.client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(r.tableName),
+		Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: pk},
+			"SK": &types.AttributeValueMemberS{Value: pk},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get webauthn challenge: %w", err)
+	}
+	if result.Item == nil {
+		return nil, nil
+	}
+	var entry model.WebAuthnChallenge
+	if err := attributevalue.UnmarshalMap(result.Item, &entry); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal webauthn challenge: %w", err)
+	}
+	if entry.TTL < time.Now().Unix() {
+		return nil, nil
+	}
+	return &entry, nil
+}
+
+// DeleteWebAuthnChallenge removes a ceremony session, enforcing single-use.
+func (r *Repository) DeleteWebAuthnChallenge(ctx context.Context, challengeID string) error {
+	pk := WebAuthnChallengePrefix + challengeID
+	_, err := r.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: aws.String(r.tableName),
+		Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: pk},
+			"SK": &types.AttributeValueMemberS{Value: pk},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to delete webauthn challenge: %w", err)
+	}
+	return nil
+}
+
+// webAuthnCredentialListItem builds the WACREDLIST mirror copy of a
+// credential: same attributes as the canonical row but keyed
+// PK="WACREDLIST", SK="<credID-b64url>" so login can enumerate every
+// credential with a single sorted Query.
+func webAuthnCredentialListItem(cred *model.WebAuthnCredential) (map[string]types.AttributeValue, error) {
+	copy := *cred
+	copy.PK = PKWebAuthnCredentialList
+	copy.SK = cred.CredentialID
+	item, err := attributevalue.MarshalMap(&copy)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal webauthn credential list item: %w", err)
+	}
+	return item, nil
+}
+
+// PutWebAuthnCredential writes the canonical WACRED#<id> row and the
+// WACREDLIST mirror in a single transaction so the enumeration index never
+// drifts from the source of truth (mirrors SaveMonthSummary's dual-write).
+func (r *Repository) PutWebAuthnCredential(ctx context.Context, cred *model.WebAuthnCredential) error {
+	pk := WebAuthnCredentialPrefix + cred.CredentialID
+	cred.PK = pk
+	cred.SK = pk
+	if cred.CreatedAt == 0 {
+		cred.CreatedAt = time.Now().Unix()
+	}
+	item, err := attributevalue.MarshalMap(cred)
+	if err != nil {
+		return fmt.Errorf("failed to marshal webauthn credential: %w", err)
+	}
+	listItem, err := webAuthnCredentialListItem(cred)
+	if err != nil {
+		return err
+	}
+	_, err = r.client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+		TransactItems: []types.TransactWriteItem{
+			{Put: &types.Put{TableName: aws.String(r.tableName), Item: item}},
+			{Put: &types.Put{TableName: aws.String(r.tableName), Item: listItem}},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to save webauthn credential: %w", err)
+	}
+	return nil
+}
+
+// GetWebAuthnCredential fetches a single credential by its base64url ID.
+// Returns nil (no error) when absent.
+func (r *Repository) GetWebAuthnCredential(ctx context.Context, credentialID string) (*model.WebAuthnCredential, error) {
+	pk := WebAuthnCredentialPrefix + credentialID
+	result, err := r.client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(r.tableName),
+		Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: pk},
+			"SK": &types.AttributeValueMemberS{Value: pk},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get webauthn credential: %w", err)
+	}
+	if result.Item == nil {
+		return nil, nil
+	}
+	var cred model.WebAuthnCredential
+	if err := attributevalue.UnmarshalMap(result.Item, &cred); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal webauthn credential: %w", err)
+	}
+	return &cred, nil
+}
+
+// ListWebAuthnCredentials enumerates every stored credential via a single
+// Query over the WACREDLIST partition — no full-table Scan.
+func (r *Repository) ListWebAuthnCredentials(ctx context.Context) ([]model.WebAuthnCredential, error) {
+	result, err := r.client.Query(ctx, &dynamodb.QueryInput{
+		TableName:              aws.String(r.tableName),
+		KeyConditionExpression: aws.String("PK = :pk"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":pk": &types.AttributeValueMemberS{Value: PKWebAuthnCredentialList},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list webauthn credentials: %w", err)
+	}
+	var creds []model.WebAuthnCredential
+	if err := attributevalue.UnmarshalListOfMaps(result.Items, &creds); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal webauthn credentials: %w", err)
+	}
+	return creds, nil
+}
+
+// DeleteAllWebAuthnCredentials removes every stored credential: the
+// WACREDLIST mirrors enumerate the set, then each canonical row and its
+// mirror are deleted. Uses only Query + DeleteItem (no BatchWriteItem) so
+// no new IAM action is required; the credential count per single-user
+// instance is tiny (one or two), so per-item deletes are fine.
+func (r *Repository) DeleteAllWebAuthnCredentials(ctx context.Context) error {
+	creds, err := r.ListWebAuthnCredentials(ctx)
+	if err != nil {
+		return err
+	}
+	for _, cred := range creds {
+		pk := WebAuthnCredentialPrefix + cred.CredentialID
+		if _, err := r.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+			TableName: aws.String(r.tableName),
+			Key: map[string]types.AttributeValue{
+				"PK": &types.AttributeValueMemberS{Value: pk},
+				"SK": &types.AttributeValueMemberS{Value: pk},
+			},
+		}); err != nil {
+			return fmt.Errorf("failed to delete webauthn credential: %w", err)
+		}
+		if _, err := r.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+			TableName: aws.String(r.tableName),
+			Key: map[string]types.AttributeValue{
+				"PK": &types.AttributeValueMemberS{Value: PKWebAuthnCredentialList},
+				"SK": &types.AttributeValueMemberS{Value: cred.CredentialID},
+			},
+		}); err != nil {
+			return fmt.Errorf("failed to delete webauthn credential mirror: %w", err)
+		}
+	}
+	return nil
 }
 
 // =====================================================================

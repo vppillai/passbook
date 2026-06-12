@@ -2,6 +2,17 @@
 import { api } from './api.js';
 import * as ui from './ui.js';
 import { labels } from './labels.js';
+import * as webauthn from './webauthn.js';
+
+// Per-instance localStorage flag remembering that the user dismissed (or
+// completed) the one-time "enable biometric unlock" offer, so we don't nag on
+// every login. Namespaced by instance like the session key.
+function detectInstance() {
+    const parts = window.location.pathname.split('/').filter(Boolean);
+    if (parts.length >= 2 && parts[0] === 'passbook') return parts[1];
+    return parts[parts.length - 1] || 'default';
+}
+const BIOMETRIC_PROMPT_KEY = `passbook_webauthn_prompted_${detectInstance()}`;
 
 /**
  * Formats a remaining-seconds count as "M:SS" (e.g. 65 → "1:05").
@@ -40,6 +51,9 @@ class Auth {
             this.bindEvents();
             this.bound = true;
         }
+        // Show the lock-screen biometric button when enrolled + available
+        // (fire-and-forget; PIN remains the fallback regardless).
+        this.refreshBiometricButton();
     }
 
     /** Cancels any running lockout countdown and re-enables the PIN pad. */
@@ -81,6 +95,151 @@ class Auth {
 
         tick(); // show immediately without waiting one second
         this._lockoutInterval = setInterval(tick, 250);
+    }
+
+    // =================================================================
+    // WebAuthn (biometric unlock)
+    // =================================================================
+
+    /**
+     * Refreshes the lock screen's biometric affordance: when the server
+     * reports an enrolled credential AND the platform authenticator is
+     * available, injects a "Use biometrics" button above the PIN pad; removes
+     * it otherwise. Safe to call repeatedly (idempotent). PIN always remains
+     * as the fallback. Errors are swallowed so a status hiccup never blocks
+     * the PIN path.
+     */
+    async refreshBiometricButton() {
+        try {
+            if (!webauthn.isWebAuthnSupported()) {
+                this._removeBiometricButton();
+                return;
+            }
+            const [status, available] = await Promise.all([
+                webauthn.getAuthStatus(),
+                webauthn.isPlatformAuthenticatorAvailable(),
+            ]);
+            if (status && status.webauthn_enrolled && available) {
+                this._injectBiometricButton();
+            } else {
+                this._removeBiometricButton();
+            }
+        } catch {
+            this._removeBiometricButton();
+        }
+    }
+
+    /** Injects the lock-screen biometric button above the PIN pad (once). */
+    _injectBiometricButton() {
+        if (document.getElementById('webauthn-login-btn')) return;
+        const pad = document.getElementById('auth-pin-pad');
+        if (!pad) return;
+        const btn = document.createElement('button');
+        btn.id = 'webauthn-login-btn';
+        btn.type = 'button';
+        // Reuse existing button styling so no CSS changes are needed.
+        btn.className = 'btn btn-outline btn-full';
+        // labels.* may be undefined (labels.js is owned elsewhere); fall back
+        // to an English default so this works regardless of label config.
+        btn.textContent = labels.auth_use_biometrics || 'Use biometrics';
+        btn.addEventListener('click', () => this.loginWithBiometrics());
+        pad.parentNode.insertBefore(btn, pad);
+    }
+
+    /** Removes the lock-screen biometric button if present. */
+    _removeBiometricButton() {
+        const btn = document.getElementById('webauthn-login-btn');
+        if (btn) btn.remove();
+    }
+
+    /**
+     * Runs the biometric login ceremony. On success the server returns the
+     * same body as a PIN verify ({success, token}); we store the token via the
+     * existing api.setSession path and follow the same onAuthSuccess flow as
+     * PIN. Any failure (including a dismissed prompt) falls back quietly to the
+     * PIN pad, surfacing a message in the existing error element only for
+     * genuine server errors — not for a user cancellation.
+     */
+    async loginWithBiometrics() {
+        if (this.isLoading) return;
+        ui.hideError('auth-error');
+        this.setLoading(true, 'auth');
+        try {
+            const result = await webauthn.login();
+            this.setLoading(false, 'auth');
+            document.getElementById('auth-message').textContent = 'Enter your PIN';
+
+            if (result && result.success && result.token) {
+                // Mirror api.verifyPin's success path: persist the session,
+                // then run the shared post-auth flow.
+                api.setSession(result.token);
+                this._clearLockout();
+                this.pin = '';
+                ui.updatePinDisplay('auth-pin-display', 0);
+                if (this.onAuthSuccess) this.onAuthSuccess();
+                return;
+            }
+            // Server replied 200 but not success — show the message, keep PIN.
+            ui.showError('auth-error', (result && result.error) || labels.auth_biometric_failed || 'Biometric unlock failed');
+        } catch (error) {
+            this.setLoading(false, 'auth');
+            document.getElementById('auth-message').textContent = 'Enter your PIN';
+
+            // A 429 lockout from the shared rate limiter: reuse the PIN countdown.
+            if (error.status === 429 && error.retry_after_seconds) {
+                this._startLockout(error.retry_after_seconds);
+                return;
+            }
+            // NotAllowedError / AbortError = the user dismissed the OS prompt.
+            // That's not an error worth shouting about — fall back silently.
+            if (error.name === 'NotAllowedError' || error.name === 'AbortError') {
+                return;
+            }
+            ui.showError('auth-error', error.message || labels.auth_biometric_failed || 'Biometric unlock failed');
+        }
+    }
+
+    /**
+     * One-time offer, shown after a successful PIN login, to enable biometric
+     * unlock. Only fires when the platform authenticator is available, no
+     * credential is enrolled yet, and the user hasn't been prompted before
+     * (remembered in localStorage so we never nag). Accepting runs the
+     * registration ceremony; any outcome marks the offer as shown.
+     */
+    async maybeOfferBiometricEnrollment() {
+        try {
+            if (localStorage.getItem(BIOMETRIC_PROMPT_KEY)) return;
+            if (!webauthn.isWebAuthnSupported()) return;
+            const [status, available] = await Promise.all([
+                webauthn.getAuthStatus(),
+                webauthn.isPlatformAuthenticatorAvailable(),
+            ]);
+            if (!available) return;
+            if (status && status.webauthn_enrolled) return;
+
+            const accepted = await ui.showConfirm({
+                title: labels.auth_enable_biometrics_title || 'Enable fingerprint/Face unlock?',
+                body: labels.auth_enable_biometrics_body || 'Unlock the app with your fingerprint or face instead of typing your PIN. You can turn this off anytime.',
+                confirmText: labels.auth_enable_biometrics_confirm || 'Enable',
+                cancelText: labels.auth_enable_biometrics_cancel || 'Not now',
+            });
+            // Record that we've offered, regardless of the choice, so the
+            // prompt is one-time.
+            localStorage.setItem(BIOMETRIC_PROMPT_KEY, '1');
+            if (!accepted) return;
+
+            try {
+                await webauthn.register();
+                ui.showToast(labels.auth_biometrics_enabled || 'Biometric unlock enabled', 'success');
+            } catch (error) {
+                // Quietly ignore a dismissed OS prompt; surface real failures.
+                if (error.name !== 'NotAllowedError' && error.name !== 'AbortError') {
+                    ui.showToast(labels.auth_biometrics_enable_failed || 'Could not enable biometric unlock', 'error');
+                }
+            }
+        } catch {
+            // Never let the offer break the post-login flow.
+        }
     }
 
     bindEvents() {
@@ -239,6 +398,8 @@ class Auth {
 
             if (result.success && this.onAuthSuccess) {
                 this.onAuthSuccess();
+                // One-time offer to enable biometric unlock after first login.
+                this.maybeOfferBiometricEnrollment();
             } else {
                 document.getElementById('auth-message').textContent = 'Enter your PIN';
             }
@@ -294,6 +455,9 @@ class Auth {
                 if (this.onAuthSuccess) {
                     this.onAuthSuccess();
                 }
+                // One-time offer to enable biometric unlock (fire-and-forget;
+                // never blocks the post-login transition).
+                this.maybeOfferBiometricEnrollment();
             } else {
                 ui.showPinError('auth-pin-display');
                 this.pin = '';
@@ -352,6 +516,8 @@ class Auth {
         ui.updatePinDisplay('auth-pin-display', 0);
         ui.showScreen('auth-screen');
         ui.hideMenu();
+        // Re-evaluate the lock-screen biometric button for the next unlock.
+        this.refreshBiometricButton();
     }
 
     reset() {

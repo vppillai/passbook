@@ -44,7 +44,19 @@ func (rt *Router) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(model.SetupStatusResponse{IsSetup: isSetup})
+	// webauthn_enrolled lets the lock screen decide whether to show the
+	// biometric button. A read failure (or unconfigured WebAuthn) degrades
+	// to false rather than failing status — PIN auth must keep working.
+	webauthnEnrolled := false
+	if rt.webauthnService != nil {
+		if enrolled, werr := rt.webauthnService.IsEnrolled(r.Context()); werr != nil {
+			log.Printf("auth.status: webauthn enrolled check: %v", werr)
+		} else {
+			webauthnEnrolled = enrolled
+		}
+	}
+
+	json.NewEncoder(w).Encode(model.SetupStatusResponse{IsSetup: isSetup, WebauthnEnrolled: webauthnEnrolled})
 }
 
 func (rt *Router) handleSetupPIN(w http.ResponseWriter, r *http.Request) {

@@ -37,16 +37,23 @@ type FakeRepo struct {
 	Expenses   map[string]*model.Expense
 	RateLimits map[string]*model.RateLimitEntry // keyed by sourceIP
 	Sessions   map[string]*model.Session
+	// WebAuthn state. WAChallenges is keyed by challenge_id; WACredentials
+	// is keyed by the credential's base64url ID (mirroring the WACREDLIST
+	// enumeration partition).
+	WAChallenges  map[string]*model.WebAuthnChallenge
+	WACredentials map[string]*model.WebAuthnCredential
 }
 
 func NewFakeRepo() *FakeRepo {
 	return &FakeRepo{
-		Months:     make(map[string]*model.MonthSummary),
-		MonthList:  make(map[string]*model.MonthSummary),
-		Expenses:   make(map[string]*model.Expense),
-		Sessions:   make(map[string]*model.Session),
-		RateLimits: make(map[string]*model.RateLimitEntry),
-		Balance:    &model.Balance{TotalBalance: 0},
+		Months:        make(map[string]*model.MonthSummary),
+		MonthList:     make(map[string]*model.MonthSummary),
+		Expenses:      make(map[string]*model.Expense),
+		Sessions:      make(map[string]*model.Session),
+		RateLimits:    make(map[string]*model.RateLimitEntry),
+		WAChallenges:  make(map[string]*model.WebAuthnChallenge),
+		WACredentials: make(map[string]*model.WebAuthnCredential),
+		Balance:       &model.Balance{TotalBalance: 0},
 	}
 }
 
@@ -555,5 +562,73 @@ func (f *FakeRepo) IncrementFailedAttempts(_ context.Context, sourceIP string, m
 
 func (f *FakeRepo) ClearRateLimit(_ context.Context, sourceIP string) error {
 	delete(f.RateLimits, sourceIP)
+	return nil
+}
+
+// =====================================================================
+// WebAuthn
+// =====================================================================
+
+func (f *FakeRepo) PutWebAuthnChallenge(_ context.Context, challengeID, sessionData string, ttlSeconds int) error {
+	now := time.Now()
+	f.WAChallenges[challengeID] = &model.WebAuthnChallenge{
+		PK:          repository.WebAuthnChallengePrefix + challengeID,
+		SK:          repository.WebAuthnChallengePrefix + challengeID,
+		SessionData: sessionData,
+		CreatedAt:   now.Unix(),
+		TTL:         now.Add(time.Duration(ttlSeconds) * time.Second).Unix(),
+	}
+	return nil
+}
+
+func (f *FakeRepo) GetWebAuthnChallenge(_ context.Context, challengeID string) (*model.WebAuthnChallenge, error) {
+	c, ok := f.WAChallenges[challengeID]
+	if !ok {
+		return nil, nil
+	}
+	if c.TTL < time.Now().Unix() {
+		return nil, nil
+	}
+	out := *c
+	return &out, nil
+}
+
+func (f *FakeRepo) DeleteWebAuthnChallenge(_ context.Context, challengeID string) error {
+	delete(f.WAChallenges, challengeID)
+	return nil
+}
+
+func (f *FakeRepo) PutWebAuthnCredential(_ context.Context, cred *model.WebAuthnCredential) error {
+	c := *cred
+	c.PK = repository.WebAuthnCredentialPrefix + cred.CredentialID
+	c.SK = c.PK
+	if c.CreatedAt == 0 {
+		c.CreatedAt = time.Now().Unix()
+	}
+	f.WACredentials[cred.CredentialID] = &c
+	return nil
+}
+
+func (f *FakeRepo) GetWebAuthnCredential(_ context.Context, credentialID string) (*model.WebAuthnCredential, error) {
+	c, ok := f.WACredentials[credentialID]
+	if !ok {
+		return nil, nil
+	}
+	out := *c
+	return &out, nil
+}
+
+func (f *FakeRepo) ListWebAuthnCredentials(_ context.Context) ([]model.WebAuthnCredential, error) {
+	out := make([]model.WebAuthnCredential, 0, len(f.WACredentials))
+	for _, c := range f.WACredentials {
+		out = append(out, *c)
+	}
+	// Stable order so tests are deterministic (mirrors the sorted Query).
+	sort.Slice(out, func(i, j int) bool { return out[i].CredentialID < out[j].CredentialID })
+	return out, nil
+}
+
+func (f *FakeRepo) DeleteAllWebAuthnCredentials(_ context.Context) error {
+	f.WACredentials = make(map[string]*model.WebAuthnCredential)
 	return nil
 }

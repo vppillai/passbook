@@ -8,6 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.23
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.20.46
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.58.0
+	github.com/go-webauthn/webauthn v0.13.4
 	github.com/google/uuid v1.6.0
 	golang.org/x/crypto v0.52.0
 )
@@ -27,5 +28,11 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.36.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.2 // indirect
 	github.com/aws/smithy-go v1.27.1 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
+	github.com/go-webauthn/x v0.1.23 // indirect
+	github.com/golang-jwt/jwt/v5 v5.2.3 // indirect
+	github.com/google/go-tpm v0.9.5 // indirect
+	github.com/mitchellh/mapstructure v1.5.0 // indirect
+	github.com/x448/float16 v0.8.4 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 )

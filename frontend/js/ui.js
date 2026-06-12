@@ -12,6 +12,18 @@ import { labels } from './labels.js';
 import { roundCents } from './api.js';
 import { computePace, isCurrentMonth } from './insights.js';
 
+/**
+ * Fires a vibration pattern if the device supports it and the user has not
+ * opted into reduced motion. Silently no-ops on unsupported platforms (desktop,
+ * iOS Safari pre-16.4 without the Web Vibration API, etc.).
+ * @param {number|number[]} pattern - milliseconds duration or [on,off,on,...] pattern
+ */
+export function vibrate(pattern) {
+    if (!('vibrate' in navigator)) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    try { navigator.vibrate(pattern); } catch { /* silently ignore unsupported */ }
+}
+
 /** Full month names indexed 0-11 for converting "YYYY-MM" keys to display strings */
 const MONTHS = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -266,6 +278,9 @@ export function showUndoToast({ message, actionText, onUndo, onExpire, durationM
     btn.addEventListener('click', () => settle('undo'));
     timer = setTimeout(() => settle('expire'), durationMs);
     undoToastDismiss = settle;
+
+    // Subtle haptic when the toast appears (10ms, same as a key tap).
+    vibrate(10);
 }
 
 /**
@@ -792,20 +807,38 @@ export function showDashboardError(onRetry) {
 }
 
 /**
- * Shows or hides the add-expense modal hint that an expense added while
- * viewing a past month will land in the current month (review H5). The hint
- * text routes through labels (instance-divergent) with `{month}` replaced by
- * the current month's display name.
- * @param {string|null} currentDisplayMonth - "YYYY-MM" key of the live month,
- *   or null to clear the hint.
- * @param {boolean} show - whether to show the hint
+ * Shows or hides the add-expense modal hint. The hint now derives the target
+ * month from the chosen date input (if provided) rather than always defaulting
+ * to the current calendar month. Shows only when the derived target month
+ * differs from the currently-viewed month.
+ *
+ * @param {string|null} viewedMonth - "YYYY-MM" key of the month currently on
+ *   screen (the one the user is viewing), or null to clear the hint.
+ * @param {boolean} show - whether to show the hint (legacy fallback path)
+ * @param {string|null} [chosenDate] - "YYYY-MM-DD" value from the date input,
+ *   or null/undefined to fall back to the current calendar month.
  */
-export function setExpenseMonthHint(currentDisplayMonth, show) {
+export function setExpenseMonthHint(viewedMonth, show, chosenDate) {
     const hint = document.getElementById('expense-month-hint');
     if (!hint) return;
-    if (show && currentDisplayMonth) {
+
+    // Derive the target month from the chosen date when provided; otherwise
+    // fall back to the live current-calendar month (original behaviour).
+    let targetMonth;
+    if (chosenDate) {
+        // "YYYY-MM-DD" → "YYYY-MM"
+        const m = String(chosenDate).match(/^(\d{4}-\d{2})/);
+        targetMonth = m ? m[1] : getCurrentMonthKey();
+    } else {
+        targetMonth = getCurrentMonthKey();
+    }
+
+    // Show the hint only when the expense would land in a different month than
+    // the one the user is currently viewing.
+    const shouldShow = !!(viewedMonth && targetMonth !== viewedMonth);
+    if (shouldShow) {
         hint.textContent = labels.expense_added_to_hint.replace(
-            '{month}', formatMonthName(currentDisplayMonth));
+            '{month}', formatMonthName(targetMonth));
         hint.classList.remove('hidden');
     } else {
         hint.textContent = '';

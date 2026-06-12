@@ -32,6 +32,14 @@ const defaultLabels = {
     // expense vs. a meal), so it routes through labels.
     expense_added_to_hint: 'This will be added to {month}',
 
+    // Shown in the update toast when a new service worker activates while the
+    // user has the page open. Tapping the action reloads to pick up fresh assets.
+    app_updated_toast: 'App updated — tap to refresh',
+    // Action button label on the update toast.
+    reload_action: 'Reload',
+    // Shown when the user picks a future date in the add-expense modal.
+    expense_date_future: 'Date cannot be in the future',
+
     // Auth error messages shown on the PIN screen.
     // `{n}` is replaced with the numeric attempts_remaining value.
     auth_wrong_pin: 'Incorrect PIN — {n} attempts remaining',

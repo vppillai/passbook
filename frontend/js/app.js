@@ -5,6 +5,29 @@ import * as ui from './ui.js';
 import { labels, applyLabels } from './labels.js';
 import { removeExpense, insertExpense } from './expense_state.js';
 
+// ---- Haptic feedback via capture-phase event delegation on .pin-pad ----
+// auth.js owns the PIN pad buttons; we attach here in capture phase so we
+// fire haptics without touching auth.js. Attached once at module evaluation
+// time — before DOMContentLoaded is fine because the script is type="module"
+// (deferred) so the DOM is already parsed.
+(function wirePinHaptics() {
+    // Runs after DOM is parsed (module scripts are deferred).
+    function attach() {
+        document.querySelectorAll('.pin-pad').forEach((pad) => {
+            pad.addEventListener('pointerdown', (e) => {
+                const key = e.target.closest('.pin-key');
+                if (!key) return;
+                ui.vibrate(10);
+            }, { capture: true, passive: true });
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', attach);
+    } else {
+        attach();
+    }
+}());
+
 // localStorage key (per instance) for the last month the user viewed, so a
 // relaunch reopens where they left off instead of always jumping to the
 // latest month (review C3). Mirrors api.js's instance detection.
@@ -109,11 +132,38 @@ class App {
 
         // Guard: reload at most once per controllerchange event to prevent loops.
         let refreshing = false;
+        // Whether the user has been shown the update toast but ignored it; used
+        // to reload on their next navigation-equivalent action (month switch).
+        let pendingUpdateReload = false;
         navigator.serviceWorker.addEventListener('controllerchange', () => {
             if (refreshing || !hadController) return;
             refreshing = true;
-            window.location.reload();
+            if (document.hidden) {
+                // Page is invisible — reload silently; the user won't notice.
+                window.location.reload();
+                return;
+            }
+            // Page is visible: show a persistent action toast so the user can
+            // choose when to pick up the update. Reuses the undo-toast mechanism
+            // (showUndoToast) for the same action-button affordance.
+            pendingUpdateReload = true;
+            ui.showUndoToast({
+                message: labels.app_updated_toast,
+                actionText: labels.reload_action || 'Reload',
+                durationMs: 60_000,   // persistent — 60s before auto-reload
+                onUndo: () => {
+                    pendingUpdateReload = false;
+                    window.location.reload();
+                },
+                onExpire: () => {
+                    // Auto-dismissed after timeout without user action: leave
+                    // pendingUpdateReload=true so the next month switch reloads.
+                },
+            });
         });
+        // Expose the pending flag so selectMonth can read it.
+        this._pendingUpdateReload = () => pendingUpdateReload;
+        this._consumeUpdateReload = () => { pendingUpdateReload = false; };
 
         window.addEventListener('load', () => {
             navigator.serviceWorker.register('sw.js').then((registration) => {
@@ -195,12 +245,19 @@ class App {
     }
 
     bindEvents() {
-        // Add expense button
+        // Add expense button — reset date to today, then show modal with hint.
         document.getElementById('add-expense-btn').addEventListener('click', () => {
-            // When viewing a past month, hint that the expense will land in the
-            // current month, not the one on screen (review H5/FAB-on-old-month).
-            const current = ui.getCurrentMonthKey();
-            ui.setExpenseMonthHint(current, this.currentMonth !== null && this.currentMonth !== current);
+            const dateInput = document.getElementById('expense-date');
+            const todayStr = (() => {
+                const n = new Date();
+                return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+            })();
+            if (dateInput) {
+                dateInput.value = todayStr;
+                dateInput.max = todayStr;
+            }
+            // Hint derives from date (today = current month here).
+            ui.setExpenseMonthHint(this.currentMonth, false, todayStr);
             ui.showModal('expense-modal');
             document.getElementById('expense-amount').focus();
         });
@@ -333,6 +390,45 @@ class App {
             document.getElementById(id).addEventListener('input', () => ui.hideError('edit-expense-error')));
         document.getElementById('new-month-input').addEventListener('input', () => ui.hideError('create-month-error'));
         document.getElementById('funds-amount').addEventListener('input', () => ui.hideError('add-funds-error'));
+
+        // Date input: update the month hint dynamically as the user changes the
+        // date, and clear the future-date error when they correct the value.
+        const expenseDateInput = document.getElementById('expense-date');
+        if (expenseDateInput) {
+            expenseDateInput.addEventListener('change', () => {
+                ui.hideError('expense-error');
+                ui.setExpenseMonthHint(this.currentMonth, false, expenseDateInput.value || null);
+            });
+        }
+
+        // Haptics for PIN error/lockout: observe when the .error class is added
+        // to any .pin-dot (auth.js calls ui.showPinError which adds that class).
+        // This avoids touching auth.js while still reacting to its DOM changes.
+        const pinDisplays = document.querySelectorAll('.pin-display');
+        pinDisplays.forEach((display) => {
+            new MutationObserver((mutations) => {
+                for (const mut of mutations) {
+                    if (mut.type === 'attributes' && mut.attributeName === 'class') {
+                        const target = /** @type {Element} */ (mut.target);
+                        if (target.classList.contains('error')) {
+                            ui.vibrate([40, 60, 40]);
+                            return;
+                        }
+                    }
+                }
+            }).observe(display, { subtree: true, attributes: true, attributeFilter: ['class'] });
+        });
+
+        // Haptics for PIN success: observe when the auth-screen becomes hidden
+        // (auth.js calls ui.showScreen which hides auth-screen on success).
+        const authScreen = document.getElementById('auth-screen');
+        if (authScreen) {
+            new MutationObserver(() => {
+                if (authScreen.classList.contains('hidden')) {
+                    ui.vibrate([10, 30, 10]);
+                }
+            }).observe(authScreen, { attributes: true, attributeFilter: ['class'] });
+        }
 
         // Escape key closes the topmost visible modal AND resets its form/error
         // (via closeModal) so a backdrop/Escape dismissal doesn't leave stale
@@ -659,6 +755,16 @@ class App {
         // isn't silently abandoned. flushUndoToast() settles the visible undo
         // toast as an expiry, which runs commitPendingDelete().
         ui.flushUndoToast();
+
+        // Feature 2: if a SW update toast was dismissed without action, reload
+        // on the next navigation-equivalent action (month switch) so the user
+        // eventually picks up fresh assets without a jarring reload mid-session.
+        if (this._pendingUpdateReload && this._pendingUpdateReload()) {
+            this._consumeUpdateReload();
+            window.location.reload();
+            return;
+        }
+
         try {
             await this.loadMonthView(month);
         } catch {
@@ -671,8 +777,11 @@ class App {
     async handleAddExpense() {
         const amountInput = document.getElementById('expense-amount');
         const descInput = document.getElementById('expense-desc');
+        const dateInput = document.getElementById('expense-date');
         const amount = roundCents(parseFloat(amountInput.value));
         const description = descInput.value.trim();
+        // dateInput.value is "" when the field has no value or is unsupported.
+        const chosenDate = (dateInput && dateInput.value) ? dateInput.value : null;
 
         ui.hideError('expense-error');
 
@@ -691,19 +800,39 @@ class App {
             return;
         }
 
+        // Client-side future-date guard (YYYY-MM-DD string comparison is safe
+        // for ISO dates as long as we compare against today's LOCAL date).
+        if (chosenDate) {
+            const todayStr = (() => {
+                const n = new Date();
+                return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+            })();
+            if (chosenDate > todayStr) {
+                ui.showError('expense-error', labels.expense_date_future);
+                return;
+            }
+        }
+
         const submitBtn = document.querySelector('#expense-form button[type="submit"]');
         const origText = submitBtn.textContent;
         submitBtn.disabled = true;
         submitBtn.textContent = 'Saving...';
 
-        // The expense always lands in the user's CURRENT local month, which
-        // may differ from the month being viewed (review H5/FAB-on-old-month).
-        const targetMonth = ui.getCurrentMonthKey();
+        // Derive the target month from the chosen date when provided; otherwise
+        // fall back to the current local month (original behaviour).
+        let targetMonth;
+        if (chosenDate) {
+            const m = chosenDate.match(/^(\d{4}-\d{2})/);
+            targetMonth = m ? m[1] : ui.getCurrentMonthKey();
+        } else {
+            targetMonth = ui.getCurrentMonthKey();
+        }
 
         try {
-            await api.addExpense(amount, description);
+            await api.addExpense(amount, description, chosenDate || null);
             ui.closeModal('expense-modal');
             ui.showToast('Expense added!', 'success');
+            ui.vibrate(15);
 
             // The mutation changed the target month (and possibly created it),
             // so its cache and the months list are now stale (review C4/H1).
@@ -714,10 +843,9 @@ class App {
                 // starting_balance / carry correct after the mutation).
                 await this.loadCurrentMonth();
             } else {
-                // Month rollover: the expense landed in a different month than
-                // the one being viewed (e.g. adding from an old month, or the
-                // server auto-created the new current month). Switch the view
-                // to the target month so the user sees their entry, and refresh
+                // Month rollover or past-date entry: the expense landed in a
+                // different month than the one being viewed. Switch the view to
+                // the target month so the user sees their entry, and refresh
                 // the months list so the (possibly new) month appears.
                 this.currentMonth = targetMonth;
                 await this.loadMonthView(targetMonth);

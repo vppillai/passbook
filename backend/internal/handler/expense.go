@@ -120,6 +120,12 @@ func (rt *Router) handleAddExpense(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"Amount must be positive"}`, http.StatusBadRequest)
 		case errors.Is(err, service.ErrInvalidMonth):
 			http.Error(w, `{"error":"Invalid month format. Use YYYY-MM"}`, http.StatusBadRequest)
+		case errors.Is(err, service.ErrInvalidDate):
+			http.Error(w, `{"error":"Invalid date format. Use YYYY-MM-DD"}`, http.StatusBadRequest)
+		case errors.Is(err, service.ErrFutureDate):
+			http.Error(w, `{"error":"Date cannot be in the future"}`, http.StatusBadRequest)
+		case errors.Is(err, service.ErrDateMonthMismatch):
+			http.Error(w, `{"error":"Date does not match the provided month"}`, http.StatusBadRequest)
 		case errors.Is(err, service.ErrDescriptionTooLong):
 			http.Error(w, `{"error":"Description too long (max 100 characters)"}`, http.StatusBadRequest)
 		case errors.Is(err, service.ErrInsufficientFunds):

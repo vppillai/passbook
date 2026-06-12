@@ -1328,3 +1328,37 @@ header h1 {
         padding-bottom: calc(var(--spacing) + env(safe-area-inset-bottom));
     }
 }
+
+/* =====================================================================
+   Expense date picker — compact row beneath the description field
+   ===================================================================== */
+
+/* Tighten the bottom margin so the date field sits snug between the
+   description and the action buttons without adding extra scroll. */
+.form-group-date {
+    margin-bottom: var(--spacing-sm);
+}
+
+/* date inputs render differently across browsers/OSes; reset to match the
+   app's existing text inputs exactly. The color-scheme property tells the
+   browser to match the OS dark/light mode so the native date picker widget
+   is consistent with the rest of the UI. */
+.form-group-date input[type="date"] {
+    color-scheme: light dark;
+    font-family: var(--font-body);
+    font-size: 0.95rem;
+    cursor: pointer;
+}
+
+/* Remove the inner spin/clear buttons that some engines add to date fields. */
+.form-group-date input[type="date"]::-webkit-calendar-picker-indicator {
+    opacity: 0.5;
+    cursor: pointer;
+    filter: var(--date-picker-filter, none);
+}
+
+@media (prefers-color-scheme: dark) {
+    .form-group-date input[type="date"]::-webkit-calendar-picker-indicator {
+        filter: invert(0.8);
+    }
+}

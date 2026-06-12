@@ -16,13 +16,18 @@ import (
 const testOrigin = "https://app.example"
 
 // newTestRouter builds a Router over the shared FakeRepo with a
-// hard-stop, carry-over expense service ($100 allowance).
+// hard-stop, carry-over expense service ($100 allowance) and a WebAuthn
+// service configured against the test origin.
 func newTestRouter(t *testing.T) (*Router, *testutil.FakeRepo) {
 	t.Helper()
 	repo := testutil.NewFakeRepo()
 	authSvc := service.NewAuthService(repo)
 	expSvc := service.NewExpenseService(repo, 100, false, true)
-	return NewRouter(authSvc, expSvc, testOrigin), repo
+	waSvc, err := service.NewWebAuthnService(repo, testOrigin, "Passbook")
+	if err != nil {
+		t.Fatalf("NewWebAuthnService: %v", err)
+	}
+	return NewRouter(authSvc, expSvc, waSvc, testOrigin), repo
 }
 
 // seedSession installs a session row directly (no Argon2) and returns
@@ -503,6 +508,94 @@ func TestRefererOriginExactMatch(t *testing.T) {
 			t.Errorf("http (vs https) referer = %d, want 403", rec.Code)
 		}
 	})
+}
+
+// =====================================================================
+// WebAuthn endpoint auth gating + status flag
+// =====================================================================
+
+// TestWebAuthnAuthGating pins which WebAuthn routes require a session:
+// register/options, register, and DELETE are protected (401 without a token);
+// login/options and login are public (reachable without a token).
+func TestWebAuthnAuthGating(t *testing.T) {
+	rt, repo := newTestRouter(t)
+
+	t.Run("register/options requires session", func(t *testing.T) {
+		rec := do(t, rt, http.MethodPost, "/api/auth/webauthn/register/options", allowed)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("register/options unauthenticated = %d, want 401", rec.Code)
+		}
+		rec = do(t, rt, http.MethodPost, "/api/auth/webauthn/register/options", authed(repo, ""))
+		if rec.Code != http.StatusOK {
+			t.Errorf("register/options authenticated = %d, want 200 (body %s)", rec.Code, rec.Body)
+		}
+	})
+
+	t.Run("register requires session", func(t *testing.T) {
+		rec := do(t, rt, http.MethodPost, "/api/auth/webauthn/register", reqOpts{origin: testOrigin, body: `{"challenge_id":"x","credential":{}}`})
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("register unauthenticated = %d, want 401", rec.Code)
+		}
+	})
+
+	t.Run("DELETE requires session", func(t *testing.T) {
+		rec := do(t, rt, http.MethodDelete, "/api/auth/webauthn", allowed)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("disable unauthenticated = %d, want 401", rec.Code)
+		}
+		rec = do(t, rt, http.MethodDelete, "/api/auth/webauthn", authed(repo, ""))
+		if rec.Code != http.StatusOK {
+			t.Errorf("disable authenticated = %d, want 200 (body %s)", rec.Code, rec.Body)
+		}
+	})
+
+	t.Run("login/options is public but 400 when not enrolled", func(t *testing.T) {
+		// No token, no credential enrolled: reaches the handler (not 401)
+		// and returns 400 "not set up".
+		rec := do(t, rt, http.MethodPost, "/api/auth/webauthn/login/options", allowed)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("login/options not-enrolled = %d, want 400 (public, body %s)", rec.Code, rec.Body)
+		}
+	})
+
+	t.Run("login is public and reaches the verify path", func(t *testing.T) {
+		// No token: must NOT be a 401-from-auth-middleware. A bad challenge
+		// reaches the handler and yields 400, proving the route is public.
+		rec := do(t, rt, http.MethodPost, "/api/auth/webauthn/login", reqOpts{origin: testOrigin, body: `{"challenge_id":"missing","credential":{}}`})
+		if rec.Code == http.StatusUnauthorized {
+			t.Errorf("login = 401 (looks gated by auth middleware); want a public handler response")
+		}
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("login with missing challenge = %d, want 400 (body %s)", rec.Code, rec.Body)
+		}
+	})
+}
+
+// TestStatusReportsWebAuthnEnrolled pins that /api/auth/status carries the
+// webauthn_enrolled flag and that it flips true once a credential is stored.
+func TestStatusReportsWebAuthnEnrolled(t *testing.T) {
+	rt, repo := newTestRouter(t)
+
+	rec := do(t, rt, http.MethodGet, "/api/auth/status", allowed)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var resp model.SetupStatusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.WebauthnEnrolled {
+		t.Error("webauthn_enrolled = true on a fresh instance, want false")
+	}
+
+	repo.WACredentials["cred-1"] = &model.WebAuthnCredential{CredentialID: "cred-1", Credential: "{}"}
+	rec = do(t, rt, http.MethodGet, "/api/auth/status", allowed)
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !resp.WebauthnEnrolled {
+		t.Error("webauthn_enrolled = false after enrolling a credential, want true")
+	}
 }
 
 // TestValidateExpenseID pins the SK prefix guard directly.

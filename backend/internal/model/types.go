@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Config holds the application configuration (PIN hash)
 type Config struct {
@@ -59,6 +62,54 @@ type RateLimitEntry struct {
 	UpdatedAt int64  `dynamodbav:"updated_at"`
 }
 
+// WebAuthnChallenge persists the in-flight WebAuthn ceremony session
+// (the go-webauthn *SessionData, JSON-serialized) between the
+// register/login *options* call and its matching verify call. Keyed
+// PK=SK="WACHAL#<challenge_id>" with a short DynamoDB TTL (5 min) so an
+// abandoned ceremony self-cleans and a stale challenge can't be replayed.
+type WebAuthnChallenge struct {
+	PK          string `dynamodbav:"PK"`
+	SK          string `dynamodbav:"SK"`
+	SessionData string `dynamodbav:"session_data"` // JSON-encoded webauthn.SessionData
+	CreatedAt   int64  `dynamodbav:"created_at"`
+	TTL         int64  `dynamodbav:"ttl"` // DynamoDB TTL for auto-expiry
+}
+
+// WebAuthnCredential stores a single registered platform-authenticator
+// credential (the go-webauthn *Credential, JSON-serialized). Keyed
+// PK=SK="WACRED#<credentialID-b64url>". A mirror copy under the
+// WACREDLIST partition (SK="<credentialID-b64url>") lets the userless
+// login flow enumerate every credential with one Query, mirroring the
+// MONTHLIST index pattern.
+type WebAuthnCredential struct {
+	PK           string `dynamodbav:"PK"`
+	SK           string `dynamodbav:"SK"`
+	CredentialID string `dynamodbav:"credential_id"` // base64url of the raw credential ID
+	Credential   string `dynamodbav:"credential"`    // JSON-encoded webauthn.Credential
+	SignCount    uint32 `dynamodbav:"sign_count"`
+	Transports   string `dynamodbav:"transports"` // comma-joined transport hints
+	CreatedAt    int64  `dynamodbav:"created_at"`
+}
+
+// WebAuthnOptionsResponse is returned by the register/login *options*
+// endpoints: the challenge_id the client must echo back on verify, plus
+// the raw PublicKeyCredentialCreationOptions / RequestOptions JSON the
+// browser's navigator.credentials API consumes. Options is json.RawMessage
+// so the go-webauthn protocol structs serialize verbatim.
+type WebAuthnOptionsResponse struct {
+	ChallengeID string          `json:"challenge_id"`
+	Options     json.RawMessage `json:"options"`
+}
+
+// WebAuthnVerifyRequest is the JSON body for the register/login *verify*
+// endpoints. ChallengeID pairs the request with its persisted ceremony
+// session; Credential is the raw browser PublicKeyCredential JSON
+// (json.RawMessage so go-webauthn's parser sees it unmodified).
+type WebAuthnVerifyRequest struct {
+	ChallengeID string          `json:"challenge_id"`
+	Credential  json.RawMessage `json:"credential"`
+}
+
 // API Request/Response types
 
 type SetupPinRequest struct {
@@ -97,6 +148,13 @@ type AddExpenseRequest struct {
 	Amount      float64 `json:"amount"`
 	Description string  `json:"description"`
 	Month       string  `json:"month,omitempty"` // optional YYYY-MM; defaults to server UTC current month
+	// Date is an optional "YYYY-MM-DD" calendar date for back-dating an
+	// expense. When present it must be a valid date that is not in the
+	// future (UTC, today allowed); the month is derived from it (and must
+	// match Month if Month is also supplied). The expense timestamp becomes
+	// the current time when Date is today, else 12:00:00 UTC on that date.
+	// Absent → current behavior (timestamp = now, month from Month/UTC).
+	Date string `json:"date,omitempty"`
 }
 
 type AddExpenseResponse struct {
@@ -144,6 +202,11 @@ type BalanceResponse struct {
 
 type SetupStatusResponse struct {
 	IsSetup bool `json:"is_setup"`
+	// WebauthnEnrolled is true when at least one WebAuthn credential is
+	// stored, so the lock screen knows whether to offer the biometric
+	// button. Added without omitempty so the field is always present
+	// (older clients ignore unknown fields — backward compatible).
+	WebauthnEnrolled bool `json:"webauthn_enrolled"`
 }
 
 // UpdateExpenseRequest is the JSON body for updating an existing expense.

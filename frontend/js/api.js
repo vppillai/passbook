@@ -336,11 +336,25 @@ class Api {
      * falls back to its UTC clock, so an expense added at 11pm Jan 31 PST
      * (= 07:00 Feb 1 UTC) would silently land in the February bucket.
      *
+     * When an explicit `date` ("YYYY-MM-DD") is provided the month is derived
+     * from it instead of the current local clock. The backend validates that
+     * the date is not in the future and uses it as the expense timestamp.
+     *
      * @param {number} amount - Expense amount in dollars (must be positive)
      * @param {string} description - Human-readable description of the expense
+     * @param {string|null} [date] - Optional "YYYY-MM-DD" date for the expense
      * @returns {Promise<Object>} The created expense record
      */
-    async addExpense(amount, description) {
+    async addExpense(amount, description, date = null) {
+        if (date) {
+            // Derive month from the caller-supplied date (YYYY-MM-DD → YYYY-MM).
+            const m = String(date).match(/^(\d{4})-(\d{2})/);
+            const month = m ? `${m[1]}-${m[2]}` : (() => {
+                const now = new Date();
+                return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+            })();
+            return this.request('POST', '/api/expense', { amount: roundCents(amount), description, date, month });
+        }
         const now = new Date();
         const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
         return this.request('POST', '/api/expense', { amount: roundCents(amount), description, month });

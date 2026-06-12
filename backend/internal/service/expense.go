@@ -40,6 +40,15 @@ var (
 	ErrMonthNotFound     = errors.New("month not found")
 	ErrInvalidMonth      = errors.New("invalid month format")
 	ErrFundsNotPositive  = errors.New("funds amount must be positive")
+	// ErrInvalidDate is returned when the optional expense date is not a
+	// valid "YYYY-MM-DD" calendar date. Handler maps to 400.
+	ErrInvalidDate = errors.New("invalid date format")
+	// ErrFutureDate is returned when the optional expense date is in the
+	// future (UTC; today is allowed). Handler maps to 400.
+	ErrFutureDate = errors.New("date cannot be in the future")
+	// ErrDateMonthMismatch is returned when both date and month are supplied
+	// but the date's month does not match the month field. Handler maps to 400.
+	ErrDateMonthMismatch = errors.New("date and month do not match")
 	// ErrMonthHasExpenses is returned by DeleteMonth when the target month
 	// still has expenses; handler maps to 409 (U2).
 	ErrMonthHasExpenses = errors.New("month has expenses")
@@ -472,7 +481,11 @@ func (s *ExpenseService) AddExpense(ctx context.Context, req *model.AddExpenseRe
 		req.Description = "Expense"
 	}
 
-	month, err := resolveMonth(req.Month)
+	// Resolve the target month and the expense timestamp together: an
+	// optional req.Date back-dates the expense (deriving/validating the
+	// month from it), otherwise we fall back to the legacy month resolution
+	// with a now() timestamp.
+	month, expenseTime, err := s.resolveMonthAndTime(req.Month, req.Date)
 	if err != nil {
 		return nil, err
 	}
@@ -492,12 +505,11 @@ func (s *ExpenseService) AddExpense(ctx context.Context, req *model.AddExpenseRe
 		return nil, err
 	}
 
-	now := time.Now()
 	expense := &model.Expense{
-		SK:          fmt.Sprintf("%s%d#%s", repository.ExpensePrefix, now.UnixNano(), uuid.New().String()[:8]),
+		SK:          fmt.Sprintf("%s%d#%s", repository.ExpensePrefix, expenseTime.UnixNano(), uuid.New().String()[:8]),
 		Amount:      req.Amount,
 		Description: req.Description,
-		CreatedAt:   now,
+		CreatedAt:   expenseTime,
 	}
 
 	if err := s.repo.AtomicAddExpense(ctx, month, expense, !s.allowOverspending); err != nil {
@@ -545,6 +557,52 @@ func resolveMonth(clientMonth string) (string, error) {
 		return "", err
 	}
 	return clientMonth, nil
+}
+
+// resolveMonthAndTime resolves the month an expense belongs to and the
+// timestamp to stamp it with, from the optional client-supplied month and
+// date.
+//
+//   - No date: legacy behavior — month from resolveMonth(clientMonth) and
+//     timestamp = now.
+//   - Date present: must be a valid "YYYY-MM-DD" (ErrInvalidDate) that is
+//     not in the future in UTC, today allowed (ErrFutureDate). The month is
+//     derived from the date and, if clientMonth is also supplied, must match
+//     it (ErrDateMonthMismatch). The timestamp is the current time when the
+//     date is today (so a same-day add sorts after earlier same-day adds),
+//     else 12:00:00 UTC on that date.
+func (s *ExpenseService) resolveMonthAndTime(clientMonth, clientDate string) (string, time.Time, error) {
+	if clientDate == "" {
+		month, err := resolveMonth(clientMonth)
+		if err != nil {
+			return "", time.Time{}, err
+		}
+		return month, time.Now(), nil
+	}
+
+	date, err := time.Parse("2006-01-02", clientDate)
+	if err != nil {
+		return "", time.Time{}, ErrInvalidDate
+	}
+	date = date.UTC()
+
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	if date.After(today) {
+		return "", time.Time{}, ErrFutureDate
+	}
+
+	month := fmt.Sprintf("%04d-%02d", date.Year(), date.Month())
+	if clientMonth != "" && clientMonth != month {
+		return "", time.Time{}, ErrDateMonthMismatch
+	}
+
+	// Same calendar day → use the current time so same-day adds keep their
+	// real ordering; a past day → noon UTC (a stable, mid-day timestamp).
+	if date.Equal(today) {
+		return month, time.Now(), nil
+	}
+	return month, time.Date(date.Year(), date.Month(), date.Day(), 12, 0, 0, 0, time.UTC), nil
 }
 
 // UpdateExpense updates an existing expense's amount and/or description.

@@ -17,17 +17,22 @@ const SourceIPHeader = "X-Source-Ip"
 
 // Router handles HTTP routing
 type Router struct {
-	authService    *service.AuthService
-	expenseService *service.ExpenseService
-	allowedOrigin  string
+	authService     *service.AuthService
+	expenseService  *service.ExpenseService
+	webauthnService *service.WebAuthnService
+	allowedOrigin   string
 }
 
-// NewRouter creates a new router
-func NewRouter(authService *service.AuthService, expenseService *service.ExpenseService, allowedOrigin string) *Router {
+// NewRouter creates a new router. webauthnService may be nil if WebAuthn
+// could not be configured (e.g. an unparsable ALLOWED_ORIGIN); the WebAuthn
+// routes then return 503 and the status endpoint reports not-enrolled, so
+// PIN auth keeps working.
+func NewRouter(authService *service.AuthService, expenseService *service.ExpenseService, webauthnService *service.WebAuthnService, allowedOrigin string) *Router {
 	return &Router{
-		authService:    authService,
-		expenseService: expenseService,
-		allowedOrigin:  allowedOrigin,
+		authService:     authService,
+		expenseService:  expenseService,
+		webauthnService: webauthnService,
+		allowedOrigin:   allowedOrigin,
 	}
 }
 
@@ -86,6 +91,12 @@ func (rt *Router) route(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/auth/status" && method == http.MethodGet:
 		rt.handleSetupStatus(w, r)
 		return
+	case path == "/api/auth/webauthn/login/options" && method == http.MethodPost:
+		rt.handleWebAuthnLoginOptions(w, r)
+		return
+	case path == "/api/auth/webauthn/login" && method == http.MethodPost:
+		rt.handleWebAuthnLogin(w, r)
+		return
 	}
 
 	// Protected routes - require auth
@@ -125,6 +136,15 @@ func (rt *Router) protectedRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	case path == "/api/auth/logout" && method == http.MethodPost:
 		rt.handleLogout(w, r)
+		return
+	case path == "/api/auth/webauthn/register/options" && method == http.MethodPost:
+		rt.handleWebAuthnRegisterOptions(w, r)
+		return
+	case path == "/api/auth/webauthn/register" && method == http.MethodPost:
+		rt.handleWebAuthnRegister(w, r)
+		return
+	case path == "/api/auth/webauthn" && method == http.MethodDelete:
+		rt.handleWebAuthnDisable(w, r)
 		return
 	case path == "/api/balance" && method == http.MethodGet:
 		rt.handleGetBalance(w, r)

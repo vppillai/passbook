@@ -77,6 +77,28 @@ type RepositoryInterface interface {
 	// below maxAttempts; ErrRateLimitCapReached when already at the cap (B6).
 	IncrementFailedAttempts(ctx context.Context, sourceIP string, maxAttempts int) (*model.RateLimitEntry, error)
 	ClearRateLimit(ctx context.Context, sourceIP string) error
+
+	// WebAuthn — biometric unlock.
+	// PutWebAuthnChallenge persists an in-flight ceremony session under
+	// PK=SK="WACHAL#<challengeID>" with a short DynamoDB TTL.
+	PutWebAuthnChallenge(ctx context.Context, challengeID, sessionData string, ttlSeconds int) error
+	// GetWebAuthnChallenge fetches a stored ceremony session by ID; nil
+	// (no error) when absent or past its TTL.
+	GetWebAuthnChallenge(ctx context.Context, challengeID string) (*model.WebAuthnChallenge, error)
+	// DeleteWebAuthnChallenge removes a ceremony session (single-use).
+	DeleteWebAuthnChallenge(ctx context.Context, challengeID string) error
+	// PutWebAuthnCredential stores a credential (canonical row + WACREDLIST
+	// mirror) so login can enumerate it.
+	PutWebAuthnCredential(ctx context.Context, cred *model.WebAuthnCredential) error
+	// GetWebAuthnCredential fetches a single credential by its base64url ID;
+	// nil (no error) when absent.
+	GetWebAuthnCredential(ctx context.Context, credentialID string) (*model.WebAuthnCredential, error)
+	// ListWebAuthnCredentials enumerates every stored credential via a single
+	// Query over the WACREDLIST partition (mirrors the MONTHLIST pattern).
+	ListWebAuthnCredentials(ctx context.Context) ([]model.WebAuthnCredential, error)
+	// DeleteAllWebAuthnCredentials removes every stored credential (canonical
+	// rows + WACREDLIST mirrors) so the user can disable biometrics.
+	DeleteAllWebAuthnCredentials(ctx context.Context) error
 }
 
 // Compile-time assertion that the concrete Repository implements the interface.

@@ -75,7 +75,20 @@ func setupRouter() error {
 	repo := repository.NewRepository(dynamoClient, tableName)
 	authService := service.NewAuthService(repo)
 	expenseService := service.NewExpenseService(repo, monthlyAllowance, allowOverspending, carryOverBalance)
-	router = handler.NewRouter(authService, expenseService, allowedOrigin)
+
+	// WebAuthn (biometric unlock): RP ID is derived from ALLOWED_ORIGIN's
+	// host, RP origin is ALLOWED_ORIGIN, display name from
+	// WEBAUTHN_RP_DISPLAY_NAME or the constant "Passbook". A config failure
+	// (e.g. unparsable origin) is logged but never fails the cold start —
+	// the router treats a nil service as "WebAuthn unavailable" and PIN auth
+	// keeps working.
+	webauthnService, err := service.NewWebAuthnService(repo, allowedOrigin, os.Getenv("WEBAUTHN_RP_DISPLAY_NAME"))
+	if err != nil {
+		log.Printf("warn: WebAuthn disabled (config error): %v", err)
+		webauthnService = nil
+	}
+
+	router = handler.NewRouter(authService, expenseService, webauthnService, allowedOrigin)
 	return nil
 }
 
