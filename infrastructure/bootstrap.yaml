@@ -31,10 +31,21 @@ Resources:
         Status: Enabled
       LifecycleConfiguration:
         Rules:
+          # Artifacts are reproducible from git (rebuild + redeploy at any
+          # commit), so deleted zips have no backup value: expire noncurrent
+          # versions after the 1-day minimum and clean up the delete markers
+          # left behind by CI pruning. CI keeps only the current + previous
+          # zip (previous is required for CloudFormation automatic rollback
+          # of a failed stack update).
           - Id: CleanupOldVersions
             Status: Enabled
             NoncurrentVersionExpiration:
-              NoncurrentDays: 30
+              NoncurrentDays: 1
+            ExpiredObjectDeleteMarker: true
+          - Id: AbortStaleMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
       Tags:
         - Key: Application
           Value: Passbook

@@ -134,9 +134,19 @@ To customize the PWA icon for an instance, drop a square SVG at `frontend/assets
    ```
 2. (Optional) Add a custom PWA icon at `frontend/assets/icons/<name>.svg`. If not present, the instance uses the default `frontend/assets/icon.svg`.
 3. Commit and push to `main`.
-4. CI discovers the file, deploys `passbook-<name>-prod` stack, and publishes the frontend at `https://vppillai.github.io/passbook/<name>/`.
+4. CI discovers the file and deploys the `passbook-<name>-prod` stack, then publishes the frontend at `https://<owner>.github.io/<repo>/<name>/`.
 
 No other code changes are required — the workflow's dynamic matrix expands automatically.
+
+**Backend-then-frontend ordering (new-instance race fix):** a single push that
+adds `config/instances/<name>.yaml` triggers both deploy workflows in parallel.
+The frontend build now **fails fast** if an instance has no resolvable
+`ApiEndpoint` (rather than silently baking an empty API URL), because on that
+first push the new backend stack doesn't exist yet. Once "Deploy Backend to AWS"
+finishes successfully, a `workflow_run` trigger re-runs the frontend workflow
+automatically — this time the endpoint resolves and the build publishes. So the
+first frontend run for a brand-new instance is expected to fail; the automatic
+re-run is the one that ships it. No manual action is needed.
 
 ---
 
@@ -228,18 +238,52 @@ This app is hosted in a **public GitHub repository**. Below is a comprehensive s
 
 ## Deployment
 
+### Quick start (deploy your own)
+
+Forking your own copy? The whole setup is one script. Manual prerequisites:
+
+1. **Fork** this repository to your own GitHub account/org.
+2. **Log in to AWS** with admin-capable credentials so `aws sts get-caller-identity` works (`aws configure` or `aws sso login`).
+3. **Log in to GitHub CLI**: `gh auth login`.
+4. **Run the setup script** from inside your clone:
+   ```bash
+   ./scripts/setup.sh            # prompts for region (default us-west-2)
+   ./scripts/setup.sh --region us-east-1   # or pass it directly
+   ./scripts/setup.sh --dry-run  # preview every action, change nothing
+   ```
+   It deploys the bootstrap stack (parameterized to *your* GitHub owner/repo),
+   sets the `AWS_ACCOUNT_ID` repo secret, creates the `production` environment
+   (required by the OIDC trust condition), and enables GitHub Pages with
+   "GitHub Actions" as the build source. It is idempotent — safe to re-run.
+5. **Add an instance** at `config/instances/<name>.yaml` (copy `kids.yaml`),
+   then `git push origin main`.
+6. Your app goes live at `https://<your-owner>.github.io/<your-repo>/<name>/`.
+
+The origin and Pages base path are derived from your GitHub owner and repo
+name automatically (no hardcoded `vppillai`/`passbook`), so a fork works
+without editing any workflow.
+
+The manual steps below document what `setup.sh` automates, for operators who
+prefer to run each piece by hand or are rehoming an existing deployment.
+
 ### Prerequisites
 
 - AWS CLI configured with admin access
+- GitHub CLI (`gh`) authenticated (used by `scripts/setup.sh`)
 - GitHub repository with Pages enabled
-- Region: `us-west-2` (configurable in templates)
+- Region: `us-west-2` (configurable via `--region` / templates)
 
 ### Step 1: Bootstrap (One-Time)
+
+`scripts/setup.sh` does this for you. To run it by hand, pass your GitHub
+owner and repo so the OIDC trust condition matches your fork (defaults are
+`vppillai`/`passbook` — change them to your own):
 
 ```bash
 aws cloudformation deploy \
   --template-file infrastructure/bootstrap.yaml \
   --stack-name passbook-bootstrap \
+  --parameter-overrides GitHubOrg=<your-owner> GitHubRepo=<your-repo> \
   --capabilities CAPABILITY_NAMED_IAM \
   --region us-west-2
 ```
@@ -265,10 +309,13 @@ git push origin main
 ```
 
 CI runs a dynamic matrix across all instances defined in `config/instances/`. Each instance gets its own backend stack and frontend build. Workflows:
-1. Build and test Go backend
-2. Deploy CloudFormation stack per instance
-3. Upload Lambda code per instance
-4. Build and deploy all instance frontends to GitHub Pages
+1. Build and test Go backend (tests, `go vet`, and `gofmt -l` — a gofmt-violating push fails here just as PRs do)
+2. Deploy a CloudFormation stack per instance (Lambda code is referenced via the per-commit S3 key — CloudFormation is the single source of truth)
+3. Build and deploy all instance frontends to GitHub Pages
+
+For a brand-new instance the frontend build is sequenced after the backend via
+a `workflow_run` trigger — see "Adding a new instance" above. The
+`prune-artifacts` job then trims the S3 bucket to the 2 newest Lambda zips.
 
 ---
 
@@ -304,11 +351,13 @@ passbook/
 │   ├── bootstrap.yaml          # Shared across instances (manually deployed)
 │   └── template.yaml           # Parameterized by InstanceName
 └── scripts/
+    ├── setup.sh                # One-shot fork onboarding (bootstrap + GH config)
     ├── admin.sh                # All take --instance <name>
     ├── add-data.sh
-    ├── cleanup-aws.sh
+    ├── cleanup-aws.sh          # Remove a single instance
+    ├── teardown.sh             # Remove ALL instances + shared resources
     ├── migrate-instance.sh     # Cross-stack data migration tool
-    └── bootstrap.sh
+    └── bootstrap.sh            # Manual bootstrap-stack deploy (setup.sh wraps this)
 ```
 
 ---
@@ -320,18 +369,34 @@ Per instance (typical household-scale usage):
 | Service | Expected Usage | Monthly Cost |
 |---------|---------------|--------------|
 | Lambda | ~1,000 invocations | $0.00 |
-| API Gateway | ~1,000 requests | $0.00 |
-| DynamoDB | <1 MB, minimal reads/writes | $0.00 |
-| CloudWatch logs | Basic logs | $0.00 |
+| API Gateway [^billable] | ~1,000 requests | ~$0.00 |
+| DynamoDB (incl. PITR) [^billable] | <1 MB, minimal reads/writes | ~$0.00 |
+| CloudWatch logs | Basic logs, 14-day retention | $0.00 |
 | **Per-instance subtotal** | | **~$0.00/month** |
 
 Shared (one-time across all instances):
 
 | Service | Monthly Cost |
 |---|---|
-| S3 (Lambda artifacts, ~5 MB) | $0.01 |
+| S3 (Lambda artifacts) [^billable] | ~$0.00 |
 
 All services stay within AWS Free Tier for typical multi-instance household usage.
+
+[^billable]: API Gateway (HTTP API v2), S3, and DynamoDB Point-in-Time
+Recovery are billable-but-negligible SKUs — they sit outside the
+perpetual-free tiers but cost effectively nothing at household scale (PITR on
+a few-KB table is ~$0.000002/month). S3 artifact growth is bounded: the
+`prune-artifacts` CI job keeps only the **2 newest** Lambda zips (current +
+previous, the latter needed for CloudFormation rollback) and the bucket's
+1-day `NoncurrentVersionExpiration` rule erases the rest.
+
+> **No CloudWatch alarms by design.** The infrastructure intentionally creates
+> **no** CloudWatch alarms or SNS topics — alarms cross the 10-alarm free-tier
+> cliff at instance #6 (+$0.20/mo each) and email-into-the-void if no
+> subscription is confirmed. The cost guard is instead a single account-level
+> **AWS Budget** (set one up in the Billing console with a notification email).
+> The tight API Gateway throttle (5 req/s, burst 10) plus Lambda reserved
+> concurrency of 5 caps worst-case abuse at roughly **$15–20/month/instance**.
 
 ---
 
@@ -341,11 +406,15 @@ Scripts for managing data directly in DynamoDB.
 
 ### Prerequisites
 
+The admin scripts preflight for `aws`, `jq`, and `awk` and abort with a clear
+message if any is missing.
+
 | Tool | Purpose | Installation |
 |------|---------|--------------|
 | **AWS CLI v2** | DynamoDB access | [Install guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) |
 | **jq** | JSON parsing | `sudo apt install jq` / `brew install jq` |
-| **xxd** | Random ID generation | Usually pre-installed (part of vim) |
+| **awk** | Decimal/cent arithmetic | POSIX; pre-installed on macOS and Linux |
+| **xxd** | Random ID generation | Pre-installed with vim; not preflighted, so install vim if `xxd: command not found` |
 
 **AWS CLI Configuration:**
 
@@ -489,8 +558,8 @@ manually from the console if needed.
 1. Export each instance's data: `./scripts/add-data.sh --instance <name> export backup-<name>.json`
 2. Run the full teardown above in the old account.
 3. Configure AWS CLI for the new account: `aws configure`
-4. Deploy the bootstrap stack: `aws cloudformation deploy --template-file infrastructure/bootstrap.yaml --stack-name passbook-bootstrap --capabilities CAPABILITY_NAMED_IAM --region us-west-2`
-5. Update the `AWS_ACCOUNT_ID` GitHub repository variable.
+4. Re-run `./scripts/setup.sh` (deploys the bootstrap stack, updates the `AWS_ACCOUNT_ID` secret, re-creates the `production` environment, re-enables Pages — all idempotent). Or do step 4 by hand: `aws cloudformation deploy --template-file infrastructure/bootstrap.yaml --stack-name passbook-bootstrap --parameter-overrides GitHubOrg=<your-owner> GitHubRepo=<your-repo> --capabilities CAPABILITY_NAMED_IAM --region us-west-2`
+5. If you ran the manual deploy, update the `AWS_ACCOUNT_ID` GitHub repository **secret** (Settings → Secrets and variables → Actions → Secrets).
 6. Push to trigger backend + frontend deploys.
 7. Import data back: `./scripts/add-data.sh --instance <name> import backup-<name>.json`
 

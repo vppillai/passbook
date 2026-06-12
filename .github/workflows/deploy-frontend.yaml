@@ -7,6 +7,17 @@ on:
       - 'frontend/**'
       - 'config/instances/**'
       - '.github/workflows/deploy-frontend.yaml'
+  # Re-run automatically after the backend deploy finishes so a brand-new
+  # instance's frontend gets rebuilt once its stack (and ApiEndpoint) exists.
+  # On the first push that adds config/instances/<name>.yaml, this workflow
+  # and "Deploy Backend to AWS" fire in parallel from the same push; the
+  # frontend build then FAILS (see the build job) because the stack isn't up
+  # yet. This workflow_run trigger fires the rebuild once the backend run
+  # for that same commit succeeds, baking in the now-resolvable API URL.
+  workflow_run:
+    workflows: ["Deploy Backend to AWS"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -14,6 +25,10 @@ permissions:
   pages: write
   id-token: write
 
+# Single 'pages' group across both triggers (push + workflow_run) so a push
+# and the post-backend re-run never publish to Pages concurrently. Cancelling
+# an in-flight Pages publish is safe (unlike a CloudFormation deploy), and the
+# later run carries the more complete state (stacks now exist), so it should win.
 concurrency:
   group: 'pages'
   cancel-in-progress: true
@@ -24,6 +39,12 @@ env:
 jobs:
   discover:
     runs-on: ubuntu-latest
+    # For a workflow_run trigger, only proceed when the backend deploy
+    # actually succeeded — a failed backend leaves no resolvable ApiEndpoint,
+    # so the frontend build would fail anyway. For push / workflow_dispatch,
+    # github.event.workflow_run is null and this evaluates true. discover is
+    # the root job (build needs discover), so guarding it gates the whole run.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     outputs:
       instances: ${{ steps.list.outputs.instances }}
     steps:
@@ -35,7 +56,7 @@ jobs:
           echo "Discovered instances: $INSTANCES"
 
   # Build runs under `environment: production` so it can assume the OIDC role
-  # (the bootstrap stack trusts repo:vppillai/passbook:environment:production only).
+  # (the bootstrap stack trusts repo:<owner>/<repo>:environment:production only).
   # AWS access is read-only here: we just query CloudFormation outputs to fetch
   # each instance's API endpoint and bake it into the static frontend bundle.
   build:
@@ -75,6 +96,10 @@ jobs:
         env:
           INSTANCES: ${{ needs.discover.outputs.instances }}
           VERSION: ${{ steps.version.outputs.version }}
+          # GitHub Pages serves a project site under /<repo-name>/, so the PWA
+          # start_url base path is the repo name — derived here so forks work
+          # without editing this file (no hardcoded "passbook").
+          REPO_NAME: ${{ github.event.repository.name }}
         run: |
           set -euo pipefail
           mkdir -p build
@@ -108,17 +133,46 @@ jobs:
             # Inject version into footer
             sed -i "s|>dev</span>|>$VERSION</span>|" "build/$INSTANCE/index.html"
 
-            # Fetch API URL from CloudFormation outputs
+            # Inject the same version into the service worker so its cache
+            # name rotates on every release (sw.js falls back to fetching
+            # ./VERSION at runtime when the placeholder isn't replaced).
+            sed -i "s|__SW_VERSION__|$VERSION|" "build/$INSTANCE/sw.js"
+
+            # Fetch API URL from CloudFormation outputs. FAIL (don't warn) when
+            # it's missing: baking an empty API URL ships a dead frontend. This
+            # is the guard for the new-instance race — on the first push that
+            # adds an instance, the backend stack may not exist yet, so this
+            # build fails fast. The workflow_run trigger re-runs this workflow
+            # after the backend deploy succeeds, at which point the endpoint
+            # resolves and the build passes.
             API_URL=$(aws cloudformation describe-stacks \
               --stack-name "passbook-$INSTANCE-prod" \
               --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" \
               --output text 2>/dev/null || echo "")
             if [ -z "$API_URL" ] || [ "$API_URL" = "None" ]; then
-              echo "::warning::No API URL for $INSTANCE (stack may not be deployed yet)"
-              API_URL=""
-            else
-              echo "API URL for $INSTANCE: $API_URL"
+              echo "::error::No resolvable ApiEndpoint for instance '$INSTANCE'. Its backend stack (passbook-$INSTANCE-prod) is missing or has no ApiEndpoint output. Deploy the backend first; this workflow re-runs automatically after 'Deploy Backend to AWS' completes."
+              exit 1
             fi
+            echo "API URL for $INSTANCE: $API_URL"
+
+            # Derive the API origin (scheme + host, no path) so the CSP
+            # connect-src directive can be tightened to the exact endpoint
+            # rather than the hardcoded wildcard from index.html.
+            API_ORIGIN=$(echo "$API_URL" | sed -E 's|(https://[^/]+).*|\1|')
+            echo "API origin for $INSTANCE: $API_ORIGIN"
+
+            # Patch the CSP connect-src in the copied index.html.
+            # Use | as the sed delimiter to avoid conflicts with the / in URLs.
+            # The guard below ensures a future index.html edit that removes or
+            # renames the CSP pattern is caught at build time, not silently
+            # shipped with a broken or over-permissive policy.
+            CSP_OLD_PATTERN="https://\*\.execute-api\.us-west-2\.amazonaws\.com"
+            if ! grep -qF "https://*.execute-api.us-west-2.amazonaws.com" "build/$INSTANCE/index.html"; then
+              echo "::error::CSP connect-src pattern not found in build/$INSTANCE/index.html. The hardcoded wildcard 'https://*.execute-api.us-west-2.amazonaws.com' must be present for this rewrite to work. Update the sed expression in deploy-frontend.yaml to match the current CSP in frontend/index.html."
+              exit 1
+            fi
+            sed -i "s|https://\*\.execute-api\.us-west-2\.amazonaws\.com|$API_ORIGIN|g" "build/$INSTANCE/index.html"
+            echo "CSP connect-src patched to: $API_ORIGIN"
 
             # Extract labels from YAML as JSON (default to {} if missing)
             CONFIG_FILE="config/instances/$INSTANCE.yaml"
@@ -140,7 +194,7 @@ jobs:
             PWA_DESC=$(yq '.pwa.description // ""' "$CONFIG_FILE")
             PWA_THEME=$(yq '.pwa.theme_color // "#4A90A4"' "$CONFIG_FILE")
             PWA_BG=$(yq '.pwa.background_color // "#f5f7fa"' "$CONFIG_FILE")
-            START_URL="/passbook/$INSTANCE/"
+            START_URL="/$REPO_NAME/$INSTANCE/"
 
             jq -n \
               --arg name "$PWA_NAME" \

@@ -5,7 +5,10 @@ on:
     branches: [main]
     paths:
       - 'backend/**'
-      - 'infrastructure/**'
+      # Only the per-instance stack template triggers a redeploy.
+      # bootstrap.yaml is a manually-managed stack (it creates the CI role
+      # itself), so pushing it must NOT kick off the full instance matrix.
+      - 'infrastructure/template.yaml'
       - 'config/instances/**'
       - '.github/workflows/deploy-backend.yaml'
   workflow_dispatch:
@@ -33,7 +36,7 @@ jobs:
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version: '1.25'
-          cache: false
+          cache: true
       - name: Test
         working-directory: backend
         # No env vars or AWS access needed: service tests run against an
@@ -45,6 +48,17 @@ jobs:
           go mod download
           go test -v -race ./...
           go vet ./...
+      - name: Check formatting
+        working-directory: backend
+        # Mirror the test.yaml PR gate: a gofmt-violating direct push to main
+        # must fail here too, otherwise it would deploy while PRs are blocked.
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "gofmt needed on:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
 
   discover:
     runs-on: ubuntu-latest
@@ -69,7 +83,7 @@ jobs:
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version: '1.25'
-          cache: false
+          cache: true
       - name: Build Lambda
         working-directory: backend
         run: |
@@ -141,6 +155,10 @@ jobs:
             --stack-name passbook-bootstrap \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaDeploymentBucketName'].OutputValue" \
             --output text)
+          # Derive the GitHub Pages origin from the repo owner so forks work
+          # without editing this file. github.repository_owner is the user/org
+          # that owns the repo (e.g. "vppillai" -> https://vppillai.github.io).
+          ALLOWED_ORIGIN="https://${{ github.repository_owner }}.github.io"
           aws cloudformation deploy \
             --template-file infrastructure/template.yaml \
             --stack-name "passbook-${INSTANCE}-prod" \
@@ -149,7 +167,7 @@ jobs:
               InstanceName="$INSTANCE" \
               LambdaCodeBucket="$BUCKET" \
               LambdaCodeKey="$S3_KEY" \
-              AllowedOrigin=https://vppillai.github.io \
+              AllowedOrigin="$ALLOWED_ORIGIN" \
               MonthlyAllowance="$MONTHLY" \
               AllowOverspending="$ALLOW_OVERSPEND" \
               CarryOverBalance="$CARRY_OVER" \
@@ -171,3 +189,35 @@ jobs:
           echo "## Deployed: ${{ matrix.instance }}" >> $GITHUB_STEP_SUMMARY
           echo "- Stack: passbook-${{ matrix.instance }}-prod" >> $GITHUB_STEP_SUMMARY
           echo "- API: $API_URL" >> $GITHUB_STEP_SUMMARY
+
+  # Zips are reproducible from git, so superseded artifacts are pure cost.
+  # Keep only the newest 2: the current deploy plus the previous one, which
+  # CloudFormation needs if a failed stack update auto-rolls-back (a missing
+  # previous key strands the stack in UPDATE_ROLLBACK_FAILED). Runs only
+  # when every instance deployed successfully, so a failed matrix leg keeps
+  # its rollback artifact. Deletes create delete markers; the bucket's
+  # 1-day NoncurrentVersionExpiration rule erases the bytes permanently.
+  prune-artifacts:
+    needs: [build, deploy]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/passbook-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Delete superseded Lambda zips
+        run: |
+          BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name passbook-bootstrap \
+            --query "Stacks[0].Outputs[?OutputKey=='LambdaDeploymentBucketName'].OutputValue" \
+            --output text)
+          aws s3api list-objects-v2 --bucket "$BUCKET" --prefix function- \
+            --query 'reverse(sort_by(Contents || `[]`, &LastModified))[2:].Key' \
+            --output text | tr '\t' '\n' | while read -r KEY; do
+            if [ -n "$KEY" ] && [ "$KEY" != "None" ]; then
+              echo "Deleting superseded artifact: $KEY"
+              aws s3api delete-object --bucket "$BUCKET" --key "$KEY" > /dev/null
+            fi
+          done
