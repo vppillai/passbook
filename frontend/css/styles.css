@@ -369,6 +369,63 @@ body::before {
    Main screen
    ===================================================================== */
 
+/* Contain vertical overscroll so the custom pull-to-refresh gesture isn't
+   fought by the browser's native PTR / scroll chaining. */
+html, body {
+    overscroll-behavior-y: contain;
+}
+
+#main-screen {
+    overscroll-behavior-y: contain;
+}
+
+/* ---- Pull-to-refresh indicator ----
+   Absolutely positioned at the top of the main screen, parked off-screen and
+   slid down by the --pull custom property (set via CSSOM in JS — CSP-safe). */
+.ptr-indicator {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 36px;
+    height: 36px;
+    margin-left: -18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 50;
+    transform: translateY(calc(var(--pull, 0px) - 44px));
+}
+
+.ptr-indicator.ptr-visible {
+    opacity: 1;
+}
+
+.ptr-spinner {
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--line);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+}
+
+/* Armed (past threshold): nudge the accent ring fuller as a "release to
+   refresh" cue. */
+.ptr-indicator.ptr-armed .ptr-spinner {
+    border-top-color: var(--accent);
+    border-right-color: var(--accent);
+}
+
+/* Refreshing: spin. Respects prefers-reduced-motion (handled globally below,
+   which neutralises the animation). */
+.ptr-indicator.ptr-refreshing .ptr-spinner {
+    animation: spin 0.8s linear infinite;
+}
+
 header {
     display: flex;
     justify-content: space-between;
@@ -479,6 +536,25 @@ header h1 {
 
 .chip-value.balance-negative {
     color: var(--danger);
+}
+
+/* Pace chip — same chip shell as carryover, with a value tint per state.
+   Wider than the stat chips since its value is a short sentence, not a number. */
+.pace-chip .chip-value {
+    font-size: 0.92rem;
+    white-space: normal;
+}
+
+.pace-chip.pace-overspend .chip-value {
+    color: var(--danger);
+}
+
+.pace-chip.pace-saved .chip-value {
+    color: var(--success-color);
+}
+
+.pace-chip.pace-on-track .chip-value {
+    color: var(--accent);
 }
 
 /* Legacy hook used outside the hero (months list). */
@@ -1006,11 +1082,37 @@ header h1 {
     cursor: pointer;
     transition: var(--transition);
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    flex-direction: column;
+    gap: 8px;
     font-family: var(--font-body);
     color: var(--ink);
     text-align: left;
+}
+
+/* Top row of a month item: name on the left, savings pill on the right. */
+.month-item-main {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* Thin horizontal spend bar beneath each month's row. The track is a faint
+   rail; the fill width is driven by the CSSOM --w custom property set in JS
+   (CSP-safe; no inline style attribute). */
+.month-spend-bar {
+    height: 4px;
+    border-radius: var(--r-pill);
+    background: var(--line);
+    overflow: hidden;
+}
+
+.month-spend-fill {
+    display: block;
+    height: 100%;
+    width: var(--w, 0%);
+    border-radius: var(--r-pill);
+    background: var(--accent);
+    transition: width var(--transition);
 }
 
 .month-item:focus-visible {
@@ -1088,6 +1190,48 @@ header h1 {
 @keyframes fadeInUp {
     from { opacity: 0; transform: translate(-50%, 16px); }
     to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* Action toast (undo): message + a tappable Undo button. Reuses the toast
+   pill but switches to a flex row and tightens vertical padding so the 44px
+   touch target doesn't make the pill oversized. */
+.toast.toast-action {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px 4px 18px;
+}
+
+.toast-message {
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+
+.toast-undo {
+    /* 44px minimum hit area (WCAG 2.5.5 / iOS HIG). */
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 16px;
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    font-family: var(--font-body);
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border-radius: var(--r-pill);
+    cursor: pointer;
+}
+
+/* The toast sits on a dark --ink background; the theme accent can be too dim
+   there, so brighten the Undo affordance for contrast. */
+.toast-undo {
+    color: color-mix(in srgb, var(--accent) 55%, #ffffff);
+}
+
+.toast-undo:active {
+    background: color-mix(in srgb, #ffffff 16%, transparent);
 }
 
 /* =====================================================================

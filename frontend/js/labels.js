@@ -15,6 +15,17 @@ const defaultLabels = {
     funds_added_toast: 'Funds added!',
     spent_suffix: 'spent',
     carried_from: 'Carried from',
+    // Undo toast shown after an expense is (optimistically) deleted. The
+    // action verb is instance-divergent (delete vs. remove), so it routes
+    // through labels. The "UNDO" affordance text is a separate label.
+    expense_deleted_undo: 'Expense deleted',
+    undo_action: 'Undo',
+    // Spending-pace chip (current month only). `{x}` is replaced at render
+    // time with a formatted currency amount. Phrasing is instance-divergent.
+    pace_label: 'Pace',
+    pace_on_track: 'On track — {x}/day left',
+    pace_overspend: 'Pace: overspend by ~{x}',
+    pace_saved: 'Saved {x} so far',
     // Shown in the add-expense modal when the viewed month is not the current
     // one (review H5). `{month}` is replaced at render time with the current
     // month's display name. The phrasing is instance-divergent (e.g. an

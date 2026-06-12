@@ -10,6 +10,7 @@
 
 import { labels } from './labels.js';
 import { roundCents } from './api.js';
+import { computePace, isCurrentMonth } from './insights.js';
 
 /** Full month names indexed 0-11 for converting "YYYY-MM" keys to display strings */
 const MONTHS = [
@@ -187,6 +188,9 @@ export function hideMenu() {
 let toastTimeout;
 export function showToast(message, type = 'info') {
     const toast = document.getElementById('toast');
+    // A plain toast may follow an undo toast; clear any action button so the
+    // previous Undo affordance doesn't linger.
+    toast.replaceChildren();
     toast.textContent = message;
     toast.className = `toast ${type}`;
     toast.classList.remove('hidden');
@@ -195,6 +199,83 @@ export function showToast(message, type = 'info') {
     toastTimeout = setTimeout(() => {
         toast.classList.add('hidden');
     }, 3000);
+}
+
+// Tracks the dismiss handler of the currently-shown undo toast so a new toast
+// (or an explicit dismiss) can settle the pending action exactly once.
+let undoToastDismiss = null;
+
+/**
+ * Shows an action toast with a tappable Undo button for `durationMs`. The
+ * toast reuses the existing #toast element but renders structured children
+ * (message + 44px Undo button) instead of plain text.
+ *
+ * Exactly one of the callbacks fires:
+ *   - onUndo()   when the user taps Undo before the timer expires.
+ *   - onExpire() when the timer elapses, or when another toast/dismiss
+ *                supersedes this one (i.e. "commit the deferred action now").
+ *
+ * @param {Object} opts
+ * @param {string} opts.message - leading text (instance-divergent → labels)
+ * @param {string} opts.actionText - Undo button label (→ labels)
+ * @param {Function} opts.onUndo
+ * @param {Function} opts.onExpire
+ * @param {number} [opts.durationMs=5000]
+ */
+export function showUndoToast({ message, actionText, onUndo, onExpire, durationMs = 5000 }) {
+    // Settle any previously-shown undo toast first (commit its deferred action)
+    // so two rapid deletes don't leave the first one dangling.
+    if (undoToastDismiss) undoToastDismiss('expire');
+
+    const toast = document.getElementById('toast');
+    clearTimeout(toastTimeout);
+    toast.replaceChildren();
+    toast.className = 'toast toast-action';
+
+    const msg = document.createElement('span');
+    msg.className = 'toast-message';
+    msg.textContent = message;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toast-undo';
+    btn.textContent = actionText;
+
+    toast.appendChild(msg);
+    toast.appendChild(btn);
+    toast.classList.remove('hidden');
+
+    let settled = false;
+    let timer = null;
+    // reason: 'undo' fires onUndo; anything else commits via onExpire.
+    function settle(reason) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (undoToastDismiss === settle) undoToastDismiss = null;
+        toast.classList.add('hidden');
+        toast.replaceChildren();
+        toast.className = 'toast';
+        if (reason === 'undo') {
+            if (typeof onUndo === 'function') onUndo();
+        } else if (typeof onExpire === 'function') {
+            onExpire();
+        }
+    }
+
+    btn.addEventListener('click', () => settle('undo'));
+    timer = setTimeout(() => settle('expire'), durationMs);
+    undoToastDismiss = settle;
+}
+
+/**
+ * Immediately settles any visible undo toast as if its timer expired, i.e.
+ * commits the deferred action now. No-op when no undo toast is showing.
+ * Used before navigations (month switch) and page-hide so a pending delete
+ * isn't left in limbo.
+ */
+export function flushUndoToast() {
+    if (undoToastDismiss) undoToastDismiss('expire');
 }
 
 export function showError(elementId, message) {
@@ -331,23 +412,18 @@ function buildExpenseRow(expense, callbacks) {
         '<path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6M8,6V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2V6"></path>'
     ));
     let deleting = false;
-    delBtn.addEventListener('click', async () => {
-        // In-flight guard. Without this, a double-tap fires the confirm
-        // modal twice and emits two DELETE calls; the second 404's after
-        // the first succeeds, surfacing as a confusing toast.
+    delBtn.addEventListener('click', () => {
+        // Optimistic delete with an Undo toast (replaces the confirm modal):
+        // the row vanishes immediately and the DELETE is DEFERRED until the
+        // toast expires (handled in app.js). The in-flight guard still blocks
+        // a double-tap from queuing two pending deletes for the same row.
         if (deleting) return;
         deleting = true;
-        try {
-            const ok = await showConfirm({
-                title: 'Delete this expense?',
-                body: `${expense.description} — ${formatCurrency(expense.amount)} will be refunded to your balance.`,
-                confirmText: 'Delete',
-                danger: true,
-            });
-            if (ok) callbacks.onDelete(expense.id);
-        } finally {
-            deleting = false;
-        }
+        callbacks.onDelete(expense.id);
+        // The row is removed by the re-render that onDelete triggers, so this
+        // closure is discarded; resetting the guard is belt-and-suspenders in
+        // case the delete no-ops (e.g. user already navigated away).
+        deleting = false;
     });
 
     row.appendChild(info);
@@ -423,8 +499,9 @@ export function renderMonthsList(months, currentMonth, onSelect, nextCursor = nu
         return;
     }
 
+    const maxExpenses = maxMonthExpenses(months);
     for (const month of months) {
-        container.appendChild(buildMonthRow(month, currentMonth, onSelect));
+        container.appendChild(buildMonthRow(month, currentMonth, onSelect, maxExpenses));
     }
 
     if (nextCursor && onLoadMore) {
@@ -432,7 +509,24 @@ export function renderMonthsList(months, currentMonth, onSelect, nextCursor = nu
     }
 }
 
-export function buildMonthRow(month, currentMonth, onSelect) {
+/**
+ * Returns the largest total_expenses across the listed months, used to scale
+ * the per-row spend bars. Months whose total_expenses is absent (the list API
+ * may only carry monthly_saved) contribute 0, so the bars hide gracefully when
+ * no spend data is available. Returns 0 when nothing is spendable.
+ * @param {Array<Object>} months
+ * @returns {number}
+ */
+export function maxMonthExpenses(months) {
+    let max = 0;
+    for (const m of (months || [])) {
+        const v = Number(m.total_expenses) || 0;
+        if (v > max) max = v;
+    }
+    return max;
+}
+
+export function buildMonthRow(month, currentMonth, onSelect, maxExpenses = 0) {
     // The selectable row is a real <button> (inside a list <li>) so it is
     // keyboard- and screen-reader-accessible — Enter/Space activate it and
     // it's announced as a button, unlike the previous click-only <li> (a11y).
@@ -445,6 +539,9 @@ export function buildMonthRow(month, currentMonth, onSelect) {
     btn.setAttribute('data-month', month.month);
     if (month.month === currentMonth) btn.setAttribute('aria-current', 'true');
 
+    const main = document.createElement('span');
+    main.className = 'month-item-main';
+
     const nameEl = document.createElement('span');
     nameEl.className = 'month-name';
     nameEl.textContent = formatMonthName(month.month);
@@ -454,8 +551,29 @@ export function buildMonthRow(month, currentMonth, onSelect) {
     balanceEl.className = 'month-balance' + (saved < 0 ? ' balance-negative' : '');
     balanceEl.textContent = `${saved > 0 ? '+' : ''}${formatCurrency(month.monthly_saved)}`;
 
-    btn.appendChild(nameEl);
-    btn.appendChild(balanceEl);
+    main.appendChild(nameEl);
+    main.appendChild(balanceEl);
+    btn.appendChild(main);
+
+    // Thin spend bar: width % of this month's total_expenses relative to the
+    // max across the listed months. Set via the CSSOM `--w` custom property
+    // (element.style.setProperty is permitted under CSP style-src — only
+    // inline style ATTRIBUTES and <style> blocks are blocked), never an inline
+    // style attribute. Rendered only when spend data is available (maxExpenses
+    // > 0), so months-list payloads that omit total_expenses simply show no
+    // bar instead of an empty track.
+    const spend = Number(month.total_expenses) || 0;
+    if (maxExpenses > 0) {
+        const pct = Math.max(0, Math.min(100, Math.round((spend / maxExpenses) * 100)));
+        const track = document.createElement('span');
+        track.className = 'month-spend-bar';
+        const fill = document.createElement('span');
+        fill.className = 'month-spend-fill';
+        fill.style.setProperty('--w', `${pct}%`);
+        track.appendChild(fill);
+        btn.appendChild(track);
+    }
+
     if (typeof onSelect === 'function') {
         btn.addEventListener('click', () => onSelect(month.month));
     }
@@ -542,12 +660,57 @@ export function updateDashboard(data) {
     const ofBudget = budget > 0 ? ` of ${formatCurrency(budget)}` : '';
     document.getElementById('expenses-total').textContent =
         `${formatCurrency(totalExpenses)} ${labels.spent_suffix}${ofBudget}`;
+
+    updatePaceChip(data);
+}
+
+/**
+ * Renders the spending-pace chip for the CURRENT month only; hidden for past
+ * months, malformed data, or when there is no budget to pace against. Strings
+ * route through labels with `{x}` replaced by a formatted amount.
+ * @param {Object} data - MonthDataResponse
+ */
+function updatePaceChip(data) {
+    const chip = document.getElementById('pace-chip');
+    if (!chip) return;
+    const valueEl = chip.querySelector('.chip-value');
+
+    // Past months never get a pace insight.
+    if (!data || !isCurrentMonth(data.month)) {
+        chip.classList.add('hidden');
+        chip.classList.remove('pace-overspend', 'pace-saved', 'pace-on-track');
+        return;
+    }
+
+    const pace = computePace({ month: data.month, summary: data.summary });
+    if (!pace) {
+        chip.classList.add('hidden');
+        chip.classList.remove('pace-overspend', 'pace-saved', 'pace-on-track');
+        return;
+    }
+
+    const money = formatCurrency(pace.amount);
+    let text;
+    chip.classList.remove('pace-overspend', 'pace-saved', 'pace-on-track');
+    if (pace.kind === 'overspend') {
+        text = labels.pace_overspend.replace('{x}', money);
+        chip.classList.add('pace-overspend');
+    } else if (pace.kind === 'saved') {
+        text = labels.pace_saved.replace('{x}', money);
+        chip.classList.add('pace-saved');
+    } else {
+        text = labels.pace_on_track.replace('{x}', money);
+        chip.classList.add('pace-on-track');
+    }
+    valueEl.textContent = text;
+    chip.classList.remove('hidden');
 }
 
 export function showEmptyState() {
     // Show empty state when no months exist
     document.getElementById('month-title').textContent = 'No Data Yet';
     document.getElementById('carryover-chip').classList.add('hidden');
+    document.getElementById('pace-chip').classList.add('hidden');
     const emptyMonthBalanceEl = document.getElementById('month-balance');
     emptyMonthBalanceEl.textContent = formatCurrency(0);
     emptyMonthBalanceEl.classList.remove('balance-negative');
@@ -573,6 +736,7 @@ export function showEmptyState() {
 export function showDashboardLoading() {
     document.getElementById('month-title').textContent = ' ';
     document.getElementById('carryover-chip').classList.add('hidden');
+    document.getElementById('pace-chip').classList.add('hidden');
     const monthBalanceEl = document.getElementById('month-balance');
     monthBalanceEl.textContent = ' ';
     monthBalanceEl.classList.remove('balance-negative');
@@ -609,6 +773,7 @@ export function showDashboardError(onRetry) {
     document.getElementById('month-balance').textContent = '—';
     document.getElementById('expenses-total').textContent = '';
     document.getElementById('carryover-chip').classList.add('hidden');
+    document.getElementById('pace-chip').classList.add('hidden');
     const list = document.getElementById('expenses-list');
     list.replaceChildren();
     const wrap = document.createElement('div');

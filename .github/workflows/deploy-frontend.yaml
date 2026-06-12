@@ -92,6 +92,9 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
+      - name: Install rsvg-convert for PNG icon generation
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq librsvg2-bin
+
       - name: Assemble multi-instance build
         env:
           INSTANCES: ${{ needs.discover.outputs.instances }}
@@ -212,7 +215,9 @@ jobs:
                 background_color: $background_color,
                 theme_color: $theme_color,
                 icons: [
-                  { src: "assets/icon.svg", sizes: "any", type: "image/svg+xml" }
+                  { src: "assets/icon.svg", sizes: "any", type: "image/svg+xml" },
+                  { src: "assets/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+                  { src: "assets/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" }
                 ]
               }' > "build/$INSTANCE/manifest.json"
 
@@ -271,9 +276,39 @@ jobs:
             if [ -f "frontend/assets/icons/$INSTANCE.svg" ]; then
               echo "Using per-instance icon: frontend/assets/icons/$INSTANCE.svg"
               cp "frontend/assets/icons/$INSTANCE.svg" "build/$INSTANCE/assets/icon.svg"
+              ICON_SRC="frontend/assets/icons/$INSTANCE.svg"
             else
               echo "Using default icon for $INSTANCE (frontend/assets/icon.svg)"
+              ICON_SRC="frontend/assets/icon.svg"
             fi
+
+            # ===== PWA: generate PNG icons from the resolved SVG source =====
+            for SIZE in 180 192 512; do
+              rsvg-convert -w "$SIZE" -h "$SIZE" "$ICON_SRC" -o "build/$INSTANCE/assets/icon-${SIZE}.png" || {
+                echo "::error::rsvg-convert failed to generate icon-${SIZE}.png for instance '$INSTANCE' from $ICON_SRC"
+                exit 1
+              }
+              echo "Generated icon-${SIZE}.png for $INSTANCE"
+            done
+
+            # ===== PWA: rewrite apple-touch-icon to PNG in index.html =====
+            # iOS doesn't support SVG apple-touch-icons; rewrite to the 180×180 PNG.
+            # Verify exactly one replacement happened so a future rename is caught at build time.
+            if ! grep -q '<link rel="apple-touch-icon"' "build/$INSTANCE/index.html"; then
+              echo "::error::apple-touch-icon link not found in build/$INSTANCE/index.html"
+              exit 1
+            fi
+            sed -i 's|<link rel="apple-touch-icon" href="[^"]*">|<link rel="apple-touch-icon" href="assets/icon-180.png">|' "build/$INSTANCE/index.html"
+            REPLACED=$(grep -c '<link rel="apple-touch-icon"' "build/$INSTANCE/index.html" || true)
+            if [ "$REPLACED" -ne 1 ]; then
+              echo "::error::apple-touch-icon sed rewrite produced $REPLACED matches (expected 1) in build/$INSTANCE/index.html"
+              exit 1
+            fi
+            grep -q 'href="assets/icon-180.png"' "build/$INSTANCE/index.html" || {
+              echo "::error::apple-touch-icon rewrite to icon-180.png did not take effect in build/$INSTANCE/index.html"
+              exit 1
+            }
+            echo "apple-touch-icon patched to assets/icon-180.png for $INSTANCE"
 
             echo "Built $INSTANCE: API=$API_URL, theme=$PWA_THEME"
           done

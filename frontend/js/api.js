@@ -377,6 +377,29 @@ class Api {
     }
 
     /**
+     * Fires a best-effort DELETE that survives page teardown via fetch
+     * keepalive:true. Used to flush a deferred (undo-pending) delete on
+     * visibilitychange→hidden / pagehide, where a normal awaited request would
+     * be cancelled as the document unloads. Same auth header (X-Session-Token)
+     * as request(); fire-and-forget — no response handling, errors swallowed.
+     * @param {string} month - Month key in "YYYY-MM" format
+     * @param {string} expenseId
+     */
+    deleteExpenseKeepalive(month, expenseId) {
+        const headers = {};
+        if (this.sessionToken) headers['X-Session-Token'] = this.sessionToken;
+        const url = `${API_BASE}/api/expense/${month}/${encodeURIComponent(expenseId)}`;
+        try {
+            fetch(url, {
+                method: 'DELETE',
+                headers,
+                credentials: 'omit',
+                keepalive: true,
+            }).catch(() => {});
+        } catch { /* keepalive payload limits / teardown — best effort only */ }
+    }
+
+    /**
      * Creates a new month entry in the passbook.
      *
      * This allows manually creating a month (e.g. a future month or a past month

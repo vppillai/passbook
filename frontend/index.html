@@ -88,6 +88,13 @@
 
     <!-- Main Dashboard -->
     <div id="main-screen" class="screen hidden">
+        <!-- Pull-to-refresh indicator. Hidden until a pull begins; its
+             position/opacity are driven via the CSSOM --pull custom property
+             (allowed under CSP style-src). The spinner respects
+             prefers-reduced-motion (see styles.css). -->
+        <div id="ptr-indicator" class="ptr-indicator" aria-hidden="true">
+            <span class="ptr-spinner"></span>
+        </div>
         <header>
             <h1 data-i18n="app_title">My Passbook</h1>
             <button id="menu-btn" class="icon-btn" aria-label="Menu">
@@ -113,6 +120,10 @@
                 <div id="carryover-chip" class="chip hidden">
                     <span class="chip-label">Carried over</span>
                     <span class="chip-value">$0.00</span>
+                </div>
+                <div id="pace-chip" class="chip pace-chip hidden">
+                    <span class="chip-label" data-i18n="pace_label">Pace</span>
+                    <span class="chip-value"></span>
                 </div>
             </div>
         </section>
