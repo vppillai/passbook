@@ -1,6 +1,17 @@
 #!/bin/bash
 # Passbook Admin TUI
-# Interactive terminal interface for managing passbook data
+# Interactive terminal interface for managing passbook data.
+#
+# This is a THIN TUI. Every data operation (month/expense/funds/rmfunds/
+# delete/export/import/recalc/balance) is delegated to add-data.sh, which is
+# the single bash implementation of those operations. admin.sh owns only:
+#   - the menu and summary display
+#   - input prompts and the destructive-action confirmations
+#   - PIN reset / session clearing (admin-only, not in add-data.sh)
+# This removes the ~300 lines that used to be duplicated (and had drifted)
+# between the two scripts.
+
+set -euo pipefail
 
 show_help() {
     cat << 'EOF'
@@ -15,7 +26,8 @@ Options:
 
 Description:
   Interactive terminal interface for managing passbook data in DynamoDB.
-  Provides a menu-driven interface for common operations.
+  Provides a menu-driven interface for common operations. All data writes
+  are delegated to add-data.sh.
 
 Features:
   - View total balance and monthly history
@@ -33,6 +45,7 @@ Prerequisites:
   - AWS CLI v2 configured with credentials
   - jq (JSON processor)
   - awk (POSIX, preinstalled everywhere)
+  - xxd (for expense ID generation, used by add-data.sh)
 
 Example:
   ./scripts/admin.sh --instance kids
@@ -43,18 +56,20 @@ EOF
 }
 
 REGION="us-west-2"
-
 INSTANCE=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         -i|--instance)
-            INSTANCE="$2"; shift 2 ;;
+            INSTANCE="${2:?--instance requires a value}"; shift 2 ;;
         --region)
-            REGION="$2"; shift 2 ;;
+            REGION="${2:?--region requires a value}"; shift 2 ;;
         -h|--help)
             show_help
             exit 0 ;;
-        *) shift ;;
+        *)
+            echo "Error: unknown option '$1'" >&2
+            echo "Run '$0 --help' for usage." >&2
+            exit 1 ;;
     esac
 done
 
@@ -66,20 +81,46 @@ fi
 
 TABLE_NAME="passbook-${INSTANCE}-prod"
 
+# Resolve add-data.sh relative to THIS script's directory so the TUI works
+# regardless of the caller's working directory.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ADD_DATA="$SCRIPT_DIR/add-data.sh"
+if [[ ! -x "$ADD_DATA" ]]; then
+    echo "Error: add-data.sh not found or not executable at $ADD_DATA" >&2
+    exit 1
+fi
+
 # Fail fast if a required tool is missing. Degrading mid-run causes
-# PARTIAL WRITES (observed live with a missing bc: the expense row was
-# written but the summary update was skipped) — refuse up front instead.
-for tool in aws jq awk; do
+# PARTIAL WRITES — refuse up front instead. xxd is used by add-data.sh
+# for expense ID generation.
+for tool in aws jq awk xxd; do
     command -v "$tool" >/dev/null 2>&1 || { echo "Error: required tool '$tool' not found" >&2; exit 1; }
 done
 
-# calc EXPR — decimal arithmetic via awk, printed to cents. Replaces bc
-# (not installed everywhere; its absence yielded empty values and the
-# partial-write failure mode above).
-calc() { awk "BEGIN { printf \"%.2f\", $* }"; }
+# AWS preflight: verify credentials and that the table exists BEFORE the
+# menu opens. Without this, wrong/expired credentials render as "$0 / no
+# months" instead of an error, and any write would fail mid-flight.
+if ! aws sts get-caller-identity >/dev/null 2>&1; then
+    echo "Error: AWS credentials not configured or expired (sts get-caller-identity failed)." >&2
+    echo "       Run 'aws configure' or refresh your session, then retry." >&2
+    exit 1
+fi
+if ! aws dynamodb describe-table --table-name "$TABLE_NAME" --region "$REGION" >/dev/null 2>&1; then
+    echo "Error: DynamoDB table '$TABLE_NAME' not found in region '$REGION'." >&2
+    echo "       Check --instance and --region (instance '$INSTANCE' may not be deployed)." >&2
+    exit 1
+fi
 
-# num_gt A B — true when A > B (decimal-aware).
-num_gt() { awk "BEGIN { exit !($1 > $2) }"; }
+# calc / num_gt — decimal arithmetic for the summary display only. LC_ALL=C
+# pins the decimal point to '.' regardless of the operator's locale.
+calc() { LC_ALL=C awk "BEGIN { printf \"%.2f\", $* }"; }
+num_gt() { LC_ALL=C awk "BEGIN { exit !($1 > $2) }"; }
+
+# run_add_data CMD ARGS... — delegate a data operation to add-data.sh with
+# the current instance/region. Returns add-data.sh's exit status.
+run_add_data() {
+    "$ADD_DATA" --instance "$INSTANCE" --region "$REGION" "$@"
+}
 
 # Colors
 RED='\033[0;31m'
@@ -90,9 +131,11 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
-# Clear screen and show header
+# Clear screen and show header. `clear` can fail under an unknown TERM
+# (e.g. when piped or run in a bare environment); don't let that abort the
+# script under set -e.
 show_header() {
-    clear
+    clear 2>/dev/null || true
     echo -e "${BLUE}╔════════════════════════════════════════════╗${NC}"
     echo -e "${BLUE}║${NC}     ${BOLD}Passbook Admin Console${NC}                 ${BLUE}║${NC}"
     echo -e "${BLUE}╚════════════════════════════════════════════╝${NC}"
@@ -100,20 +143,20 @@ show_header() {
     echo ""
 }
 
-# Show current data summary
+# Show current data summary (read-only).
 show_summary() {
     echo -e "${CYAN}Loading data...${NC}"
 
-    local balance_data=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+    local balance_data total_balance months_data
+    balance_data=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
         --key '{"PK": {"S": "BALANCE"}, "SK": {"S": "BALANCE"}}' \
-        --output json 2>/dev/null)
+        --output json 2>/dev/null || echo "")
+    total_balance=$(echo "$balance_data" | jq -r '.Item.total_balance.N // "0"')
 
-    local total_balance=$(echo "$balance_data" | jq -r '.Item.total_balance.N // "0"')
-
-    local months_data=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
+    months_data=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
         --filter-expression "begins_with(PK, :pk) AND SK = :sk" \
         --expression-attribute-values '{":pk": {"S": "MONTH#"}, ":sk": {"S": "SUMMARY"}}' \
-        --output json 2>/dev/null)
+        --output json 2>/dev/null || echo "")
 
     show_header
     echo -e "${GREEN}Total Balance: \$${total_balance}${NC}"
@@ -121,20 +164,20 @@ show_summary() {
     echo -e "${BOLD}Monthly History:${NC}"
     echo ""
 
-    local count=$(echo "$months_data" | jq -r '.Items | length' 2>/dev/null)
+    local count
+    count=$(echo "$months_data" | jq -r '.Items | length' 2>/dev/null || echo "0")
     if [ -z "$count" ] || [ "$count" = "0" ]; then
         echo "  No months found"
     else
-        # Print table header
         printf "${BOLD}  %-10s │ %10s │ %10s │ %10s │ %10s │ %10s${NC}\n" \
             "Month" "Starting" "Allowance" "Expenses" "Ending" "Saved"
         echo "  ───────────┼────────────┼────────────┼────────────┼────────────┼────────────"
 
-        # Print each month row
         echo "$months_data" | jq -r '.Items | sort_by(.month.S) | reverse | .[] |
             "\(.month.S)|\(.starting_balance.N)|\(.allowance_added.N)|\(.total_expenses.N)|\(.ending_balance.N)"' 2>/dev/null | \
         while IFS='|' read -r month start allow exp ending; do
-            saved=$(calc "$allow - $exp")
+            local saved
+            saved=$(calc "$ending - $start")
             printf "  %-10s │ %10s │ %10s │ %10s │ %10s │ ${GREEN}%10s${NC}\n" \
                 "$month" "\$$start" "+\$$allow" "-\$$exp" "\$$ending" "\$$saved"
         done
@@ -142,7 +185,9 @@ show_summary() {
     echo ""
 }
 
-# Prompt for input with validation
+# Prompt for input with validation. printf -v assigns WITHOUT evaluating the
+# input (so an apostrophe in a description can't break anything); read -r
+# keeps backslashes literal.
 prompt() {
     local message="$1"
     local var_name="$2"
@@ -153,13 +198,9 @@ prompt() {
     else
         echo -ne "${YELLOW}$message${NC}: "
     fi
+    local input
     read -r input
 
-    # printf -v assigns WITHOUT evaluating the input. The previous
-    # `eval "$var_name='$input'"` choked on any apostrophe (eval:
-    # unexpected EOF — caught live with the description "Tio's") and
-    # would execute shell code embedded in the input. read -r keeps
-    # backslashes literal for the same reason.
     if [ -z "$input" ] && [ -n "$default" ]; then
         printf -v "$var_name" '%s' "$default"
     else
@@ -167,129 +208,47 @@ prompt() {
     fi
 }
 
-# Recalculate total balance from all months
-recalc_balance() {
-    local tmpdir=$(mktemp -d)
-    local all_items="$tmpdir/items.json"
-    echo "[]" > "$all_items"
-
-    local next_token=""
-    local page=0
-    while :; do
-        page=$((page + 1))
-        local page_json
-        if [ -z "$next_token" ]; then
-            page_json=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
-                --filter-expression "begins_with(PK, :pk) AND SK = :sk" \
-                --expression-attribute-values '{":pk": {"S": "MONTH#"}, ":sk": {"S": "SUMMARY"}}' \
-                --output json 2>/dev/null)
-        else
-            page_json=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
-                --filter-expression "begins_with(PK, :pk) AND SK = :sk" \
-                --expression-attribute-values '{":pk": {"S": "MONTH#"}, ":sk": {"S": "SUMMARY"}}' \
-                --starting-token "$next_token" --output json 2>/dev/null)
-        fi
-        jq -s '.[0] + .[1].Items' "$all_items" <(echo "$page_json") > "$all_items.new"
-        mv "$all_items.new" "$all_items"
-        next_token=$(echo "$page_json" | jq -r '.NextToken // empty')
-        [ -z "$next_token" ] && break
-    done
-
-    # Equals sum(ending-starting) under the ledger invariant ending = starting + allowance - expenses;
-    # allowance-expenses is used because it is robust to a broken carry chain.
-    local total=$(jq -r '[.[] | ((.allowance_added.N // "0") | tonumber) - ((.total_expenses.N // "0") | tonumber)] | add // 0' "$all_items")
-    rm -rf "$tmpdir"
-
-    aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
-        \"PK\": {\"S\": \"BALANCE\"},
-        \"SK\": {\"S\": \"BALANCE\"},
-        \"total_balance\": {\"N\": \"$total\"},
-        \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
-    }"
-
-    echo "  Total balance recalculated: \$$total"
+# Pause and wait for key
+pause() {
+    echo ""
+    echo -ne "${CYAN}Press Enter to continue...${NC}"
+    read -r _
 }
 
-# Add a new month
+# Add/Update a month — delegates to add-data.sh `month`.
 action_add_month() {
     show_header
     echo -e "${BOLD}Add/Update Month Summary${NC}"
     echo "─────────────────────────────────────────────"
     echo ""
 
-    local current_month=$(date +%Y-%m)
+    local current_month month allowance expenses
+    current_month=$(date +%Y-%m)
     prompt "Month (YYYY-MM)" month "$current_month"
     prompt "Allowance added" allowance "100"
     prompt "Total expenses" expenses "0"
 
-    # Auto-calculate starting balance from previous month
-    local year=${month%-*}
-    local mon=${month#*-}
-    mon=$((10#$mon - 1))
-    if [ "$mon" -eq 0 ]; then
-        mon=12
-        year=$((year - 1))
-    fi
-    local prev_month=$(printf "%04d-%02d" "$year" "$mon")
-
-    local prev_data=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
-        --key "{\"PK\": {\"S\": \"MONTH#$prev_month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
-        --output json 2>/dev/null)
-    local starting_balance=$(echo "$prev_data" | jq -r '.Item.ending_balance.N // "0"')
-
-    if [ -z "$starting_balance" ] || [ "$starting_balance" = "null" ]; then
-        starting_balance="0"
-    fi
-
-    local ending_balance=$(calc "$starting_balance + $allowance - $expenses")
-
     echo ""
-    echo -e "${CYAN}Creating month summary...${NC}"
-    echo "  Starting: \$$starting_balance (from $prev_month)"
-    echo "  Allowance: +\$$allowance"
-    echo "  Expenses: -\$$expenses"
-    echo "  Ending: \$$ending_balance"
-
-    aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
-        \"PK\": {\"S\": \"MONTH#$month\"},
-        \"SK\": {\"S\": \"SUMMARY\"},
-        \"month\": {\"S\": \"$month\"},
-        \"starting_balance\": {\"N\": \"$starting_balance\"},
-        \"allowance_added\": {\"N\": \"$allowance\"},
-        \"total_expenses\": {\"N\": \"$expenses\"},
-        \"ending_balance\": {\"N\": \"$ending_balance\"},
-        \"created_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"},
-        \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
-    }"
-
-    # If expenses > 0, create an expense record so it shows in the frontend
-    if num_gt "$expenses" 0; then
-        local expense_id="EXP#$(date +%s)000000000#$(head -c 4 /dev/urandom | xxd -p)"
-        echo "  Creating expense record for \$$expenses..."
-        aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
-            \"PK\": {\"S\": \"MONTH#$month\"},
-            \"SK\": {\"S\": \"$expense_id\"},
-            \"amount\": {\"N\": \"$expenses\"},
-            \"description\": {\"S\": \"Total Expenses\"},
-            \"created_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
-        }"
+    # add-data.sh validates, refuses to clobber a month that has expenses
+    # (offering funds instead), recomputes later months' carry chain, and
+    # recalculates the total balance.
+    if run_add_data month "$month" "$allowance" "$expenses"; then
+        echo -e "${GREEN}✓ Month $month added/updated${NC}"
+    else
+        echo -e "${RED}✗ Failed to add/update month $month (see message above)${NC}"
     fi
-
-    # Recalculate total balance
-    recalc_balance
-
-    echo -e "${GREEN}✓ Month $month added/updated${NC}"
     pause
 }
 
-# Add an expense
+# Add an expense — delegates to add-data.sh `expense`.
 action_add_expense() {
     show_header
     echo -e "${BOLD}Add Expense${NC}"
     echo "─────────────────────────────────────────────"
     echo ""
 
-    local current_month=$(date +%Y-%m)
+    local current_month month amount description
+    current_month=$(date +%Y-%m)
     prompt "Month (YYYY-MM)" month "$current_month"
     prompt "Amount" amount ""
     prompt "Description" description ""
@@ -301,94 +260,23 @@ action_add_expense() {
     fi
 
     echo ""
-    echo -e "${CYAN}Adding expense...${NC}"
-
-    # Check if month exists, create if not
-    local month_data=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
-        --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
-        --output json 2>/dev/null)
-
-    local month_exists=$(echo "$month_data" | jq -r '.Item.month.S // empty')
-
-    if [ -z "$month_exists" ]; then
-        echo "  Month $month doesn't exist, creating it with \$0 allowance..."
-        aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
-            \"PK\": {\"S\": \"MONTH#$month\"},
-            \"SK\": {\"S\": \"SUMMARY\"},
-            \"month\": {\"S\": \"$month\"},
-            \"starting_balance\": {\"N\": \"0\"},
-            \"allowance_added\": {\"N\": \"0\"},
-            \"total_expenses\": {\"N\": \"0\"},
-            \"ending_balance\": {\"N\": \"0\"},
-            \"created_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"},
-            \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
-        }"
-        # Refresh month_data after creation
-        month_data=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
-            --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
-            --output json 2>/dev/null)
+    if run_add_data expense "$month" "$amount" "$description"; then
+        echo -e "${GREEN}✓ Expense added: \$$amount for '$description'${NC}"
+    else
+        echo -e "${RED}✗ Failed to add expense (see message above)${NC}"
     fi
-
-    # Add the expense
-    local timestamp=$(date +%s%N | cut -b1-13)
-    local random_id=$(head -c 8 /dev/urandom | xxd -p)
-    local expense_id="EXP#${timestamp}#${random_id}"
-
-    # jq-encode the free-text description: a quote or backslash in it
-    # would otherwise break (or worse, restructure) the --item JSON.
-    local desc_json=$(printf '%s' "$description" | jq -Rs .)
-
-    aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
-        \"PK\": {\"S\": \"MONTH#$month\"},
-        \"SK\": {\"S\": \"$expense_id\"},
-        \"amount\": {\"N\": \"$amount\"},
-        \"description\": {\"S\": $desc_json},
-        \"created_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
-    }"
-
-    # Update month summary
-    local current_expenses=$(echo "$month_data" | jq -r '.Item.total_expenses.N // "0"')
-    local current_ending=$(echo "$month_data" | jq -r '.Item.ending_balance.N // "0"')
-    local new_expenses=$(calc "$current_expenses + $amount")
-    local new_ending=$(calc "$current_ending - $amount")
-
-    aws dynamodb update-item --table-name "$TABLE_NAME" --region "$REGION" \
-        --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
-        --update-expression "SET total_expenses = :e, ending_balance = :b, updated_at = :u" \
-        --expression-attribute-values "{
-            \":e\": {\"N\": \"$new_expenses\"},
-            \":b\": {\"N\": \"$new_ending\"},
-            \":u\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
-        }"
-
-    # Update total balance
-    local balance_item=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
-        --key '{"PK": {"S": "BALANCE"}, "SK": {"S": "BALANCE"}}' \
-        --output json 2>/dev/null)
-    local current_total=$(echo "$balance_item" | jq -r '.Item.total_balance.N // "0"')
-    local new_total=$(calc "$current_total - $amount")
-
-    aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
-        \"PK\": {\"S\": \"BALANCE\"},
-        \"SK\": {\"S\": \"BALANCE\"},
-        \"total_balance\": {\"N\": \"$new_total\"},
-        \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
-    }"
-
-    echo "  Month expenses: \$$current_expenses → \$$new_expenses"
-    echo "  Total balance: \$$current_total → \$$new_total"
-    echo -e "${GREEN}✓ Expense added: \$$amount for '$description'${NC}"
     pause
 }
 
-# Add funds
+# Add funds — delegates to add-data.sh `funds`.
 action_add_funds() {
     show_header
     echo -e "${BOLD}Add Funds${NC}"
     echo "─────────────────────────────────────────────"
     echo ""
 
-    local current_month=$(date +%Y-%m)
+    local current_month month amount
+    current_month=$(date +%Y-%m)
     prompt "Month (YYYY-MM)" month "$current_month"
     prompt "Amount to add" amount ""
 
@@ -399,79 +287,53 @@ action_add_funds() {
     fi
 
     echo ""
-    echo -e "${CYAN}Adding funds...${NC}"
-
-    local month_data=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
-        --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
-        --output json 2>/dev/null)
-
-    if [ -z "$month_data" ] || [ "$month_data" = "{}" ] || [ "$(echo "$month_data" | jq -r '.Item // empty')" = "" ]; then
-        echo "  Month $month not found, creating it..."
-        aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
-            \"PK\": {\"S\": \"MONTH#$month\"},
-            \"SK\": {\"S\": \"SUMMARY\"},
-            \"month\": {\"S\": \"$month\"},
-            \"starting_balance\": {\"N\": \"0\"},
-            \"allowance_added\": {\"N\": \"$amount\"},
-            \"total_expenses\": {\"N\": \"0\"},
-            \"ending_balance\": {\"N\": \"$amount\"},
-            \"created_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"},
-            \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
-        }"
-        # Recalculate total balance after creating new month
-        recalc_balance
-        echo -e "${GREEN}✓ Created month $month with \$$amount${NC}"
-        pause
-        return
+    if run_add_data funds "$month" "$amount"; then
+        echo -e "${GREEN}✓ Added \$$amount to $month${NC}"
     else
-        local current_allowance=$(echo "$month_data" | jq -r '.Item.allowance_added.N // "0"')
-        local current_ending=$(echo "$month_data" | jq -r '.Item.ending_balance.N // "0"')
-        local new_allowance=$(calc "$current_allowance + $amount")
-        local new_ending=$(calc "$current_ending + $amount")
-
-        aws dynamodb update-item --table-name "$TABLE_NAME" --region "$REGION" \
-            --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
-            --update-expression "SET allowance_added = :a, ending_balance = :e, updated_at = :u" \
-            --expression-attribute-values "{
-                \":a\": {\"N\": \"$new_allowance\"},
-                \":e\": {\"N\": \"$new_ending\"},
-                \":u\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
-            }"
-
-        echo "  Allowance: \$$current_allowance → \$$new_allowance"
-        echo "  Ending balance: \$$current_ending → \$$new_ending"
+        echo -e "${RED}✗ Failed to add funds (see message above)${NC}"
     fi
-
-    # Update total balance
-    local balance_item=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
-        --key '{"PK": {"S": "BALANCE"}, "SK": {"S": "BALANCE"}}' \
-        --output json 2>/dev/null)
-    local current_total=$(echo "$balance_item" | jq -r '.Item.total_balance.N // "0"')
-    local new_total=$(calc "$current_total + $amount")
-
-    aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
-        \"PK\": {\"S\": \"BALANCE\"},
-        \"SK\": {\"S\": \"BALANCE\"},
-        \"total_balance\": {\"N\": \"$new_total\"},
-        \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
-    }"
-
-    echo "  Total balance: \$$current_total → \$$new_total"
-    echo -e "${GREEN}✓ Added \$$amount to $month${NC}"
     pause
 }
 
-# Set total balance directly
+# Remove funds — delegates to add-data.sh `rmfunds`.
+action_remove_funds() {
+    show_header
+    echo -e "${BOLD}Remove Funds${NC}"
+    echo "─────────────────────────────────────────────"
+    echo ""
+
+    local current_month month amount
+    current_month=$(date +%Y-%m)
+    prompt "Month (YYYY-MM)" month "$current_month"
+    prompt "Amount to remove" amount ""
+
+    if [ -z "$amount" ]; then
+        echo -e "${RED}Error: Amount is required${NC}"
+        pause
+        return
+    fi
+
+    echo ""
+    if run_add_data rmfunds "$month" "$amount"; then
+        echo -e "${GREEN}✓ Removed \$$amount from $month${NC}"
+    else
+        echo -e "${RED}✗ Failed to remove funds (see message above)${NC}"
+    fi
+    pause
+}
+
+# Set total balance — delegates to add-data.sh `balance`.
 action_set_balance() {
     show_header
     echo -e "${BOLD}Set Total Balance${NC}"
     echo "─────────────────────────────────────────────"
     echo ""
 
-    local balance_item=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+    local balance_item current_total new_balance
+    balance_item=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
         --key '{"PK": {"S": "BALANCE"}, "SK": {"S": "BALANCE"}}' \
-        --output json 2>/dev/null)
-    local current_total=$(echo "$balance_item" | jq -r '.Item.total_balance.N // "0"')
+        --output json 2>/dev/null || echo "")
+    current_total=$(echo "$balance_item" | jq -r '.Item.total_balance.N // "0"')
 
     echo -e "Current total balance: ${GREEN}\$$current_total${NC}"
     echo ""
@@ -483,39 +345,89 @@ action_set_balance() {
         return
     fi
 
-    aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
-        \"PK\": {\"S\": \"BALANCE\"},
-        \"SK\": {\"S\": \"BALANCE\"},
-        \"total_balance\": {\"N\": \"$new_balance\"},
-        \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
-    }"
-
-    echo -e "${GREEN}✓ Total balance set to \$$new_balance${NC}"
+    # The operator entered the value deliberately after seeing the current
+    # balance; pass --yes so add-data.sh doesn't prompt again.
+    if run_add_data --yes balance "$new_balance"; then
+        echo -e "${GREEN}✓ Total balance set to \$$new_balance${NC}"
+    else
+        echo -e "${RED}✗ Failed to set balance (see message above)${NC}"
+    fi
     pause
 }
 
-# View expenses for a month
+# Delete a month — TUI confirmation, then delegates to add-data.sh `rmmonth`.
+action_delete_month() {
+    show_header
+    echo -e "${BOLD}${RED}Delete Month${NC}"
+    echo "─────────────────────────────────────────────"
+    echo ""
+    echo -e "${YELLOW}Warning: This will delete the month summary and ALL expenses for that month.${NC}"
+    echo ""
+
+    local month
+    prompt "Month to delete (YYYY-MM)" month ""
+
+    if [ -z "$month" ]; then
+        echo -e "${RED}Error: Month is required${NC}"
+        pause
+        return
+    fi
+
+    local month_data
+    month_data=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+        --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
+        --output json 2>/dev/null || echo "")
+
+    if [ -z "$month_data" ] || [ "$(echo "$month_data" | jq -r '.Item // empty')" = "" ]; then
+        echo -e "${RED}Month $month not found${NC}"
+        pause
+        return
+    fi
+
+    local ending_balance confirm
+    ending_balance=$(echo "$month_data" | jq -r '.Item.ending_balance.N // "0"')
+    echo ""
+    echo "Month $month has ending balance: \$$ending_balance"
+    prompt "Type 'DELETE' to confirm" confirm ""
+
+    if [ "$confirm" = "DELETE" ]; then
+        # Already confirmed at the TUI; pass --yes so add-data.sh doesn't
+        # prompt again.
+        if run_add_data --yes rmmonth "$month"; then
+            echo -e "${GREEN}✓ Month $month deleted${NC}"
+        else
+            echo -e "${RED}✗ Failed to delete month (see message above)${NC}"
+        fi
+    else
+        echo "Cancelled."
+    fi
+    pause
+}
+
+# View expenses for a month (read-only).
 action_view_expenses() {
     show_header
     echo -e "${BOLD}View Month Expenses${NC}"
     echo "─────────────────────────────────────────────"
     echo ""
 
-    local current_month=$(date +%Y-%m)
+    local current_month month
+    current_month=$(date +%Y-%m)
     prompt "Month (YYYY-MM)" month "$current_month"
 
     echo ""
     echo -e "${CYAN}Loading expenses for $month...${NC}"
     echo ""
 
-    local expenses=$(aws dynamodb query --table-name "$TABLE_NAME" --region "$REGION" \
+    local expenses summary
+    expenses=$(aws dynamodb query --table-name "$TABLE_NAME" --region "$REGION" \
         --key-condition-expression "PK = :pk AND begins_with(SK, :sk)" \
         --expression-attribute-values "{\":pk\": {\"S\": \"MONTH#$month\"}, \":sk\": {\"S\": \"EXP#\"}}" \
-        --output json 2>/dev/null)
+        --output json 2>/dev/null || echo "")
 
-    local summary=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+    summary=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
         --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
-        --output json 2>/dev/null)
+        --output json 2>/dev/null || echo "")
 
     if [ -n "$summary" ] && [ "$summary" != "{}" ]; then
         echo -e "${BOLD}Month Summary:${NC}"
@@ -529,7 +441,8 @@ action_view_expenses() {
     echo -e "${BOLD}Expenses:${NC}"
     echo "─────────────────────────────────────────────"
 
-    local count=$(echo "$expenses" | jq -r '.Items | length')
+    local count
+    count=$(echo "$expenses" | jq -r '.Items | length' 2>/dev/null || echo "0")
     if [ "$count" = "0" ] || [ -z "$count" ]; then
         echo "  No expenses found for $month"
     else
@@ -540,6 +453,94 @@ action_view_expenses() {
     pause
 }
 
+# Export data — delegates to add-data.sh `export`.
+action_export_data() {
+    show_header
+    echo -e "${BOLD}Export Data${NC}"
+    echo "─────────────────────────────────────────────"
+    echo ""
+
+    local default_file output_file
+    default_file="passbook-backup-$(date +%Y%m%d-%H%M%S).json"
+    prompt "Output file" output_file "$default_file"
+
+    echo ""
+    if run_add_data export "$output_file"; then
+        echo -e "${GREEN}✓ Export complete${NC}"
+    else
+        echo -e "${RED}✗ Export failed (see message above)${NC}"
+    fi
+    pause
+}
+
+# Import data — TUI confirmation (IMPORT), then delegates to add-data.sh.
+action_import_data() {
+    show_header
+    echo -e "${BOLD}${YELLOW}Import Data${NC}"
+    echo "─────────────────────────────────────────────"
+    echo ""
+    echo -e "${RED}Warning: This will ADD items to the database.${NC}"
+    echo -e "${RED}Existing items with the same keys will be OVERWRITTEN.${NC}"
+    echo ""
+
+    local input_file
+    prompt "Input file" input_file ""
+
+    if [ -z "$input_file" ]; then
+        echo -e "${RED}Error: File path is required${NC}"
+        pause
+        return
+    fi
+    if [ ! -f "$input_file" ]; then
+        echo -e "${RED}Error: File not found: $input_file${NC}"
+        pause
+        return
+    fi
+
+    local item_count
+    item_count=$(jq -r '.items | length' "$input_file" 2>/dev/null || echo "")
+    if [ -z "$item_count" ] || [ "$item_count" = "null" ]; then
+        echo -e "${RED}Error: Invalid backup file format${NC}"
+        pause
+        return
+    fi
+
+    echo ""
+    echo "File contains $item_count items"
+    echo ""
+    local confirm
+    prompt "Type 'IMPORT' to confirm" confirm ""
+
+    if [ "$confirm" != "IMPORT" ]; then
+        echo "Cancelled."
+        pause
+        return
+    fi
+
+    echo ""
+    # add-data.sh checks the backup's table_name against the target, requires
+    # a typed confirmation on mismatch, and offers a post-import recalc.
+    if run_add_data import "$input_file"; then
+        echo -e "${GREEN}✓ Import complete${NC}"
+    else
+        echo -e "${RED}✗ Import completed with errors (see message above)${NC}"
+    fi
+    pause
+}
+
+# Recalculate total balance — delegates to add-data.sh `recalc`.
+action_recalc() {
+    echo ""
+    if run_add_data recalc; then
+        echo -e "${GREEN}✓ Balance recalculated${NC}"
+    else
+        echo -e "${RED}✗ Recalc failed (see message above)${NC}"
+    fi
+    pause
+}
+
+# ---- Admin-only operations (PIN/sessions) — kept local ----------------------
+
 # Reset PIN
 action_reset_pin() {
     show_header
@@ -549,6 +550,7 @@ action_reset_pin() {
     echo -e "${YELLOW}Warning: This will delete the current PIN configuration.${NC}"
     echo "The user will need to set up a new PIN on next login."
     echo ""
+    local confirm
     prompt "Type 'RESET' to confirm" confirm ""
 
     if [ "$confirm" = "RESET" ]; then
@@ -568,24 +570,27 @@ action_clear_sessions() {
     echo "─────────────────────────────────────────────"
     echo ""
     echo "This will log out all active sessions."
+    local confirm
     prompt "Type 'YES' to confirm" confirm ""
 
     if [ "$confirm" = "YES" ]; then
         echo -e "${CYAN}Scanning for sessions...${NC}"
-        local sessions=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
+        local sessions count
+        sessions=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
             --filter-expression "begins_with(PK, :pk)" \
             --expression-attribute-values '{":pk": {"S": "SESSION#"}}' \
             --projection-expression "PK, SK" \
-            --output json 2>/dev/null)
+            --output json 2>/dev/null || echo "")
 
-        local count=$(echo "$sessions" | jq -r '.Items | length')
+        count=$(echo "$sessions" | jq -r '.Items | length' 2>/dev/null || echo "0")
         if [ "$count" = "0" ] || [ -z "$count" ]; then
             echo "No active sessions found."
         else
             echo "Deleting $count session(s)..."
-            echo "$sessions" | jq -c '.Items[]' | while read item; do
-                local pk=$(echo "$item" | jq -r '.PK.S')
-                local sk=$(echo "$item" | jq -r '.SK.S')
+            echo "$sessions" | jq -c '.Items[]' | while IFS= read -r item; do
+                local pk sk
+                pk=$(echo "$item" | jq -r '.PK.S')
+                sk=$(echo "$item" | jq -r '.SK.S')
                 aws dynamodb delete-item --table-name "$TABLE_NAME" --region "$REGION" \
                     --key "{\"PK\": {\"S\": \"$pk\"}, \"SK\": {\"S\": \"$sk\"}}"
             done
@@ -594,148 +599,6 @@ action_clear_sessions() {
     else
         echo "Cancelled."
     fi
-    pause
-}
-
-# Delete a month and all its expenses
-action_delete_month() {
-    show_header
-    echo -e "${BOLD}${RED}Delete Month${NC}"
-    echo "─────────────────────────────────────────────"
-    echo ""
-    echo -e "${YELLOW}Warning: This will delete the month summary and ALL expenses for that month.${NC}"
-    echo ""
-
-    prompt "Month to delete (YYYY-MM)" month ""
-
-    if [ -z "$month" ]; then
-        echo -e "${RED}Error: Month is required${NC}"
-        pause
-        return
-    fi
-
-    # Check if month exists
-    local month_data=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
-        --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
-        --output json 2>/dev/null)
-
-    if [ -z "$month_data" ] || [ "$(echo "$month_data" | jq -r '.Item // empty')" = "" ]; then
-        echo -e "${RED}Month $month not found${NC}"
-        pause
-        return
-    fi
-
-    local ending_balance=$(echo "$month_data" | jq -r '.Item.ending_balance.N // "0"')
-    echo ""
-    echo "Month $month has ending balance: \$$ending_balance"
-    prompt "Type 'DELETE' to confirm" confirm ""
-
-    if [ "$confirm" = "DELETE" ]; then
-        echo -e "${CYAN}Deleting month data...${NC}"
-
-        # Delete all expenses for this month
-        local expenses=$(aws dynamodb query --table-name "$TABLE_NAME" --region "$REGION" \
-            --key-condition-expression "PK = :pk" \
-            --expression-attribute-values "{\":pk\": {\"S\": \"MONTH#$month\"}}" \
-            --projection-expression "PK, SK" \
-            --output json 2>/dev/null)
-
-        local count=$(echo "$expenses" | jq -r '.Items | length')
-        echo "Deleting $count item(s)..."
-
-        echo "$expenses" | jq -c '.Items[]' | while read item; do
-            local pk=$(echo "$item" | jq -r '.PK.S')
-            local sk=$(echo "$item" | jq -r '.SK.S')
-            aws dynamodb delete-item --table-name "$TABLE_NAME" --region "$REGION" \
-                --key "{\"PK\": {\"S\": \"$pk\"}, \"SK\": {\"S\": \"$sk\"}}"
-        done
-
-        # Recalculate total balance
-        recalc_balance
-
-        echo -e "${GREEN}✓ Month $month deleted${NC}"
-    else
-        echo "Cancelled."
-    fi
-    pause
-}
-
-# Remove funds from a month
-action_remove_funds() {
-    show_header
-    echo -e "${BOLD}Remove Funds${NC}"
-    echo "─────────────────────────────────────────────"
-    echo ""
-
-    local current_month=$(date +%Y-%m)
-    prompt "Month (YYYY-MM)" month "$current_month"
-
-    # Get current month data
-    local month_data=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
-        --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
-        --output json 2>/dev/null)
-
-    if [ -z "$month_data" ] || [ "$(echo "$month_data" | jq -r '.Item // empty')" = "" ]; then
-        echo -e "${RED}Month $month not found${NC}"
-        pause
-        return
-    fi
-
-    local current_allowance=$(echo "$month_data" | jq -r '.Item.allowance_added.N // "0"')
-    local current_ending=$(echo "$month_data" | jq -r '.Item.ending_balance.N // "0"')
-
-    echo ""
-    echo -e "Current allowance: ${GREEN}\$$current_allowance${NC}"
-    echo -e "Current ending balance: ${GREEN}\$$current_ending${NC}"
-    echo ""
-    prompt "Amount to remove" amount ""
-
-    if [ -z "$amount" ]; then
-        echo -e "${RED}Error: Amount is required${NC}"
-        pause
-        return
-    fi
-
-    local new_allowance=$(calc "$current_allowance - $amount")
-    local new_ending=$(calc "$current_ending - $amount")
-
-    if num_gt 0 "$new_allowance"; then
-        echo -e "${RED}Error: Cannot remove more than current allowance (\$$current_allowance)${NC}"
-        pause
-        return
-    fi
-
-    echo ""
-    echo -e "${CYAN}Removing funds...${NC}"
-
-    aws dynamodb update-item --table-name "$TABLE_NAME" --region "$REGION" \
-        --key "{\"PK\": {\"S\": \"MONTH#$month\"}, \"SK\": {\"S\": \"SUMMARY\"}}" \
-        --update-expression "SET allowance_added = :a, ending_balance = :e, updated_at = :u" \
-        --expression-attribute-values "{
-            \":a\": {\"N\": \"$new_allowance\"},
-            \":e\": {\"N\": \"$new_ending\"},
-            \":u\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
-        }"
-
-    echo "  Allowance: \$$current_allowance → \$$new_allowance"
-    echo "  Ending balance: \$$current_ending → \$$new_ending"
-
-    # Update total balance
-    local balance_item=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
-        --key '{"PK": {"S": "BALANCE"}, "SK": {"S": "BALANCE"}}' \
-        --output json 2>/dev/null)
-    local current_total=$(echo "$balance_item" | jq -r '.Item.total_balance.N // "0"')
-    local new_total=$(calc "$current_total - $amount")
-
-    aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" --item "{
-        \"PK\": {\"S\": \"BALANCE\"},
-        \"SK\": {\"S\": \"BALANCE\"},
-        \"total_balance\": {\"N\": \"$new_total\"},
-        \"updated_at\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
-    }"
-
-    echo "  Total balance: \$$current_total → \$$new_total"
-    echo -e "${GREEN}✓ Removed \$$amount from $month${NC}"
     pause
 }
 
@@ -750,7 +613,8 @@ action_admin_menu() {
     echo "  b) Back to main menu"
     echo ""
     echo -ne "${YELLOW}Select option:${NC} "
-    read choice
+    local choice
+    read -r choice
 
     case "$choice" in
         1) action_reset_pin ;;
@@ -758,161 +622,6 @@ action_admin_menu() {
         b|B) return ;;
         *) echo -e "${RED}Invalid option${NC}"; sleep 1 ;;
     esac
-}
-
-# Export all data to JSON file
-action_export_data() {
-    show_header
-    echo -e "${BOLD}Export Data${NC}"
-    echo "─────────────────────────────────────────────"
-    echo ""
-
-    local default_file="passbook-backup-$(date +%Y%m%d-%H%M%S).json"
-    prompt "Output file" output_file "$default_file"
-
-    echo ""
-    echo -e "${CYAN}Exporting data (paginated)...${NC}"
-
-    # Paginate the scan so tables larger than a 1MB page aren't silently
-    # truncated. Filter out SESSION#/RATELIMIT# transient rows — those
-    # cannot be usefully restored. The CONFIG row (containing pin_hash)
-    # IS preserved so a full restore can authenticate; we set 0600 perms
-    # on the output and warn the user accordingly.
-    local tmpdir=$(mktemp -d)
-    local all_items="$tmpdir/items.json"
-    echo "[]" > "$all_items"
-    local next_token=""
-    local page=0 total=0
-    while :; do
-        page=$((page + 1))
-        local page_json
-        if [ -z "$next_token" ]; then
-            page_json=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" --output json 2>/dev/null || echo "")
-        else
-            page_json=$(aws dynamodb scan --table-name "$TABLE_NAME" --region "$REGION" \
-                --starting-token "$next_token" --output json 2>/dev/null || echo "")
-        fi
-        if [ -z "$page_json" ]; then
-            rm -rf "$tmpdir"
-            echo -e "${RED}Error: scan page $page returned empty result${NC}"
-            pause
-            return
-        fi
-        local page_count=$(echo "$page_json" | jq '.Count')
-        total=$((total + page_count))
-        jq -s '.[0] + .[1].Items' "$all_items" <(echo "$page_json") > "$all_items.new"
-        mv "$all_items.new" "$all_items"
-        next_token=$(echo "$page_json" | jq -r '.NextToken // empty')
-        [ -z "$next_token" ] && break
-    done
-
-    local filtered=$(jq '[.[] | select((.PK.S // "") | (startswith("SESSION#") or startswith("RATELIMIT#")) | not)]' "$all_items")
-    local kept=$(echo "$filtered" | jq 'length')
-    local skipped=$((total - kept))
-    rm -rf "$tmpdir"
-
-    umask 077
-    cat <<EOF | jq '.' > "$output_file"
-{
-  "export_info": {
-    "table_name": "$TABLE_NAME",
-    "region": "$REGION",
-    "exported_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-    "item_count": $kept,
-    "skipped_transient": $skipped,
-    "warning": "Contains CONFIG.pin_hash — treat this file as a credential."
-  },
-  "items": $filtered
-}
-EOF
-
-    echo -e "${GREEN}✓ Exported $kept items to $output_file${NC}"
-    echo -e "  Skipped $skipped transient SESSION/RATELIMIT rows."
-    echo -e "${YELLOW}NOTE: backup contains PIN hash. File mode is 600. Do not commit/share.${NC}"
-    pause
-}
-
-# Import data from JSON file
-action_import_data() {
-    show_header
-    echo -e "${BOLD}${YELLOW}Import Data${NC}"
-    echo "─────────────────────────────────────────────"
-    echo ""
-    echo -e "${RED}Warning: This will ADD items to the database.${NC}"
-    echo -e "${RED}Existing items with the same keys will be OVERWRITTEN.${NC}"
-    echo ""
-
-    prompt "Input file" input_file ""
-
-    if [ -z "$input_file" ]; then
-        echo -e "${RED}Error: File path is required${NC}"
-        pause
-        return
-    fi
-
-    if [ ! -f "$input_file" ]; then
-        echo -e "${RED}Error: File not found: $input_file${NC}"
-        pause
-        return
-    fi
-
-    # Validate JSON structure
-    local item_count=$(jq -r '.items | length' "$input_file" 2>/dev/null)
-    if [ -z "$item_count" ] || [ "$item_count" = "null" ]; then
-        echo -e "${RED}Error: Invalid backup file format${NC}"
-        pause
-        return
-    fi
-
-    echo ""
-    echo "File contains $item_count items"
-    echo ""
-    prompt "Type 'IMPORT' to confirm" confirm ""
-
-    if [ "$confirm" != "IMPORT" ]; then
-        echo "Cancelled."
-        pause
-        return
-    fi
-
-    echo ""
-    echo -e "${CYAN}Importing data...${NC}"
-
-    # Counter state in tmp files because the loop has to read from a pipe;
-    # plain shell variables don't survive the subshell. Process substitution
-    # plus file-based counters gives us accurate success/fail totals.
-    local tmpdir=$(mktemp -d)
-    echo 0 > "$tmpdir/success"
-    echo 0 > "$tmpdir/failed"
-
-    while IFS= read -r item; do
-        if aws dynamodb put-item --table-name "$TABLE_NAME" --region "$REGION" \
-            --item "$item" 2>/dev/null; then
-            echo $(( $(cat "$tmpdir/success") + 1 )) > "$tmpdir/success"
-        else
-            echo $(( $(cat "$tmpdir/failed") + 1 )) > "$tmpdir/failed"
-            echo -e "  ${RED}Failed:${NC} $(echo "$item" | jq -r '.PK.S + "/" + .SK.S')"
-        fi
-    done < <(jq -c '.items[]' "$input_file")
-
-    local s=$(cat "$tmpdir/success")
-    local f=$(cat "$tmpdir/failed")
-    rm -rf "$tmpdir"
-
-    if [ "$f" -gt 0 ]; then
-        echo -e "${RED}✗ Import complete with errors: $s succeeded, $f failed.${NC}"
-        echo -e "${RED}  Review the failures above before treating the table as restored.${NC}"
-    else
-        echo -e "${GREEN}✓ Import complete: $s items imported.${NC}"
-    fi
-    pause
-}
-
-# Pause and wait for key
-pause() {
-    echo ""
-    echo -ne "${CYAN}Press Enter to continue...${NC}"
-    read
 }
 
 # Main menu
@@ -930,7 +639,8 @@ main_menu() {
         echo "  0) Admin (PIN/Sessions)  q) Quit"
         echo ""
         echo -ne "${YELLOW}Select option:${NC} "
-        read choice
+        local choice
+        read -r choice
 
         case "$choice" in
             1) action_add_month ;;
@@ -942,10 +652,10 @@ main_menu() {
             7) action_view_expenses ;;
             8) action_export_data ;;
             9) action_import_data ;;
-            r|R) echo ""; recalc_balance; pause ;;
+            r|R) action_recalc ;;
             0) action_admin_menu ;;
             q|Q)
-                clear
+                clear 2>/dev/null || true
                 echo "Goodbye!"
                 exit 0
                 ;;

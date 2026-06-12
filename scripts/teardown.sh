@@ -148,23 +148,41 @@ if [[ -n "$BUCKET" ]]; then
     if [[ "$DRY_RUN" == "true" ]]; then
         echo "  [DRY-RUN] (would delete all object versions and delete-markers)"
     else
-        # Iterate pages — empty bucket if reasonably sized, otherwise
-        # paginate via --output text.
-        VERSIONS=$(aws s3api list-object-versions --bucket "$BUCKET" \
-            --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json 2>/dev/null || echo "")
-        if [[ -n "$VERSIONS" && "$VERSIONS" != "null" && "$VERSIONS" != '{"Objects":null}' ]]; then
-            echo "$VERSIONS" > /tmp/passbook-versions.json
-            aws s3api delete-objects --bucket "$BUCKET" --delete file:///tmp/passbook-versions.json > /dev/null
-            rm -f /tmp/passbook-versions.json
-        fi
-        MARKERS=$(aws s3api list-object-versions --bucket "$BUCKET" \
-            --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' --output json 2>/dev/null || echo "")
-        if [[ -n "$MARKERS" && "$MARKERS" != "null" && "$MARKERS" != '{"Objects":null}' ]]; then
-            echo "$MARKERS" > /tmp/passbook-markers.json
-            aws s3api delete-objects --bucket "$BUCKET" --delete file:///tmp/passbook-markers.json > /dev/null
-            rm -f /tmp/passbook-markers.json
-        fi
-        echo "  + bucket emptied"
+        # delete-objects accepts at most 1000 keys per call. Loop over both
+        # Versions and DeleteMarkers in 1000-key batches until the bucket is
+        # empty — the previous single-shot delete silently broke once the
+        # bucket held >1000 versions (live account had 43+ growing forever).
+        # Use mktemp for the batch payload, not a fixed /tmp path (collision /
+        # symlink-attack hardening; auto-cleaned by the EXIT trap below).
+        BATCH_FILE=$(mktemp)
+        trap 'rm -f "$BATCH_FILE"' EXIT
+
+        emptied=0
+        for SELECTOR in "Versions" "DeleteMarkers"; do
+            while :; do
+                # Pull up to 1000 keys for this selector.
+                BATCH=$(aws s3api list-object-versions --bucket "$BUCKET" \
+                    --max-items 1000 \
+                    --query "{Objects: ${SELECTOR}[].{Key:Key,VersionId:VersionId}}" \
+                    --output json 2>/dev/null || echo "")
+                # No more objects of this kind → move on.
+                if [[ -z "$BATCH" || "$BATCH" == "null" || "$BATCH" == '{"Objects":null}' ]]; then
+                    break
+                fi
+                # Guard against an empty Objects array (jq returns []).
+                count=$(echo "$BATCH" | jq -r '.Objects | length')
+                if [[ "$count" == "0" ]]; then
+                    break
+                fi
+                echo "$BATCH" > "$BATCH_FILE"
+                aws s3api delete-objects --bucket "$BUCKET" --delete "file://$BATCH_FILE" > /dev/null
+                emptied=$((emptied + count))
+                echo "  + deleted $count ${SELECTOR} (running total: $emptied)"
+            done
+        done
+        rm -f "$BATCH_FILE"
+        trap - EXIT
+        echo "  + bucket emptied ($emptied objects/markers removed)"
     fi
 fi
 

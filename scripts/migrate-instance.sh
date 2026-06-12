@@ -60,36 +60,24 @@ echo "[]" > "$ALL_ITEMS"
 echo 0 > "$FAIL_FILE"
 
 echo ""
-echo "Scanning source table (paginated)..."
-NEXT_TOKEN=""
-PAGE=0
-while :; do
-    PAGE=$((PAGE + 1))
-    if [[ -z "$NEXT_TOKEN" ]]; then
-        PAGE_JSON=$(aws dynamodb scan --table-name "$SOURCE" --region "$REGION" --output json)
-    else
-        PAGE_JSON=$(aws dynamodb scan --table-name "$SOURCE" --region "$REGION" \
-            --starting-token "$NEXT_TOKEN" --output json)
-    fi
-    PAGE_COUNT=$(echo "$PAGE_JSON" | jq '.Items | length')
-    echo "  Page $PAGE: $PAGE_COUNT items"
-
-    # Append this page's items into the running array
-    jq -s '.[0] + .[1].Items' "$ALL_ITEMS" <(echo "$PAGE_JSON") > "$ALL_ITEMS.new"
-    mv "$ALL_ITEMS.new" "$ALL_ITEMS"
-
-    # AWS CLI v2 emits NextToken (opaque base64) for pagination. Once
-    # absent, all pages have been read.
-    NEXT_TOKEN=$(echo "$PAGE_JSON" | jq -r '.NextToken // empty')
-    [[ -z "$NEXT_TOKEN" ]] && break
-done
+echo "Scanning source table..."
+# Let the AWS CLI handle pagination itself: a default scan aggregates every
+# page and emits the complete .Items array. The previous hand-rolled loop
+# read .NextToken — but a plain (non-paginated) `aws dynamodb scan` does NOT
+# emit NextToken, it emits LastEvaluatedKey, so that loop silently stopped
+# after the first 1MB page. Auto-pagination sidesteps the NextToken vs
+# LastEvaluatedKey mismatch entirely.
+SCAN_JSON=$(aws dynamodb scan --table-name "$SOURCE" --region "$REGION" --output json)
+echo "$SCAN_JSON" | jq '.Items' > "$ALL_ITEMS"
 
 TOTAL=$(jq 'length' "$ALL_ITEMS")
-SKIPPED=$(jq '[.[] | select((.PK.S // "") | (startswith("SESSION#") or startswith("RATELIMIT#")))] | length' "$ALL_ITEMS")
+# Skip transient auth state. Match the new "SESSION#"/"RATELIMIT#" prefixes
+# AND the legacy bare "RATELIMIT" PK (older instances used the unprefixed key).
+SKIPPED=$(jq '[.[] | select((.PK.S // "") as $pk | ($pk | startswith("SESSION#")) or ($pk | startswith("RATELIMIT#")) or ($pk == "RATELIMIT"))] | length' "$ALL_ITEMS")
 KEEP=$((TOTAL - SKIPPED))
 
 echo ""
-echo "Scan complete: $TOTAL items across $PAGE page(s) ($SKIPPED transient, will copy $KEEP)"
+echo "Scan complete: $TOTAL items ($SKIPPED transient, will copy $KEEP)"
 echo ""
 
 # Process substitution (not pipe-to-while) so the loop runs in the current
@@ -111,7 +99,7 @@ while IFS= read -r item; do
         echo $((FAILED + 1)) > "$FAIL_FILE"
         echo "  [$COUNT/$KEEP] FAILED: PK=$PK SK=$SK" >&2
     fi
-done < <(jq -c '.[] | select((.PK.S // "") | (startswith("SESSION#") or startswith("RATELIMIT#")) | not)' "$ALL_ITEMS")
+done < <(jq -c '.[] | select((.PK.S // "") as $pk | ($pk | startswith("SESSION#")) or ($pk | startswith("RATELIMIT#")) or ($pk == "RATELIMIT") | not)' "$ALL_ITEMS")
 
 FAILED=$(cat "$FAIL_FILE")
 echo ""
