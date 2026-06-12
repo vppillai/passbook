@@ -15,6 +15,19 @@ const defaultLabels = {
     funds_added_toast: 'Funds added!',
     spent_suffix: 'spent',
     carried_from: 'Carried from',
+    // Shown in the add-expense modal when the viewed month is not the current
+    // one (review H5). `{month}` is replaced at render time with the current
+    // month's display name. The phrasing is instance-divergent (e.g. an
+    // expense vs. a meal), so it routes through labels.
+    expense_added_to_hint: 'This will be added to {month}',
+
+    // Auth error messages shown on the PIN screen.
+    // `{n}` is replaced with the numeric attempts_remaining value.
+    auth_wrong_pin: 'Incorrect PIN — {n} attempts remaining',
+    // Shown when attempts_remaining is absent (i.e. already at the limit).
+    auth_wrong_pin_no_remaining: 'Incorrect PIN',
+    // Shown during a 429 lockout. `{time}` is replaced with "M:SS" countdown.
+    auth_too_many_attempts: 'Too many attempts — try again in {time}',
 };
 
 const overrides = (typeof window !== 'undefined' && window.PASSBOOK_LABELS) || {};

@@ -3,9 +3,9 @@
  *
  * Provides methods for all backend HTTP interactions including authentication,
  * expense management, month management, and balance queries. Uses session-token-based
- * authentication stored in sessionStorage, namespaced per instance so that
- * the kids and eatout deployments on the same vppillai.github.io origin
- * don't share or clobber each other's tokens.
+ * authentication stored in localStorage with an explicit expiry timestamp,
+ * namespaced per instance so that the kids and eatout deployments on the same
+ * vppillai.github.io origin don't share or clobber each other's tokens.
  *
  * @module api
  */
@@ -24,6 +24,23 @@ function detectInstance() {
 }
 const INSTANCE = detectInstance();
 const SESSION_KEY = `passbook_session_${INSTANCE}`;
+// Stored alongside the token: epoch-ms expiry. Mirrors the backend's 24h
+// session TTL so a stale token left in localStorage is treated as logged-out
+// on next launch without a server round trip.
+const SESSION_EXPIRY_KEY = `passbook_session_expiry_${INSTANCE}`;
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24h, matching backend TTL
+
+/**
+ * Rounds a dollar amount to whole cents. Float arithmetic on user-entered
+ * decimals (e.g. 0.1 + 0.2) leaves dust that, sent verbatim to the API,
+ * reintroduces the rounding drift the backend's roundCents fixed. Pin every
+ * amount to cents before it leaves the client.
+ * @param {number} amount
+ * @returns {number}
+ */
+export function roundCents(amount) {
+    return Math.round(amount * 100) / 100;
+}
 
 // Network request timeout. Without this, a flaky mobile connection makes
 // the spinner / disabled submit-button persist until the OS TCP timeout
@@ -31,12 +48,39 @@ const SESSION_KEY = `passbook_session_${INSTANCE}`;
 // to fail visibly rather than hang.
 const REQUEST_TIMEOUT_MS = 15000;
 
+// Auth endpoints that return structured error bodies on 401/429 rather than
+// meaning "your session has expired". Requests to these paths bypass the
+// generic 401→session-expired interception so callers receive the parsed
+// body (attempts_remaining, retry_after_seconds) instead of being bounced
+// to the login screen.
+const AUTH_ENDPOINTS = ['/api/auth/verify', '/api/auth/setup', '/api/auth/change'];
+
 class Api {
     constructor() {
         /** @type {string|null} Session token for authenticated requests.
-         *  Stored in sessionStorage (not localStorage) so it dies on tab
-         *  close, matching the explicit "Lock" UX. */
-        this.sessionToken = sessionStorage.getItem(SESSION_KEY) || null;
+         *  Stored in localStorage with an explicit expiry so a mobile PWA
+         *  that gets backgrounded/killed (which discards sessionStorage)
+         *  doesn't force a PIN re-entry on every open. The session is still
+         *  cleared explicitly by the Lock button, on 401, and once the
+         *  stored expiry passes. */
+        this.sessionToken = this.loadStoredToken();
+    }
+
+    /**
+     * Loads the token from localStorage iff a non-expired expiry timestamp
+     * accompanies it. Any expired or malformed session is cleared.
+     * @returns {string|null}
+     */
+    loadStoredToken() {
+        const token = localStorage.getItem(SESSION_KEY);
+        if (!token) return null;
+        const expiry = parseInt(localStorage.getItem(SESSION_EXPIRY_KEY) || '', 10);
+        if (!Number.isFinite(expiry) || Date.now() >= expiry) {
+            localStorage.removeItem(SESSION_KEY);
+            localStorage.removeItem(SESSION_EXPIRY_KEY);
+            return null;
+        }
+        return token;
     }
 
     /**
@@ -72,6 +116,12 @@ class Api {
             options.body = JSON.stringify(body);
         }
 
+        // Auth endpoints that return structured 401/429 bodies instead of
+        // meaning "session expired". These must bypass the generic 401
+        // interception so callers can surface "wrong PIN" / "too many
+        // attempts" rather than immediately showing the session-expired screen.
+        const isAuthEndpoint = AUTH_ENDPOINTS.some(p => endpoint.startsWith(p));
+
         let response;
         try {
             response = await fetch(`${API_BASE}${endpoint}`, options);
@@ -81,13 +131,6 @@ class Api {
                 throw new Error('Request timed out. Check your connection and try again.');
             }
             throw err;
-        }
-
-        // Handle unauthorized
-        if (response.status === 401) {
-            this.clearSession();
-            window.dispatchEvent(new CustomEvent('session-expired'));
-            throw new Error('Session expired');
         }
 
         // Parse defensively. The previous unconditional `response.json()`
@@ -106,6 +149,39 @@ class Api {
             }
         }
 
+        // Handle unauthorized: for auth endpoints, surface the structured body
+        // (wrong PIN carries attempts_remaining; we must NOT nuke the session).
+        // For all other endpoints, clear the session and fire session-expired.
+        if (response.status === 401) {
+            if (isAuthEndpoint) {
+                // Return the parsed body so callers can inspect success/error/
+                // attempts_remaining without triggering a session-expired flow.
+                const authErr = new Error((data && data.error) || 'Authentication failed');
+                authErr.status = 401;
+                authErr.responseData = data;
+                if (data && data.attempts_remaining !== undefined) {
+                    authErr.attempts_remaining = data.attempts_remaining;
+                }
+                throw authErr;
+            }
+            this.clearSession();
+            window.dispatchEvent(new CustomEvent('session-expired'));
+            throw new Error('Session expired');
+        }
+
+        // Handle rate-limiting: for auth endpoints, surface retry_after_seconds
+        // so the UI can show a live countdown. For other endpoints, fall through
+        // to the generic !response.ok handler below.
+        if (response.status === 429 && isAuthEndpoint) {
+            const retryAfter = (data && data.retry_after_seconds) ||
+                parseInt(response.headers.get('Retry-After') || '0', 10) || 0;
+            const authErr = new Error((data && data.error) || 'Too many attempts');
+            authErr.status = 429;
+            authErr.responseData = data;
+            authErr.retry_after_seconds = retryAfter;
+            throw authErr;
+        }
+
         if (!response.ok) {
             const msg = (data && data.error) || `Request failed (HTTP ${response.status})`;
             throw new Error(msg);
@@ -115,28 +191,35 @@ class Api {
     }
 
     /**
-     * Stores the session token in memory and per-instance sessionStorage.
+     * Stores the session token in memory and per-instance localStorage, with
+     * an expiry timestamp 24h out to mirror the backend session TTL.
      * @param {string} token - The session token returned from a successful PIN verification
      */
     setSession(token) {
         this.sessionToken = token;
-        sessionStorage.setItem(SESSION_KEY, token);
+        localStorage.setItem(SESSION_KEY, token);
+        localStorage.setItem(SESSION_EXPIRY_KEY, String(Date.now() + SESSION_TTL_MS));
     }
 
     /**
-     * Removes the session token from memory and per-instance sessionStorage,
-     * effectively logging out.
+     * Removes the session token (and its expiry) from memory and per-instance
+     * localStorage, effectively logging out.
      */
     clearSession() {
         this.sessionToken = null;
-        sessionStorage.removeItem(SESSION_KEY);
+        localStorage.removeItem(SESSION_KEY);
+        localStorage.removeItem(SESSION_EXPIRY_KEY);
     }
 
     /**
-     * Checks whether a session token exists (does not validate it with the server).
-     * @returns {boolean} True if a session token is present
+     * Checks whether a non-expired session token exists (does not validate it
+     * with the server). Re-reads the stored expiry so a session that lapsed
+     * while the tab sat idle is reported as absent.
+     * @returns {boolean} True if a valid session token is present
      */
     hasSession() {
+        if (!this.sessionToken) return false;
+        this.sessionToken = this.loadStoredToken();
         return !!this.sessionToken;
     }
 
@@ -260,7 +343,7 @@ class Api {
     async addExpense(amount, description) {
         const now = new Date();
         const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-        return this.request('POST', '/api/expense', { amount, description, month });
+        return this.request('POST', '/api/expense', { amount: roundCents(amount), description, month });
     }
 
     /**

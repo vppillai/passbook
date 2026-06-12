@@ -9,6 +9,7 @@
  */
 
 import { labels } from './labels.js';
+import { roundCents } from './api.js';
 
 /** Full month names indexed 0-11 for converting "YYYY-MM" keys to display strings */
 const MONTHS = [
@@ -105,17 +106,66 @@ export function showScreen(screenId) {
     document.getElementById(screenId).classList.remove('hidden');
 }
 
+// Remembers the element that had focus before each modal opened, keyed by
+// modal id, so focus can return to the triggering control on close (a11y M3).
+const modalReturnFocus = new Map();
+
 export function showModal(modalId) {
-    document.getElementById(modalId).classList.remove('hidden');
+    const modal = document.getElementById(modalId);
+    // Capture the trigger so focus can be restored on close.
+    const active = document.activeElement;
+    if (active && active !== document.body) modalReturnFocus.set(modalId, active);
+    modal.classList.remove('hidden');
     document.body.style.overflow = 'hidden';
+    // Move focus into the modal: first focusable control, else the dialog.
+    const focusable = modal.querySelector(
+        'input, select, textarea, button, [tabindex]:not([tabindex="-1"])');
+    if (focusable) {
+        focusable.focus();
+    } else {
+        modal.setAttribute('tabindex', '-1');
+        modal.focus();
+    }
 }
 
 export function hideModal(modalId) {
     document.getElementById(modalId).classList.add('hidden');
     document.body.style.overflow = '';
+    // Return focus to whatever opened the modal so keyboard users aren't
+    // dumped back at the top of the document.
+    const trigger = modalReturnFocus.get(modalId);
+    if (trigger && document.contains(trigger)) {
+        trigger.focus();
+    }
+    modalReturnFocus.delete(modalId);
 }
 
+/**
+ * Closes a modal AND clears its transient state: resets the contained form
+ * (if any) and hides its error banner. Centralizes the cleanup that Cancel
+ * previously did so backdrop/Escape dismissals don't leave a stale error
+ * banner or half-typed form on the next open (review F6).
+ *
+ * The error element follows the convention `<modal-id-without -modal>-error`,
+ * but several modals deviate, so the error id is resolved by querying the
+ * modal for its `.error` child.
+ * @param {string} modalId
+ */
+export function closeModal(modalId) {
+    const modal = document.getElementById(modalId);
+    hideModal(modalId);
+    const form = modal.querySelector('form');
+    if (form) form.reset();
+    const error = modal.querySelector('.error');
+    if (error) error.classList.add('hidden');
+}
+
+// hideMenu animates the slide-out over 300ms then hides it. showMenu must
+// cancel any in-flight hide timer, otherwise a close→quick-reopen leaves the
+// stale timeout running and it hides the freshly-opened menu (review F4).
+let menuHideTimeout;
 export function showMenu() {
+    clearTimeout(menuHideTimeout);
     document.getElementById('menu-overlay').classList.remove('hidden');
     const menu = document.getElementById('history-menu');
     menu.classList.remove('hidden');
@@ -127,7 +177,8 @@ export function showMenu() {
 export function hideMenu() {
     const menu = document.getElementById('history-menu');
     menu.classList.remove('visible');
-    setTimeout(() => {
+    clearTimeout(menuHideTimeout);
+    menuHideTimeout = setTimeout(() => {
         menu.classList.add('hidden');
         document.getElementById('menu-overlay').classList.add('hidden');
     }, 300);
@@ -166,6 +217,9 @@ export function updatePinDisplay(containerId, length) {
         dot.classList.toggle('filled', i < length);
         dot.classList.remove('error');
     });
+    // The dots are decorative; the aria-live region announces the running
+    // count so screen-reader users get feedback as they type the PIN (a11y).
+    container.setAttribute('aria-label', `${length} ${length === 1 ? 'digit' : 'digits'} entered`);
 }
 
 export function showPinError(containerId) {
@@ -327,7 +381,18 @@ export function showConfirm({ title, body, confirmText = 'Confirm', cancelText =
         confirmBtn.parentNode.replaceChild(newConfirm, confirmBtn);
         cancelBtn.parentNode.replaceChild(newCancel, cancelBtn);
 
+        // showConfirm owns the confirm-modal's Escape handling itself, so the
+        // promise ALWAYS resolves on dismissal (review F1). Without this, an
+        // Escape that closed the modal via the global app.js handler left the
+        // promise pending forever — the caller's in-flight `deleting` guard
+        // stayed true and the delete button went dead. The global handler now
+        // skips #confirm-modal precisely because this owns it.
+        function onKeydown(e) {
+            if (e.key === 'Escape') close(false);
+        }
+
         function close(result) {
+            document.removeEventListener('keydown', onKeydown, true);
             hideModal('confirm-modal');
             resolve(result);
         }
@@ -335,6 +400,9 @@ export function showConfirm({ title, body, confirmText = 'Confirm', cancelText =
         newCancel.addEventListener('click', () => close(false));
         modal.querySelector('.modal-backdrop').addEventListener(
             'click', () => close(false), { once: true });
+        // Capture phase so this fires before (and instead of) the global
+        // Escape handler, which is bubble-phase and skips #confirm-modal.
+        document.addEventListener('keydown', onKeydown, true);
 
         showModal('confirm-modal');
         newConfirm.focus();
@@ -360,21 +428,22 @@ export function renderMonthsList(months, currentMonth, onSelect, nextCursor = nu
     }
 
     if (nextCursor && onLoadMore) {
-        const loadMoreItem = document.createElement('li');
-        loadMoreItem.id = 'load-more-months';
-        loadMoreItem.className = 'month-item load-more-item';
-        const span = document.createElement('span');
-        span.textContent = 'Load More...';
-        loadMoreItem.appendChild(span);
-        loadMoreItem.addEventListener('click', () => onLoadMore(nextCursor));
-        container.appendChild(loadMoreItem);
+        container.appendChild(buildLoadMoreMonthsItem(() => onLoadMore(nextCursor)));
     }
 }
 
 export function buildMonthRow(month, currentMonth, onSelect) {
+    // The selectable row is a real <button> (inside a list <li>) so it is
+    // keyboard- and screen-reader-accessible — Enter/Space activate it and
+    // it's announced as a button, unlike the previous click-only <li> (a11y).
     const li = document.createElement('li');
-    li.className = 'month-item' + (month.month === currentMonth ? ' active' : '');
-    li.setAttribute('data-month', month.month);
+    li.className = 'month-row';
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'month-item' + (month.month === currentMonth ? ' active' : '');
+    btn.setAttribute('data-month', month.month);
+    if (month.month === currentMonth) btn.setAttribute('aria-current', 'true');
 
     const nameEl = document.createElement('span');
     nameEl.className = 'month-name';
@@ -385,13 +454,34 @@ export function buildMonthRow(month, currentMonth, onSelect) {
     balanceEl.className = 'month-balance' + (saved < 0 ? ' balance-negative' : '');
     balanceEl.textContent = `${saved > 0 ? '+' : ''}${formatCurrency(month.monthly_saved)}`;
 
-    li.appendChild(nameEl);
-    li.appendChild(balanceEl);
+    btn.appendChild(nameEl);
+    btn.appendChild(balanceEl);
     if (typeof onSelect === 'function') {
-        li.addEventListener('click', () => onSelect(month.month));
+        btn.addEventListener('click', () => onSelect(month.month));
     }
+    li.appendChild(btn);
     return li;
 }
+
+/**
+ * Builds the "Load More" list item as a real <button> for keyboard/SR access.
+ * @param {Function} onClick - invoked when activated
+ * @returns {HTMLLIElement}
+ */
+function buildLoadMoreMonthsItem(onClick) {
+    const li = document.createElement('li');
+    li.className = 'month-row';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'load-more-months';
+    btn.className = 'month-item load-more-item';
+    btn.textContent = 'Load More';
+    btn.addEventListener('click', onClick);
+    li.appendChild(btn);
+    return li;
+}
+
+export { buildLoadMoreMonthsItem };
 
 export function populateEditExpenseModal(amount, description) {
     document.getElementById('edit-expense-amount').value = amount;
@@ -409,27 +499,32 @@ function formatPrevMonthName(monthKey) {
 }
 
 export function updateDashboard(data) {
+    clearDashboardLoading();
     // Update month title
     document.getElementById('month-title').textContent = formatMonthName(data.month);
 
-    // Update balances - show this month's savings (allowance - expenses)
+    // Update balances - show this month's savings (allowance - expenses).
+    // Round to cents BEFORE the sign checks: float dust (e.g. allowance
+    // 100.00 - expenses 100.0000001 = -1e-7) would otherwise paint a green
+    // $0.00 red, or flip a "+"/"-" prefix on a true zero (review F5).
     const monthlySaved = data.summary
-        ? (data.summary.allowance_added || 0) - (data.summary.total_expenses || 0)
+        ? roundCents((data.summary.allowance_added || 0) - (data.summary.total_expenses || 0))
         : 0;
     const monthBalanceEl = document.getElementById('month-balance');
     monthBalanceEl.textContent = `${monthlySaved > 0 ? '+' : ''}${formatCurrency(monthlySaved)}`;
     monthBalanceEl.classList.toggle('balance-negative', monthlySaved < 0);
 
+    const totalBalance = roundCents(data.total_balance || 0);
     const totalBalanceEl = document.getElementById('total-balance');
-    totalBalanceEl.textContent = formatCurrency(data.total_balance);
-    totalBalanceEl.classList.toggle('balance-negative', data.total_balance < 0);
+    totalBalanceEl.textContent = formatCurrency(totalBalance);
+    totalBalanceEl.classList.toggle('balance-negative', totalBalance < 0);
 
     // Balance carried in from the previous month, positive or negative.
     // Without this chip a carried deficit is invisible: "This Month" can
     // read green while the real position (the hero) is negative, and
     // nothing explains the gap between the two numbers.
     const carryChip = document.getElementById('carryover-chip');
-    const carried = data.summary ? (data.summary.starting_balance || 0) : 0;
+    const carried = data.summary ? roundCents(data.summary.starting_balance || 0) : 0;
     if (Math.abs(carried) >= 0.005) {
         carryChip.querySelector('.chip-label').textContent =
             `${labels.carried_from} ${formatPrevMonthName(data.month)}`;
@@ -467,3 +562,92 @@ export function showEmptyState() {
     empty.textContent = 'No entries yet. Open the menu to create a new month.';
     list.appendChild(empty);
 }
+
+/**
+ * Puts the dashboard into a loading/skeleton state shown after auth while the
+ * first data load is in flight (review F3). Replaces the believable "$0.00"
+ * dashboard — which previously rendered before any data arrived and was
+ * indistinguishable from a real empty account — with placeholder text and a
+ * `.loading` class hook the CSS can shimmer.
+ */
+export function showDashboardLoading() {
+    document.getElementById('month-title').textContent = ' ';
+    document.getElementById('carryover-chip').classList.add('hidden');
+    const monthBalanceEl = document.getElementById('month-balance');
+    monthBalanceEl.textContent = ' ';
+    monthBalanceEl.classList.remove('balance-negative');
+    monthBalanceEl.classList.add('loading-placeholder');
+    const totalBalanceEl = document.getElementById('total-balance');
+    totalBalanceEl.textContent = ' ';
+    totalBalanceEl.classList.remove('balance-negative');
+    totalBalanceEl.classList.add('loading-placeholder');
+    document.getElementById('expenses-total').textContent = ' ';
+    const list = document.getElementById('expenses-list');
+    list.replaceChildren();
+    const loading = document.createElement('p');
+    loading.className = 'no-expenses';
+    loading.textContent = 'Loading…';
+    list.appendChild(loading);
+}
+
+// Clears the loading-placeholder hooks once real data (or an error) lands.
+function clearDashboardLoading() {
+    document.getElementById('total-balance').classList.remove('loading-placeholder');
+    document.getElementById('month-balance').classList.remove('loading-placeholder');
+}
+
+/**
+ * Renders a visible error in the expense area with a Retry button, used when
+ * the initial dashboard load fails (review F3). Without this, a failed load
+ * left a believable $0.00 dashboard with no indication anything went wrong.
+ * @param {Function} onRetry - invoked when the Retry button is activated
+ */
+export function showDashboardError(onRetry) {
+    clearDashboardLoading();
+    document.getElementById('month-title').textContent = 'Couldn’t load';
+    document.getElementById('total-balance').textContent = '—';
+    document.getElementById('month-balance').textContent = '—';
+    document.getElementById('expenses-total').textContent = '';
+    document.getElementById('carryover-chip').classList.add('hidden');
+    const list = document.getElementById('expenses-list');
+    list.replaceChildren();
+    const wrap = document.createElement('div');
+    wrap.className = 'dashboard-error';
+    const msg = document.createElement('p');
+    msg.className = 'no-expenses';
+    msg.textContent = 'Couldn’t load your data. Check your connection.';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn btn-secondary btn-full';
+    retry.textContent = 'Retry';
+    if (typeof onRetry === 'function') retry.addEventListener('click', onRetry);
+    wrap.appendChild(msg);
+    wrap.appendChild(retry);
+    list.appendChild(wrap);
+}
+
+/**
+ * Shows or hides the add-expense modal hint that an expense added while
+ * viewing a past month will land in the current month (review H5). The hint
+ * text routes through labels (instance-divergent) with `{month}` replaced by
+ * the current month's display name.
+ * @param {string|null} currentDisplayMonth - "YYYY-MM" key of the live month,
+ *   or null to clear the hint.
+ * @param {boolean} show - whether to show the hint
+ */
+export function setExpenseMonthHint(currentDisplayMonth, show) {
+    const hint = document.getElementById('expense-month-hint');
+    if (!hint) return;
+    if (show && currentDisplayMonth) {
+        hint.textContent = labels.expense_added_to_hint.replace(
+            '{month}', formatMonthName(currentDisplayMonth));
+        hint.classList.remove('hidden');
+    } else {
+        hint.textContent = '';
+        hint.classList.add('hidden');
+    }
+}
+
+// Re-exported so updateDashboard callers can clear the loading hooks; called
+// from updateDashboard itself below as well.
+export { clearDashboardLoading };
