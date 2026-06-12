@@ -84,11 +84,52 @@ class App {
      * context (file://), and a failed registration never blocks the app.
      * The SW path is RELATIVE so it works under the GitHub Pages subpath
      * (/passbook/<instance>/sw.js with scope /passbook/<instance>/).
+     *
+     * Fast-update flow (audit MEDIUM-1): registration.update() is called on
+     * every page load and on visibilitychange→visible (PWA resume), throttled
+     * to once per minute.  When a new SW activates and claims the page the
+     * 'controllerchange' event fires; we reload ONCE (guarded by `refreshing`)
+     * so the user gets fresh assets immediately rather than waiting up to ~24 h
+     * for the browser's background-update heuristic.
      */
     registerServiceWorker() {
         if (!('serviceWorker' in navigator)) return;
+
+        // Snapshot whether a controller existed before registration.  The
+        // controllerchange handler uses this to skip a reload on first install
+        // (where the controller goes from null → SW for the first time).
+        const hadController = !!navigator.serviceWorker.controller;
+
+        // Guard: reload at most once per controllerchange event to prevent loops.
+        let refreshing = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (refreshing || !hadController) return;
+            refreshing = true;
+            window.location.reload();
+        });
+
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('sw.js').catch((err) => {
+            navigator.serviceWorker.register('sw.js').then((registration) => {
+                // If a waiting SW already exists (rare with skipWaiting, but
+                // possible on a slow activate), nudge it to skip waiting.
+                if (registration.waiting) {
+                    registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+                }
+
+                // Poll for updates on load.
+                registration.update().catch(() => {});
+
+                // Poll for updates on PWA resume (visibilitychange → visible),
+                // throttled to at most once per minute.
+                let lastUpdateCheck = Date.now();
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState !== 'visible') return;
+                    const now = Date.now();
+                    if (now - lastUpdateCheck < 60_000) return;
+                    lastUpdateCheck = now;
+                    registration.update().catch(() => {});
+                });
+            }).catch((err) => {
                 console.warn('Service worker registration failed:', err);
             });
         });

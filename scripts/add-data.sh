@@ -228,16 +228,20 @@ preflight() {
 # ---- Instance settings (CarryOverBalance / AllowOverspending) ---------------
 # These are CloudFormation stack PARAMETERS (not stored in DynamoDB), mirrored
 # into the Lambda's env. Read them once so the scripts honor the same carry /
-# overspend behavior the live app does. Defaults match template.yaml
-# (CarryOverBalance=true, AllowOverspending=false) when the stack can't be
-# read (e.g. table restored without its stack).
+# overspend behavior the live app does. Fails closed: silently defaulting on a
+# describe-stacks error would apply AllowOverspending=false to an instance
+# deployed with true (and vice versa for carry-over).
 CARRY_OVER_BALANCE=""
 ALLOW_OVERSPENDING=""
 load_settings() {
     [[ -n "$CARRY_OVER_BALANCE" ]] && return 0
     local params
-    params=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
-        --query "Stacks[0].Parameters" --output json 2>/dev/null || echo "[]")
+    if ! params=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
+        --query "Stacks[0].Parameters" --output json); then
+        echo "ERROR: could not read stack '$STACK_NAME' in $REGION to load instance settings." >&2
+        echo "       Check credentials/region/stack name. Refusing to guess carry/overspend defaults." >&2
+        exit 1
+    fi
     CARRY_OVER_BALANCE=$(echo "$params" | jq -r \
         'map(select(.ParameterKey=="CarryOverBalance")) | .[0].ParameterValue // "true"')
     ALLOW_OVERSPENDING=$(echo "$params" | jq -r \
@@ -415,7 +419,7 @@ recompute_carry_chain() {
             echo "  [DRY-RUN] transact-write-items (carry chain $m):" >&2
             echo "$carry_tx" | jq -c . >&2
         else
-            aws dynamodb transact-write-items --table-name "$TABLE_NAME" --region "$REGION" \
+            aws dynamodb transact-write-items --region "$REGION" \
                 --transact-items "$(echo "$carry_tx" | jq -c '.TransactItems')" >/dev/null
         fi
         prev_ending="$new_ending"
@@ -602,7 +606,7 @@ add_month() {
         echo "  [DRY-RUN] transact-write-items (add_month canonical+MONTHLIST):" >&2
         echo "$add_month_tx" | jq -c . >&2
     else
-        aws dynamodb transact-write-items --table-name "$TABLE_NAME" --region "$REGION" \
+        aws dynamodb transact-write-items --region "$REGION" \
             --transact-items "$(echo "$add_month_tx" | jq -c '.TransactItems')" >/dev/null
     fi
 
@@ -702,7 +706,7 @@ add_expense() {
             echo "  [DRY-RUN] transact-write-items (new month canonical+MONTHLIST for expense):" >&2
             echo "$new_month_tx" | jq -c . >&2
         else
-            aws dynamodb transact-write-items --table-name "$TABLE_NAME" --region "$REGION" \
+            aws dynamodb transact-write-items --region "$REGION" \
                 --transact-items "$(echo "$new_month_tx" | jq -c '.TransactItems')" >/dev/null
         fi
     fi
@@ -795,21 +799,23 @@ add_expense() {
         echo "  [DRY-RUN] transact-write-items (add_expense canonical+MONTHLIST+BALANCE):" >&2
         echo "$exp_tx" | jq -c . >&2
     else
-        if ! aws dynamodb transact-write-items --table-name "$TABLE_NAME" --region "$REGION" \
-            --transact-items "$(echo "$exp_tx" | jq -c '.TransactItems')" 2>/tmp/exp_tx_err; then
+        local EXP_TX_ERR
+        EXP_TX_ERR=$(mktemp)
+        if ! aws dynamodb transact-write-items --region "$REGION" \
+            --transact-items "$(echo "$exp_tx" | jq -c '.TransactItems')" 2>"$EXP_TX_ERR"; then
             # Check if it was a ConditionalCheckFailed on the summary item (index 1).
-            if grep -q "ConditionalCheckFailed" /tmp/exp_tx_err 2>/dev/null; then
+            if grep -q "ConditionalCheckFailed" "$EXP_TX_ERR" 2>/dev/null; then
                 local cur_bal
                 cur_bal=$(get_summary "$month" | jq -r '.Item.ending_balance.N // "0"')
                 echo "Error: insufficient funds (month $month balance \$$cur_bal is less than expense \$$amount_n); use --force to override." >&2
-                rm -f /tmp/exp_tx_err
+                rm -f "$EXP_TX_ERR"
                 exit 1
             fi
-            cat /tmp/exp_tx_err >&2
-            rm -f /tmp/exp_tx_err
+            cat "$EXP_TX_ERR" >&2
+            rm -f "$EXP_TX_ERR"
             exit 1
         fi
-        rm -f /tmp/exp_tx_err
+        rm -f "$EXP_TX_ERR"
     fi
 
     echo "  Recorded expense \$$amount_n in $month (id: $expense_id)"
@@ -904,7 +910,7 @@ add_funds() {
         echo "  [DRY-RUN] transact-write-items (add_funds canonical+MONTHLIST+BALANCE):" >&2
         echo "$funds_tx" | jq -c . >&2
     else
-        aws dynamodb transact-write-items --table-name "$TABLE_NAME" --region "$REGION" \
+        aws dynamodb transact-write-items --region "$REGION" \
             --transact-items "$(echo "$funds_tx" | jq -c '.TransactItems')" >/dev/null
     fi
 
@@ -987,7 +993,7 @@ remove_funds() {
         echo "  [DRY-RUN] transact-write-items (remove_funds canonical+MONTHLIST+BALANCE):" >&2
         echo "$rmfunds_tx" | jq -c . >&2
     else
-        aws dynamodb transact-write-items --table-name "$TABLE_NAME" --region "$REGION" \
+        aws dynamodb transact-write-items --region "$REGION" \
             --transact-items "$(echo "$rmfunds_tx" | jq -c '.TransactItems')" >/dev/null
     fi
 

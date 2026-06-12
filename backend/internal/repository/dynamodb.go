@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"strconv"
 	"strings"
 	"time"
@@ -86,6 +87,45 @@ func NewRepository(client *dynamodb.Client, tableName string) *Repository {
 		client:    client,
 		tableName: tableName,
 	}
+}
+
+// batchWriteWithRetry calls BatchWriteItem and retries any UnprocessedItems
+// using exponential backoff with full jitter (up to 5 attempts, base 50 ms).
+// If items remain unprocessed after all attempts, it returns an error naming
+// the count. Context cancellation is respected between retries.
+func (r *Repository) batchWriteWithRetry(ctx context.Context, items map[string][]types.WriteRequest) error {
+	const maxAttempts = 5
+	const baseDelay = 50 * time.Millisecond
+
+	pending := items
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff with full jitter: sleep up to base*2^attempt.
+			cap := baseDelay * (1 << attempt)
+			jitter := time.Duration(rand.Int64N(int64(cap)))
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(jitter):
+			}
+		}
+		out, err := r.client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
+			RequestItems: pending,
+		})
+		if err != nil {
+			return err
+		}
+		if len(out.UnprocessedItems) == 0 {
+			return nil
+		}
+		pending = out.UnprocessedItems
+	}
+	// Count total unprocessed write requests across all tables.
+	total := 0
+	for _, reqs := range pending {
+		total += len(reqs)
+	}
+	return fmt.Errorf("batchWriteWithRetry: %d item(s) still unprocessed after %d attempts", total, maxAttempts)
 }
 
 // Config operations
@@ -467,12 +507,9 @@ func (r *Repository) BackfillMonthList(ctx context.Context, summaries []model.Mo
 				PutRequest: &types.PutRequest{Item: item},
 			})
 		}
-		_, err := r.client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
-			RequestItems: map[string][]types.WriteRequest{
-				r.tableName: writes,
-			},
-		})
-		if err != nil {
+		if err := r.batchWriteWithRetry(ctx, map[string][]types.WriteRequest{
+			r.tableName: writes,
+		}); err != nil {
 			return fmt.Errorf("failed to backfill month list: %w", err)
 		}
 	}
@@ -728,12 +765,9 @@ func (r *Repository) DeleteAllSessions(ctx context.Context) error {
 					},
 				})
 			}
-			_, err := r.client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
-				RequestItems: map[string][]types.WriteRequest{
-					r.tableName: writes,
-				},
-			})
-			if err != nil {
+			if err := r.batchWriteWithRetry(ctx, map[string][]types.WriteRequest{
+				r.tableName: writes,
+			}); err != nil {
 				return fmt.Errorf("failed to batch delete sessions: %w", err)
 			}
 		}
@@ -1270,7 +1304,10 @@ func (r *Repository) PropagateLaterMonthDeltas(ctx context.Context, months []str
 	}
 	nowStr := time.Now().Format(time.RFC3339)
 	deltaStr := strconv.FormatFloat(delta, 'f', -1, 64)
-	expr := aws.String("SET starting_balance = starting_balance + :d, ending_balance = ending_balance + :d, updated_at = :now")
+	// if_not_exists guards: very old rows (pre-carry-over app versions) may
+	// lack starting_balance/ending_balance, and DynamoDB rejects arithmetic
+	// on a missing attribute, which would cancel the whole transaction.
+	expr := aws.String("SET starting_balance = if_not_exists(starting_balance, :zero) + :d, ending_balance = if_not_exists(ending_balance, :zero) + :d, updated_at = :now")
 
 	// Two transact items per month → chunk so 2*chunk <= maxTransactItems.
 	const monthsPerChunk = maxTransactItems / 2
@@ -1282,8 +1319,9 @@ func (r *Repository) PropagateLaterMonthDeltas(ctx context.Context, months []str
 		items := make([]types.TransactWriteItem, 0, (end-start)*2)
 		for _, m := range months[start:end] {
 			values := map[string]types.AttributeValue{
-				":d":   &types.AttributeValueMemberN{Value: deltaStr},
-				":now": &types.AttributeValueMemberS{Value: nowStr},
+				":d":    &types.AttributeValueMemberN{Value: deltaStr},
+				":zero": &types.AttributeValueMemberN{Value: "0"},
+				":now":  &types.AttributeValueMemberS{Value: nowStr},
 			}
 			items = append(items, types.TransactWriteItem{Update: &types.Update{
 				TableName: aws.String(r.tableName),

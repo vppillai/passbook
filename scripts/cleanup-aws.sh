@@ -129,10 +129,14 @@ else
     echo
 fi
 
-read -r -p "Are you sure you want to delete all AWS resources? (yes/no): " confirm
-if [[ "$confirm" != "yes" ]]; then
-    echo "Aborted."
-    exit 0
+if [[ "$DRY_RUN" == "true" ]]; then
+    echo "[dry-run] Skipping confirmation; nothing will be deleted."
+else
+    read -r -p "Are you sure you want to delete all AWS resources? (yes/no): " confirm
+    if [[ "$confirm" != "yes" ]]; then
+        echo "Aborted."
+        exit 0
+    fi
 fi
 
 echo
