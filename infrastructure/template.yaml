@@ -108,6 +108,10 @@ Resources:
                   - dynamodb:DeleteItem
                   - dynamodb:Query
                   - dynamodb:Scan
+                  # BatchWriteItem is its own IAM action (unlike transactions,
+                  # which authorize via the per-item actions above). Used by
+                  # the MONTHLIST lazy backfill and bulk session deletion.
+                  - dynamodb:BatchWriteItem
                 Resource:
                   - !GetAtt PassbookTable.Arn
 
