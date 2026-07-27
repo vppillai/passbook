@@ -1,0 +1,13 @@
+{
+  "name": "passbook-frontend",
+  "private": true,
+  "type": "module",
+  "description": "Test harness for the Passbook PWA. The app itself ships as plain ES modules with NO build step and NO runtime dependencies — these devDependencies exist only so the pure logic can be unit tested in CI.",
+  "scripts": {
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@happy-dom/global-registrator": "20.11.1",
+    "happy-dom": "20.11.1"
+  }
+}

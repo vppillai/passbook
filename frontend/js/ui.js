@@ -199,8 +199,16 @@ export function hideMenu() {
 let toastTimeout;
 export function showToast(message, type = 'info') {
     const toast = document.getElementById('toast');
-    // A plain toast may follow an undo toast; clear any action button so the
-    // previous Undo affordance doesn't linger.
+    // A plain toast reuses the same element, so it wipes out any undo toast
+    // currently on screen — including its Undo button and, crucially, the
+    // deferred action behind it. Settle that action first (committing it,
+    // exactly as flushUndoToast does) rather than leaving it dangling.
+    //
+    // Without this, "delete an expense, then add funds within 5s" removed
+    // the Undo affordance while the undo toast's own timer kept running
+    // invisibly: the user lost the ability to undo with no signal, and when
+    // that orphaned timer fired it hid THIS toast early.
+    if (undoToastDismiss) undoToastDismiss('expire');
     toast.replaceChildren();
     toast.textContent = message;
     toast.className = `toast ${type}`;
