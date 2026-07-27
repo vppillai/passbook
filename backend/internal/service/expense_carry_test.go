@@ -366,3 +366,38 @@ func TestMonthMutations_NoPropagationWhenCarryDisabled(t *testing.T) {
 		}
 	})
 }
+
+// TestListMonths_ReturnsTotalExpenses pins that the months list carries the
+// per-month spend figure.
+//
+// The menu renders a relative spend bar per month, scaled by the largest
+// total_expenses across the listed months (ui.maxMonthExpenses). MonthListItem
+// only ever carried month and monthly_saved, so that scale was always 0 and
+// the `maxExpenses > 0` guard meant the bar never rendered — a feature that
+// existed in the CSS and the DOM builder but could not appear.
+func TestListMonths_ReturnsTotalExpenses(t *testing.T) {
+	ctx := context.Background()
+	svc, repo := newExpenseService(t, true, true, 100)
+	testutil.SeedMonth(repo, "2026-01", 0, 100, 30, 70)
+	testutil.SeedMonth(repo, "2026-02", 70, 100, 55.5, 114.5)
+	repo.Balance = &model.Balance{TotalBalance: 114.5}
+
+	resp, err := svc.ListMonths(ctx, 50, "")
+	if err != nil {
+		t.Fatalf("ListMonths: %v", err)
+	}
+	if len(resp.Months) != 2 {
+		t.Fatalf("months = %d, want 2", len(resp.Months))
+	}
+
+	got := map[string]float64{}
+	for _, m := range resp.Months {
+		got[m.Month] = m.TotalExpenses
+	}
+	if got["2026-01"] != 30 {
+		t.Errorf("2026-01 total_expenses = %v, want 30", got["2026-01"])
+	}
+	if got["2026-02"] != 55.5 {
+		t.Errorf("2026-02 total_expenses = %v, want 55.5", got["2026-02"])
+	}
+}

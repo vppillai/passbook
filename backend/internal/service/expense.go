@@ -1165,8 +1165,9 @@ func (s *ExpenseService) ListMonths(ctx context.Context, limit int, cursorMonth 
 		// EndingBalance - StartingBalance is the carry-over-consistent
 		// answer; roundCents keeps float dust out of the JSON (B4).
 		items[i] = model.MonthListItem{
-			Month:        m.Month,
-			MonthlySaved: roundCents(m.EndingBalance - m.StartingBalance),
+			Month:         m.Month,
+			MonthlySaved:  roundCents(m.EndingBalance - m.StartingBalance),
+			TotalExpenses: roundCents(m.TotalExpenses),
 		}
 	}
 
