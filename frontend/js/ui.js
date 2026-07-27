@@ -199,8 +199,16 @@ export function hideMenu() {
 let toastTimeout;
 export function showToast(message, type = 'info') {
     const toast = document.getElementById('toast');
-    // A plain toast may follow an undo toast; clear any action button so the
-    // previous Undo affordance doesn't linger.
+    // A plain toast reuses the same element, so it wipes out any undo toast
+    // currently on screen — including its Undo button and, crucially, the
+    // deferred action behind it. Settle that action first (committing it,
+    // exactly as flushUndoToast does) rather than leaving it dangling.
+    //
+    // Without this, "delete an expense, then add funds within 5s" removed
+    // the Undo affordance while the undo toast's own timer kept running
+    // invisibly: the user lost the ability to undo with no signal, and when
+    // that orphaned timer fired it hid THIS toast early.
+    if (undoToastDismiss) undoToastDismiss('expire');
     toast.replaceChildren();
     toast.textContent = message;
     toast.className = `toast ${type}`;
@@ -264,9 +272,14 @@ export function showUndoToast({ message, actionText, onUndo, onExpire, durationM
         settled = true;
         clearTimeout(timer);
         if (undoToastDismiss === settle) undoToastDismiss = null;
-        toast.classList.add('hidden');
         toast.replaceChildren();
+        // Assign className BEFORE adding 'hidden'. Assigning it replaces the
+        // whole class attribute, so doing it afterwards dropped the class
+        // that had just been added and left an empty toast pill on screen
+        // after every undo tap, expiry, and flush — `.hidden` is the only
+        // rule in styles.css that hides this element.
         toast.className = 'toast';
+        toast.classList.add('hidden');
         if (reason === 'undo') {
             if (typeof onUndo === 'function') onUndo();
         } else if (typeof onExpire === 'function') {

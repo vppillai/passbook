@@ -5,6 +5,10 @@ backend/*.test
 
 # Dependencies
 backend/vendor/
+# Frontend test harness only — the app itself ships as plain ES modules with
+# no build step and no runtime dependencies. bun.lock IS committed so CI
+# installs the same versions.
+frontend/node_modules/
 
 # IDE
 .idea/

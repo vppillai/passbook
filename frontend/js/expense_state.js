@@ -1,6 +1,7 @@
 /**
  * Pure, DOM-free helpers for the optimistic expense-delete / undo flow so the
- * delta math can be unit tested in isolation (see CI bun checks).
+ * delta math can be unit tested in isolation
+ * (frontend/test/expense_state.test.js, run by `bun test` in CI).
  *
  * These operate on a lightweight in-memory month state of the shape:
  *   { expenses: Expense[], summary: { total_expenses, ending_balance }, total_balance }
