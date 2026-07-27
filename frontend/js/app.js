@@ -169,7 +169,15 @@ class App {
         this._pendingUpdateReload = () => pendingUpdateReload;
         this._consumeUpdateReload = () => { pendingUpdateReload = false; };
 
-        window.addEventListener('load', () => {
+        // Register once the page has loaded — but do NOT blindly wait for the
+        // 'load' event. registerServiceWorker() is reached from init() only
+        // AFTER an awaited network call (loadInitialData / checkSetup), by
+        // which point 'load' has almost always already fired, and a listener
+        // attached after the fact never runs. The worker was therefore never
+        // registered at all: no offline shell, no fast-update path, and
+        // navigator.serviceWorker.controller permanently null (which also
+        // silently disables the logout cache purge).
+        const registerNow = () => {
             navigator.serviceWorker.register('sw.js').then((registration) => {
                 // If a waiting SW already exists (rare with skipWaiting, but
                 // possible on a slow activate), nudge it to skip waiting.
@@ -193,7 +201,13 @@ class App {
             }).catch((err) => {
                 console.warn('Service worker registration failed:', err);
             });
-        });
+        };
+
+        if (document.readyState === 'complete') {
+            registerNow();
+        } else {
+            window.addEventListener('load', registerNow, { once: true });
+        }
     }
 
     async onAuthSuccess() {
@@ -617,20 +631,42 @@ class App {
     }
 
     /**
-     * Invalidates cached state after a mutation to the given month: drops the
-     * month's cached data and marks the months list dirty so both refetch
-     * authoritative data on next view (review C4/H1/C6).
-     * @param {string} month
+     * Invalidates cached month data after a mutation, and marks the months
+     * list dirty, so the next view refetches authoritative data
+     * (review C4/H1/C6).
+     *
+     * This drops EVERY cached month, not just the mutated one. With carry-over
+     * enabled, any mutation to a month that is not the latest ripples through
+     * the carry chain: the server shifts starting/ending balances on every
+     * later month and moves the global balance, which every cached payload
+     * carries a copy of. Keeping the other entries meant a later
+     * loadMonthView could repaint the dashboard from a stale payload and show
+     * pre-mutation figures — with no way for the user to tell.
+     *
+     * The cost is one refetch when switching months after a mutation. Showing
+     * a wrong balance is the worse trade.
+     *
+     * @param {string} month - the mutated month (kept for call-site clarity)
      */
     invalidateMonth(month) {
-        if (month) this.monthCache.delete(month);
+        void month;
+        this.monthCache.clear();
         this.monthsListDirty = true;
         this.monthsListData = null;
     }
 
     async loadMoreExpenses(cursor) {
         try {
-            const data = await api.getMonth(this.currentMonth, cursor);
+            // Pin the month for the whole operation. Reading this.currentMonth
+            // again after the await is the month-switch race loadMonthView
+            // already guards against (review F2): if the user switches months
+            // while this page is in flight, the response belongs to the OLD
+            // month and must not be appended to — or cached against — the new
+            // one.
+            const month = this.currentMonth;
+            const data = await api.getMonth(month, cursor);
+            if (month !== this.currentMonth) return;
+
             this.allExpenses = [...this.allExpenses, ...(data.expenses || [])];
             this.expensesCursor = data.next_cursor || null;
 
@@ -639,7 +675,7 @@ class App {
             // without this every extra page the user paged in was silently
             // discarded the moment they switched months and came back — the
             // list would collapse to page one with the Load More button back.
-            const cached = this.monthCache.get(this.currentMonth);
+            const cached = this.monthCache.get(month);
             if (cached) {
                 cached.expenses = this.allExpenses;
                 cached.next_cursor = this.expensesCursor;
@@ -1310,7 +1346,11 @@ class App {
                 (labels.month_deleted_toast || 'Deleted {month}').replace('{month}', name),
                 'success');
 
+            // Deleting debits the global balance and carry-propagates to every
+            // later month, so all cached payloads are stale — invalidateMonth
+            // clears the lot.
             this.invalidateMonth(month);
+
             // The deleted month may be the one on screen; loadInitialData
             // re-picks a target from whatever months remain.
             if (month === this.currentMonth) {
@@ -1346,14 +1386,25 @@ class App {
                 return;
             }
             const status = await webauthn.getAuthStatus();
-            const enrolled = !!(status && status.webauthn_enrolled);
+            // getAuthStatus never rejects — it returns null on any failure —
+            // so a network error is indistinguishable from a real answer
+            // unless it is checked explicitly. Treating null as
+            // "not enrolled" would offer "Enable" to a user who already has a
+            // credential, and clicking it would enrol a SECOND authenticator.
+            // When the state is unknown, show nothing.
+            if (!status) {
+                btn.classList.add('hidden');
+                return;
+            }
+            const enrolled = !!status.webauthn_enrolled;
             btn.dataset.enrolled = enrolled ? '1' : '';
             btn.textContent = enrolled
                 ? (labels.biometrics_disable || 'Disable biometric unlock')
                 : (labels.biometrics_enable || 'Enable biometric unlock');
             btn.classList.remove('hidden');
         } catch {
-            // A status hiccup must never strand the menu in a wrong state.
+            // Defensive: the calls above are all total today, but a future
+            // change must not be able to strand the menu in a wrong state.
             btn.classList.add('hidden');
         }
     }

@@ -136,9 +136,18 @@ jobs:
           # prompt. Falls back to display_name, then the instance name, so
           # every instance identifies itself instead of all of them saying
           # the backend's built-in default "Passbook".
-          WEBAUTHN_NAME=$(yq -r '.webauthn_display_name' "$CONFIG")
-          if [ "$WEBAUTHN_NAME" = "null" ]; then WEBAUTHN_NAME=$(yq -r '.display_name' "$CONFIG"); fi
-          if [ "$WEBAUTHN_NAME" = "null" ]; then WEBAUTHN_NAME="${{ matrix.instance }}"; fi
+          # Test for empty as well as the literal "null": a bare
+          # `webauthn_display_name:` or an explicit "" both emit an empty
+          # string, which is NOT "null", so a null-only guard would accept it
+          # and deploy a blank relying-party name — the OS prompt would then
+          # name nothing at all.
+          WEBAUTHN_NAME=$(yq -r '.webauthn_display_name // ""' "$CONFIG")
+          if [ -z "$WEBAUTHN_NAME" ] || [ "$WEBAUTHN_NAME" = "null" ]; then
+            WEBAUTHN_NAME=$(yq -r '.display_name // ""' "$CONFIG")
+          fi
+          if [ -z "$WEBAUTHN_NAME" ] || [ "$WEBAUTHN_NAME" = "null" ]; then
+            WEBAUTHN_NAME="${{ matrix.instance }}"
+          fi
           echo "monthly_amount=$MONTHLY" >> $GITHUB_OUTPUT
           echo "allow_overspending=$ALLOW_OVERSPEND" >> $GITHUB_OUTPUT
           echo "carry_over_balance=$CARRY_OVER" >> $GITHUB_OUTPUT

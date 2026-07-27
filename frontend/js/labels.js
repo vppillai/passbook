@@ -87,6 +87,8 @@ const defaultLabels = {
     failed_more_months_toast: 'Failed to load more months',
     failed_delete_expense_toast: 'Failed to delete expense',
     invalid_amount_error: 'Please enter a valid amount',
+    // Carries a literal $ because it is a label, not a formatted amount. A
+    // non-USD instance should override this alongside its format: block.
     amount_too_large_error: 'Amount cannot exceed $99,999.99',
     description_required_error: 'Please enter a description',
     invalid_month_error: 'Please enter a valid month (YYYY-MM)',

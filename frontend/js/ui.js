@@ -800,7 +800,11 @@ export function showEmptyState() {
     const emptyTotalBalanceEl = document.getElementById('total-balance');
     emptyTotalBalanceEl.textContent = formatCurrency(0);
     emptyTotalBalanceEl.classList.remove('balance-negative');
-    document.getElementById('expenses-total').textContent = `$0.00 ${labels.spent_suffix}`;
+    // formatCurrency(0), not a literal "$0.00" — every sibling line in this
+    // function already goes through the formatter, so a non-USD instance
+    // rendered "0,00 €" on the hero and "$0.00" right beside it.
+    document.getElementById('expenses-total').textContent =
+        `${formatCurrency(0)} ${labels.spent_suffix}`;
     const list = document.getElementById('expenses-list');
     list.replaceChildren();
     const empty = document.createElement('p');

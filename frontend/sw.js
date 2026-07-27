@@ -50,6 +50,11 @@ const PRECACHE_URLS = [
     './js/auth.js',
     './js/ui.js',
     './js/labels.js',
+    // app.js imports these two as well; leaving them out meant an offline
+    // launch fetched them from the network and the module graph failed to
+    // resolve, so the precached shell could not actually boot.
+    './js/webauthn.js',
+    './js/expense_state.js',
     './manifest.json',
     './assets/icon.svg',
     './assets/fonts/bricolage-grotesque-var.woff2',
@@ -217,6 +222,17 @@ async function cacheFirstAsset(request) {
     const cache = await caches.open(ASSET_CACHE);
     const cached = await cache.match(request);
     if (cached) return cached;
+
+    // Fall back to the SHELL cache before going to the network. install()
+    // precaches the CSS, JS, font and icon into SHELL_CACHE, but only
+    // navigations ever read that cache — so every precached subresource was
+    // fetched from the network anyway on the first controlled load, and an
+    // offline first-load painted an empty page despite the assets sitting
+    // right there. Checking both is what makes the precache actually count.
+    const shell = await caches.open(SHELL_CACHE);
+    const precached = await shell.match(request);
+    if (precached) return precached;
+
     const response = await fetch(request);
     if (response && response.ok) {
         cache.put(request, response.clone());

@@ -53,11 +53,27 @@ export function roundCents(amount) {
  * means there is no such cache to clear.
  */
 function purgeApiCache() {
+    // Delete from the PAGE first. Cache Storage is reachable from a normal
+    // document, so this works even with no service worker controlling it —
+    // which is the common case on a first load, and was the case ALWAYS while
+    // registration was broken. Gating the purge on a controller meant the
+    // data was often left sitting on disk after logout.
+    try {
+        if (typeof caches !== 'undefined' && caches.keys) {
+            caches.keys().then((names) => Promise.all(
+                names.filter((n) => n.indexOf('-api-') !== -1 && n.startsWith('passbook-'))
+                    .map((n) => caches.delete(n))
+            )).catch(() => { /* best effort */ });
+        }
+    } catch { /* Cache Storage unavailable (private mode, http://) */ }
+
+    // Also tell the worker, so a running SW drops any in-memory handle and
+    // cannot repopulate from a request that is already in flight.
     try {
         if (navigator.serviceWorker && navigator.serviceWorker.controller) {
             navigator.serviceWorker.controller.postMessage({ type: 'PURGE_API_CACHE' });
         }
-    } catch { /* SW unavailable — nothing cached to purge */ }
+    } catch { /* no controller — the page-side delete above already ran */ }
 }
 
 // Network request timeout. Without this, a flaky mobile connection makes
@@ -96,6 +112,11 @@ class Api {
         if (!Number.isFinite(expiry) || Date.now() >= expiry) {
             localStorage.removeItem(SESSION_KEY);
             localStorage.removeItem(SESSION_EXPIRY_KEY);
+            // A session that lapsed on its own is still a logout, so the
+            // cached dashboard has to go with it. This path dropped the token
+            // inline and skipped the purge, leaving the last-seen balances
+            // readable on disk after the session had expired.
+            purgeApiCache();
             return null;
         }
         return token;

@@ -324,6 +324,13 @@ jobs:
           # already been overwritten where needed.
           for INSTANCE in $(echo "$INSTANCES" | jq -r '.[]'); do
             rm -rf "build/$INSTANCE/assets/icons"
+            # Same reasoning for the test harness: `cp -r frontend/.` copies
+            # the whole directory, which now also holds the bun unit tests and
+            # their manifest. Those are development inputs and have no business
+            # being served as part of the PWA. (node_modules is gitignored so it
+            # is never in the checkout, but remove it too in case of a local run.)
+            rm -rf "build/$INSTANCE/test" "build/$INSTANCE/node_modules"
+            rm -f "build/$INSTANCE/package.json" "build/$INSTANCE/bunfig.toml" "build/$INSTANCE/bun.lock"
           done
 
           echo ""
