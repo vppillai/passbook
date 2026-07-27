@@ -132,10 +132,27 @@ jobs:
           if [ "$ALLOW_OVERSPEND" = "null" ]; then ALLOW_OVERSPEND=false; fi
           CARRY_OVER=$(yq -r '.carry_over_balance' "$CONFIG")
           if [ "$CARRY_OVER" = "null" ]; then CARRY_OVER=true; fi
+          # Name shown by the OS in the Face ID / Touch ID / Windows Hello
+          # prompt. Falls back to display_name, then the instance name, so
+          # every instance identifies itself instead of all of them saying
+          # the backend's built-in default "Passbook".
+          # Test for empty as well as the literal "null": a bare
+          # `webauthn_display_name:` or an explicit "" both emit an empty
+          # string, which is NOT "null", so a null-only guard would accept it
+          # and deploy a blank relying-party name — the OS prompt would then
+          # name nothing at all.
+          WEBAUTHN_NAME=$(yq -r '.webauthn_display_name // ""' "$CONFIG")
+          if [ -z "$WEBAUTHN_NAME" ] || [ "$WEBAUTHN_NAME" = "null" ]; then
+            WEBAUTHN_NAME=$(yq -r '.display_name // ""' "$CONFIG")
+          fi
+          if [ -z "$WEBAUTHN_NAME" ] || [ "$WEBAUTHN_NAME" = "null" ]; then
+            WEBAUTHN_NAME="${{ matrix.instance }}"
+          fi
           echo "monthly_amount=$MONTHLY" >> $GITHUB_OUTPUT
           echo "allow_overspending=$ALLOW_OVERSPEND" >> $GITHUB_OUTPUT
           echo "carry_over_balance=$CARRY_OVER" >> $GITHUB_OUTPUT
-          echo "Instance: ${{ matrix.instance }}, monthly_amount: $MONTHLY, allow_overspend: $ALLOW_OVERSPEND, carry_over: $CARRY_OVER"
+          echo "webauthn_display_name=$WEBAUTHN_NAME" >> $GITHUB_OUTPUT
+          echo "Instance: ${{ matrix.instance }}, monthly_amount: $MONTHLY, allow_overspend: $ALLOW_OVERSPEND, carry_over: $CARRY_OVER, webauthn_name: $WEBAUTHN_NAME"
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
@@ -148,6 +165,7 @@ jobs:
           MONTHLY: ${{ steps.config.outputs.monthly_amount }}
           ALLOW_OVERSPEND: ${{ steps.config.outputs.allow_overspending }}
           CARRY_OVER: ${{ steps.config.outputs.carry_over_balance }}
+          WEBAUTHN_NAME: ${{ steps.config.outputs.webauthn_display_name }}
         run: |
           # Resolve bucket via shell var (not step output — output would be
           # redacted because the bucket name contains the AWS_ACCOUNT_ID secret)
@@ -171,6 +189,7 @@ jobs:
               MonthlyAllowance="$MONTHLY" \
               AllowOverspending="$ALLOW_OVERSPEND" \
               CarryOverBalance="$CARRY_OVER" \
+              WebAuthnDisplayName="$WEBAUTHN_NAME" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
       # Note: previously this step ran `aws lambda update-function-code`

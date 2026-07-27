@@ -181,10 +181,16 @@ jobs:
             CONFIG_FILE="config/instances/$INSTANCE.yaml"
             LABELS_JSON=$(yq -o=json '.labels // {}' "$CONFIG_FILE")
 
+            # Money/date formatting (currency + locale). Kept separate from
+            # labels: labels are copy, this decides how amounts render. The
+            # frontend falls back to en-US/USD when the block is absent.
+            FORMAT_JSON=$(yq -o=json '.format // {}' "$CONFIG_FILE")
+
             # Generate config.js: use jq to safely JSON-encode the API URL string
             {
               printf 'window.PASSBOOK_API_URL = %s;\n' "$(printf '%s' "$API_URL" | jq -Rs .)"
               printf 'window.PASSBOOK_LABELS = %s;\n' "$LABELS_JSON"
+              printf 'window.PASSBOOK_FORMAT = %s;\n' "$FORMAT_JSON"
             } > "build/$INSTANCE/js/config.js"
 
             # Insert config.js script tag before app.js (must execute first)
@@ -318,6 +324,13 @@ jobs:
           # already been overwritten where needed.
           for INSTANCE in $(echo "$INSTANCES" | jq -r '.[]'); do
             rm -rf "build/$INSTANCE/assets/icons"
+            # Same reasoning for the test harness: `cp -r frontend/.` copies
+            # the whole directory, which now also holds the bun unit tests and
+            # their manifest. Those are development inputs and have no business
+            # being served as part of the PWA. (node_modules is gitignored so it
+            # is never in the checkout, but remove it too in case of a local run.)
+            rm -rf "build/$INSTANCE/test" "build/$INSTANCE/node_modules"
+            rm -f "build/$INSTANCE/package.json" "build/$INSTANCE/bunfig.toml" "build/$INSTANCE/bun.lock"
           done
 
           echo ""

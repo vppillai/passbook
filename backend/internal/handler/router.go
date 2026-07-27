@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/vppillai/passbook/backend/internal/httperr"
 	"github.com/vppillai/passbook/backend/internal/middleware"
 	"github.com/vppillai/passbook/backend/internal/service"
 )
@@ -76,7 +77,7 @@ func (rt *Router) route(w http.ResponseWriter, r *http.Request) {
 	// bypass that looks like the real host.
 	refererOK := referer != "" && sameOrigin(referer, rt.allowedOrigin)
 	if !originOK && !refererOK {
-		http.Error(w, `{"error":"Forbidden"}`, http.StatusForbidden)
+		httperr.WriteJSON(w, http.StatusForbidden, "Forbidden")
 		return
 	}
 
@@ -174,6 +175,6 @@ func (rt *Router) protectedRoute(w http.ResponseWriter, r *http.Request) {
 		rt.handleDeleteExpense(w, r)
 		return
 	default:
-		http.Error(w, `{"error":"Not found"}`, http.StatusNotFound)
+		httperr.WriteJSON(w, http.StatusNotFound, "Not found")
 	}
 }

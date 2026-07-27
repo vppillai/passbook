@@ -42,6 +42,40 @@ export function roundCents(amount) {
     return Math.round(amount * 100) / 100;
 }
 
+/**
+ * Asks the service worker to drop every cached API response.
+ *
+ * The SW caches GET /api/months and /api/month/* so the dashboard repaints
+ * offline, which means the user's balances and expense descriptions live in
+ * Cache Storage. Dropping the session token does nothing to that copy, so
+ * without this the last-seen financial data stayed readable on disk after
+ * Lock/logout. Best-effort and silent: no SW (or no controller yet) simply
+ * means there is no such cache to clear.
+ */
+function purgeApiCache() {
+    // Delete from the PAGE first. Cache Storage is reachable from a normal
+    // document, so this works even with no service worker controlling it —
+    // which is the common case on a first load, and was the case ALWAYS while
+    // registration was broken. Gating the purge on a controller meant the
+    // data was often left sitting on disk after logout.
+    try {
+        if (typeof caches !== 'undefined' && caches.keys) {
+            caches.keys().then((names) => Promise.all(
+                names.filter((n) => n.indexOf('-api-') !== -1 && n.startsWith('passbook-'))
+                    .map((n) => caches.delete(n))
+            )).catch(() => { /* best effort */ });
+        }
+    } catch { /* Cache Storage unavailable (private mode, http://) */ }
+
+    // Also tell the worker, so a running SW drops any in-memory handle and
+    // cannot repopulate from a request that is already in flight.
+    try {
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({ type: 'PURGE_API_CACHE' });
+        }
+    } catch { /* no controller — the page-side delete above already ran */ }
+}
+
 // Network request timeout. Without this, a flaky mobile connection makes
 // the spinner / disabled submit-button persist until the OS TCP timeout
 // (~2 min). 15s is long enough for a slow API GW cold start, short enough
@@ -78,6 +112,11 @@ class Api {
         if (!Number.isFinite(expiry) || Date.now() >= expiry) {
             localStorage.removeItem(SESSION_KEY);
             localStorage.removeItem(SESSION_EXPIRY_KEY);
+            // A session that lapsed on its own is still a logout, so the
+            // cached dashboard has to go with it. This path dropped the token
+            // inline and skipped the purge, leaving the last-seen balances
+            // readable on disk after the session had expired.
+            purgeApiCache();
             return null;
         }
         return token;
@@ -209,6 +248,7 @@ class Api {
         this.sessionToken = null;
         localStorage.removeItem(SESSION_KEY);
         localStorage.removeItem(SESSION_EXPIRY_KEY);
+        purgeApiCache();
     }
 
     /**
@@ -430,6 +470,20 @@ class Api {
      */
     async createMonth(month) {
         return this.request('POST', '/api/month', { month });
+    }
+
+    /**
+     * Deletes a month and reverses the allowance it credited.
+     *
+     * The server refuses (409) while the month still holds expenses, so the
+     * caller should only offer this for an empty month — but the check is the
+     * server's, not the client's.
+     *
+     * @param {string} month - Month key in "YYYY-MM" format
+     * @returns {Promise<Object>} Server response confirming deletion
+     */
+    async deleteMonth(month) {
+        return this.request('DELETE', `/api/month/${month}`);
     }
 
     /**

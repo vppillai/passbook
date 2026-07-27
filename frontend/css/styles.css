@@ -1048,13 +1048,52 @@ header h1 {
     list-style: none;
 }
 
+/* The row holds the selectable month button and, for an empty month, a
+   delete control alongside it — so it becomes a flex line rather than a
+   plain list item. */
 .month-row {
     list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* Delete affordance, only rendered for a month with nothing spent in it.
+   Deliberately low-contrast until hovered/focused: it sits next to the row a
+   user taps constantly to switch months, so it should not compete for
+   attention or invite a mis-tap. 44px keeps it within the touch-target
+   guidance the rest of the app follows. */
+.month-delete {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    border-radius: var(--r-sm);
+    color: var(--ink-3);
+    opacity: 0.6;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.month-delete:hover,
+.month-delete:focus-visible {
+    opacity: 1;
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 /* .month-item is now a real <button> (keyboard/SR accessible); reset native
    button chrome and stretch it to fill its list row. */
 .month-item {
+    /* flex:1 so the row's optional delete control takes its 44px and the
+       month button absorbs the remainder. */
+    flex: 1 1 auto;
+    min-width: 0;
     width: 100%;
     padding: 13px var(--spacing);
     border: none;

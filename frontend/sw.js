@@ -50,6 +50,11 @@ const PRECACHE_URLS = [
     './js/auth.js',
     './js/ui.js',
     './js/labels.js',
+    // app.js imports these two as well; leaving them out meant an offline
+    // launch fetched them from the network and the module graph failed to
+    // resolve, so the precached shell could not actually boot.
+    './js/webauthn.js',
+    './js/expense_state.js',
     './manifest.json',
     './assets/icon.svg',
     './assets/fonts/bricolage-grotesque-var.woff2',
@@ -131,6 +136,38 @@ self.addEventListener('activate', (event) => {
     })());
 });
 
+// Messages from the page.
+//
+//   PURGE_API_CACHE — drop every cached API response. The page sends this on
+//     logout: the dashboard cache holds the user's month summaries and
+//     expense descriptions, and clearing the session token does nothing to
+//     Cache Storage, so without this the last-seen balances stayed readable
+//     on disk after the user hit Lock.
+//   SKIP_WAITING — take over immediately (app.js posts this when it finds a
+//     waiting worker).
+self.addEventListener('message', (event) => {
+    const type = event.data && event.data.type;
+    if (type === 'SKIP_WAITING') {
+        self.skipWaiting();
+        return;
+    }
+    if (type !== 'PURGE_API_CACHE') return;
+
+    event.waitUntil((async () => {
+        // Delete by prefix rather than only the current API_CACHE: a version
+        // bump leaves the previous version's API cache in place until the
+        // next activate, and that copy holds the same private data.
+        const names = await caches.keys();
+        await Promise.all(names
+            .filter((name) => name.startsWith(`${CACHE_PREFIX}api-`))
+            .map((name) => caches.delete(name)));
+        // Acknowledge so the page can proceed deterministically.
+        if (event.source && event.source.postMessage) {
+            event.source.postMessage({ type: 'API_CACHE_PURGED' });
+        }
+    })());
+});
+
 /** True for GET requests whose path is under /api/. */
 function isApiRequest(url) {
     return url.pathname.indexOf('/api/') !== -1;
@@ -185,6 +222,17 @@ async function cacheFirstAsset(request) {
     const cache = await caches.open(ASSET_CACHE);
     const cached = await cache.match(request);
     if (cached) return cached;
+
+    // Fall back to the SHELL cache before going to the network. install()
+    // precaches the CSS, JS, font and icon into SHELL_CACHE, but only
+    // navigations ever read that cache — so every precached subresource was
+    // fetched from the network anyway on the first controlled load, and an
+    // offline first-load painted an empty page despite the assets sitting
+    // right there. Checking both is what makes the precache actually count.
+    const shell = await caches.open(SHELL_CACHE);
+    const precached = await shell.match(request);
+    if (precached) return precached;
+
     const response = await fetch(request);
     if (response && response.ok) {
         cache.put(request, response.clone());

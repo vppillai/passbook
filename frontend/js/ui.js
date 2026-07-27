@@ -29,25 +29,45 @@ const MONTHS = [
     'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
+// Money/date formatting, overridable per instance via window.PASSBOOK_FORMAT
+// (CI bakes it from the `format:` block of config/instances/<name>.yaml).
+// This is deliberately separate from labels: labels are copy, these choose how
+// numbers and dates are rendered. Everything about this app was otherwise
+// per-instance configurable — theme, PWA, wording — while the currency stayed
+// hardcoded to USD, so a non-dollar deployment had no way to render its own.
+const FORMAT = (typeof window !== 'undefined' && window.PASSBOOK_FORMAT) || {};
+const LOCALE = FORMAT.locale || 'en-US';
+const CURRENCY = FORMAT.currency || 'USD';
+
+// Built once: Intl.NumberFormat construction is the expensive part, and
+// formatCurrency runs for every expense row and every dashboard repaint.
+// An invalid locale/currency from config must not blank the whole UI, so an
+// unusable pair falls back to the default rather than throwing.
+const currencyFormatter = (() => {
+    try {
+        return new Intl.NumberFormat(LOCALE, { style: 'currency', currency: CURRENCY });
+    } catch {
+        return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+    }
+})();
+
 /**
- * Formats a numeric amount as a US dollar currency string (e.g. "$1,234.56").
+ * Formats a numeric amount as a currency string in the instance's configured
+ * currency and locale (default "$1,234.56").
  * @param {number} amount - The monetary amount to format
- * @returns {string} Locale-formatted USD currency string
+ * @returns {string} Locale-formatted currency string
  */
 export function formatCurrency(amount) {
-    return new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD',
-    }).format(amount);
+    return currencyFormatter.format(amount);
 }
 
 /**
  * Formats an ISO-8601 timestamp from the API as a locale time string.
  * @param {string} dateStr - ISO-8601 timestamp (e.g. "2024-06-10T14:30:00Z")
- * @returns {string} Time in locale h:mm AM/PM format (e.g. "2:30 PM")
+ * @returns {string} Time in locale h:mm format (e.g. "2:30 PM")
  */
 export function formatTime(dateStr) {
-    return new Date(dateStr).toLocaleTimeString('en-US', {
+    return new Date(dateStr).toLocaleTimeString(LOCALE, {
         hour: 'numeric',
         minute: '2-digit',
     });
@@ -93,9 +113,9 @@ function dayKey(dateStr) {
 function formatDayLabel(dateStr) {
     const d = new Date(dateStr);
     const now = new Date();
-    if (sameDay(d, now)) return 'Today';
+    if (sameDay(d, now)) return labels.day_today;
     const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-    if (sameDay(d, yesterday)) return 'Yesterday';
+    if (sameDay(d, yesterday)) return labels.day_yesterday;
     return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
@@ -354,7 +374,7 @@ export function renderExpenses(expenses, callbacks, nextCursor = null) {
     if (!expenses || expenses.length === 0) {
         const empty = document.createElement('p');
         empty.className = 'no-expenses';
-        empty.textContent = 'No expenses yet this month';
+        empty.textContent = labels.no_expenses_this_month;
         container.appendChild(empty);
         return;
     }
@@ -383,7 +403,7 @@ export function renderExpenses(expenses, callbacks, nextCursor = null) {
         const loadMoreBtn = document.createElement('button');
         loadMoreBtn.id = 'load-more-expenses';
         loadMoreBtn.className = 'btn btn-secondary btn-full load-more-btn';
-        loadMoreBtn.textContent = 'Load More';
+        loadMoreBtn.textContent = labels.load_more_action;
         loadMoreBtn.addEventListener('click', () => callbacks.onLoadMore(nextCursor));
         container.appendChild(loadMoreBtn);
     }
@@ -494,15 +514,23 @@ export function showConfirm({ title, body, confirmText = 'Confirm', cancelText =
             if (e.key === 'Escape') close(false);
         }
 
+        // The backdrop lives in index.html and outlives every confirm, so its
+        // listener must be removed explicitly. {once:true} was not enough: it
+        // only detaches when the listener FIRES, so every confirm dismissed
+        // by a button or by Escape left one attached forever, each closing
+        // over an already-settled promise.
+        const backdropEl = modal.querySelector('.modal-backdrop');
+        function onBackdrop() { close(false); }
+
         function close(result) {
             document.removeEventListener('keydown', onKeydown, true);
+            backdropEl.removeEventListener('click', onBackdrop);
             hideModal('confirm-modal');
             resolve(result);
         }
         newConfirm.addEventListener('click', () => close(true));
         newCancel.addEventListener('click', () => close(false));
-        modal.querySelector('.modal-backdrop').addEventListener(
-            'click', () => close(false), { once: true });
+        backdropEl.addEventListener('click', onBackdrop);
         // Capture phase so this fires before (and instead of) the global
         // Escape handler, which is bubble-phase and skips #confirm-modal.
         document.addEventListener('keydown', onKeydown, true);
@@ -512,7 +540,7 @@ export function showConfirm({ title, body, confirmText = 'Confirm', cancelText =
     });
 }
 
-export function renderMonthsList(months, currentMonth, onSelect, nextCursor = null, onLoadMore = null) {
+export function renderMonthsList(months, currentMonth, onSelect, nextCursor = null, onLoadMore = null, onDelete = null) {
     const container = document.getElementById('months-list');
     container.replaceChildren();
 
@@ -520,7 +548,7 @@ export function renderMonthsList(months, currentMonth, onSelect, nextCursor = nu
         const li = document.createElement('li');
         li.className = 'month-item';
         const span = document.createElement('span');
-        span.textContent = 'No history yet';
+        span.textContent = labels.no_history;
         li.appendChild(span);
         container.appendChild(li);
         return;
@@ -528,7 +556,7 @@ export function renderMonthsList(months, currentMonth, onSelect, nextCursor = nu
 
     const maxExpenses = maxMonthExpenses(months);
     for (const month of months) {
-        container.appendChild(buildMonthRow(month, currentMonth, onSelect, maxExpenses));
+        container.appendChild(buildMonthRow(month, currentMonth, onSelect, maxExpenses, onDelete));
     }
 
     if (nextCursor && onLoadMore) {
@@ -553,7 +581,7 @@ export function maxMonthExpenses(months) {
     return max;
 }
 
-export function buildMonthRow(month, currentMonth, onSelect, maxExpenses = 0) {
+export function buildMonthRow(month, currentMonth, onSelect, maxExpenses = 0, onDelete = null) {
     // The selectable row is a real <button> (inside a list <li>) so it is
     // keyboard- and screen-reader-accessible — Enter/Space activate it and
     // it's announced as a button, unlike the previous click-only <li> (a11y).
@@ -605,6 +633,29 @@ export function buildMonthRow(month, currentMonth, onSelect, maxExpenses = 0) {
         btn.addEventListener('click', () => onSelect(month.month));
     }
     li.appendChild(btn);
+
+    // Delete is offered only for a month with nothing spent in it. The server
+    // enforces the same rule (409 while expenses remain) — this just avoids
+    // showing an action that is guaranteed to fail. It sits outside the
+    // selectable button so activating it never also switches month.
+    if (typeof onDelete === 'function' && Number(month.total_expenses) === 0) {
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'month-delete';
+        del.setAttribute('aria-label',
+            `${labels.delete_month_aria || 'Delete'} ${formatMonthName(month.month)}`);
+        del.title = labels.delete_month_aria || 'Delete month';
+        del.appendChild(svgIcon(
+            '<line x1="18" y1="6" x2="6" y2="18"></line>' +
+            '<line x1="6" y1="6" x2="18" y2="18"></line>'
+        ));
+        del.addEventListener('click', (e) => {
+            e.stopPropagation();
+            onDelete(month.month);
+        });
+        li.appendChild(del);
+    }
+
     return li;
 }
 
@@ -620,7 +671,7 @@ function buildLoadMoreMonthsItem(onClick) {
     btn.type = 'button';
     btn.id = 'load-more-months';
     btn.className = 'month-item load-more-item';
-    btn.textContent = 'Load More';
+    btn.textContent = labels.load_more_action;
     btn.addEventListener('click', onClick);
     li.appendChild(btn);
     return li;
@@ -741,7 +792,7 @@ export function updateDashboard(data) {
 
 export function showEmptyState() {
     // Show empty state when no months exist
-    document.getElementById('month-title').textContent = 'No Data Yet';
+    document.getElementById('month-title').textContent = labels.no_data_title;
     document.getElementById('carryover-chip').classList.add('hidden');
     const emptyMonthBalanceEl = document.getElementById('month-balance');
     emptyMonthBalanceEl.textContent = formatCurrency(0);
@@ -749,12 +800,16 @@ export function showEmptyState() {
     const emptyTotalBalanceEl = document.getElementById('total-balance');
     emptyTotalBalanceEl.textContent = formatCurrency(0);
     emptyTotalBalanceEl.classList.remove('balance-negative');
-    document.getElementById('expenses-total').textContent = `$0.00 ${labels.spent_suffix}`;
+    // formatCurrency(0), not a literal "$0.00" — every sibling line in this
+    // function already goes through the formatter, so a non-USD instance
+    // rendered "0,00 €" on the hero and "$0.00" right beside it.
+    document.getElementById('expenses-total').textContent =
+        `${formatCurrency(0)} ${labels.spent_suffix}`;
     const list = document.getElementById('expenses-list');
     list.replaceChildren();
     const empty = document.createElement('p');
     empty.className = 'no-expenses';
-    empty.textContent = 'No entries yet. Open the menu to create a new month.';
+    empty.textContent = labels.empty_state_body;
     list.appendChild(empty);
 }
 
@@ -781,7 +836,7 @@ export function showDashboardLoading() {
     list.replaceChildren();
     const loading = document.createElement('p');
     loading.className = 'no-expenses';
-    loading.textContent = 'Loading…';
+    loading.textContent = labels.loading_text;
     list.appendChild(loading);
 }
 
@@ -799,7 +854,7 @@ function clearDashboardLoading() {
  */
 export function showDashboardError(onRetry) {
     clearDashboardLoading();
-    document.getElementById('month-title').textContent = 'Couldn’t load';
+    document.getElementById('month-title').textContent = labels.error_load_title;
     document.getElementById('total-balance').textContent = '—';
     document.getElementById('month-balance').textContent = '—';
     document.getElementById('expenses-total').textContent = '';
@@ -810,11 +865,11 @@ export function showDashboardError(onRetry) {
     wrap.className = 'dashboard-error';
     const msg = document.createElement('p');
     msg.className = 'no-expenses';
-    msg.textContent = 'Couldn’t load your data. Check your connection.';
+    msg.textContent = labels.error_load_body;
     const retry = document.createElement('button');
     retry.type = 'button';
     retry.className = 'btn btn-secondary btn-full';
-    retry.textContent = 'Retry';
+    retry.textContent = labels.retry_action;
     if (typeof onRetry === 'function') retry.addEventListener('click', onRetry);
     wrap.appendChild(msg);
     wrap.appendChild(retry);

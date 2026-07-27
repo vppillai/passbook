@@ -192,6 +192,12 @@ type ExpenseItem struct {
 type MonthListItem struct {
 	Month        string  `json:"month"`
 	MonthlySaved float64 `json:"monthly_saved"` // ending_balance - starting_balance
+	// TotalExpenses is what was spent in the month. The history menu scales
+	// each row's spend bar against the largest value across the listed months,
+	// so without this field that scale was always zero and the bar could never
+	// render. Added without omitempty so a genuine $0 month still reports 0
+	// rather than being indistinguishable from an older server that omits it.
+	TotalExpenses float64 `json:"total_expenses"`
 }
 
 // MonthsResponse is returned when listing all months. Months are sorted in

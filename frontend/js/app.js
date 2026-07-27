@@ -4,6 +4,7 @@ import { auth } from './auth.js';
 import * as ui from './ui.js';
 import { labels, applyLabels } from './labels.js';
 import { removeExpense, insertExpense } from './expense_state.js';
+import * as webauthn from './webauthn.js';
 
 // ---- Haptic feedback via capture-phase event delegation on .pin-pad ----
 // auth.js owns the PIN pad buttons; we attach here in capture phase so we
@@ -102,7 +103,7 @@ class App {
             this.registerServiceWorker();
         } catch (error) {
             console.error('Failed to initialize:', error);
-            ui.showToast('Failed to connect to server', 'error');
+            ui.showToast(labels.failed_connect_toast, 'error');
             // Show auth screen anyway
             ui.showScreen('auth-screen');
             auth.init(() => this.onAuthSuccess());
@@ -168,7 +169,15 @@ class App {
         this._pendingUpdateReload = () => pendingUpdateReload;
         this._consumeUpdateReload = () => { pendingUpdateReload = false; };
 
-        window.addEventListener('load', () => {
+        // Register once the page has loaded — but do NOT blindly wait for the
+        // 'load' event. registerServiceWorker() is reached from init() only
+        // AFTER an awaited network call (loadInitialData / checkSetup), by
+        // which point 'load' has almost always already fired, and a listener
+        // attached after the fact never runs. The worker was therefore never
+        // registered at all: no offline shell, no fast-update path, and
+        // navigator.serviceWorker.controller permanently null (which also
+        // silently disables the logout cache purge).
+        const registerNow = () => {
             navigator.serviceWorker.register('sw.js').then((registration) => {
                 // If a waiting SW already exists (rare with skipWaiting, but
                 // possible on a slow activate), nudge it to skip waiting.
@@ -192,7 +201,13 @@ class App {
             }).catch((err) => {
                 console.warn('Service worker registration failed:', err);
             });
-        });
+        };
+
+        if (document.readyState === 'complete') {
+            registerNow();
+        } else {
+            window.addEventListener('load', registerNow, { once: true });
+        }
     }
 
     async onAuthSuccess() {
@@ -231,7 +246,8 @@ class App {
             target,
             (month) => this.selectMonth(month),
             data.next_cursor,
-            (cursor) => this.loadMoreMonths(cursor)
+            (cursor) => this.loadMoreMonths(cursor),
+            (month) => this.handleDeleteMonth(month)
         );
 
         if (target) {
@@ -344,7 +360,17 @@ class App {
         document.getElementById('menu-btn').addEventListener('click', () => {
             ui.showMenu();
             this.loadMonthsList();
+            // Re-read enrollment each time: it can change from the post-login
+            // offer, from another device, or from a PIN change (which revokes
+            // every credential).
+            this.refreshBiometricMenu();
         });
+
+        // Biometric unlock toggle
+        const biometricBtn = document.getElementById('biometric-toggle-btn');
+        if (biometricBtn) {
+            biometricBtn.addEventListener('click', () => this.handleBiometricToggle());
+        }
 
         document.getElementById('close-menu').addEventListener('click', () => {
             ui.hideMenu();
@@ -491,7 +517,7 @@ class App {
             });
             this.editingExpenseId = null;
             this.editingOriginalDate = null;
-            ui.showToast('Session expired. Please log in again.', 'error');
+            ui.showToast(labels.session_expired_toast, 'error');
             ui.showScreen('auth-screen');
         });
     }
@@ -595,35 +621,69 @@ class App {
                 this.currentMonth,
                 (month) => this.selectMonth(month),
                 data.next_cursor,
-                (cursor) => this.loadMoreMonths(cursor)
+                (cursor) => this.loadMoreMonths(cursor),
+                (month) => this.handleDeleteMonth(month)
             );
         } catch (error) {
             console.error('Failed to load months list:', error);
-            ui.showToast('Failed to load history', 'error');
+            ui.showToast(labels.failed_history_toast, 'error');
         }
     }
 
     /**
-     * Invalidates cached state after a mutation to the given month: drops the
-     * month's cached data and marks the months list dirty so both refetch
-     * authoritative data on next view (review C4/H1/C6).
-     * @param {string} month
+     * Invalidates cached month data after a mutation, and marks the months
+     * list dirty, so the next view refetches authoritative data
+     * (review C4/H1/C6).
+     *
+     * This drops EVERY cached month, not just the mutated one. With carry-over
+     * enabled, any mutation to a month that is not the latest ripples through
+     * the carry chain: the server shifts starting/ending balances on every
+     * later month and moves the global balance, which every cached payload
+     * carries a copy of. Keeping the other entries meant a later
+     * loadMonthView could repaint the dashboard from a stale payload and show
+     * pre-mutation figures — with no way for the user to tell.
+     *
+     * The cost is one refetch when switching months after a mutation. Showing
+     * a wrong balance is the worse trade.
+     *
+     * @param {string} month - the mutated month (kept for call-site clarity)
      */
     invalidateMonth(month) {
-        if (month) this.monthCache.delete(month);
+        void month;
+        this.monthCache.clear();
         this.monthsListDirty = true;
         this.monthsListData = null;
     }
 
     async loadMoreExpenses(cursor) {
         try {
-            const data = await api.getMonth(this.currentMonth, cursor);
+            // Pin the month for the whole operation. Reading this.currentMonth
+            // again after the await is the month-switch race loadMonthView
+            // already guards against (review F2): if the user switches months
+            // while this page is in flight, the response belongs to the OLD
+            // month and must not be appended to — or cached against — the new
+            // one.
+            const month = this.currentMonth;
+            const data = await api.getMonth(month, cursor);
+            if (month !== this.currentMonth) return;
+
             this.allExpenses = [...this.allExpenses, ...(data.expenses || [])];
             this.expensesCursor = data.next_cursor || null;
 
+            // Fold the newly-loaded page into the month's cache entry.
+            // loadMonthView serves that entry verbatim on a revisit, so
+            // without this every extra page the user paged in was silently
+            // discarded the moment they switched months and came back — the
+            // list would collapse to page one with the Load More button back.
+            const cached = this.monthCache.get(month);
+            if (cached) {
+                cached.expenses = this.allExpenses;
+                cached.next_cursor = this.expensesCursor;
+            }
+
             ui.renderExpenses(this.allExpenses, this.expenseCallbacks(), this.expensesCursor);
         } catch (error) {
-            ui.showToast('Failed to load more expenses', 'error');
+            ui.showToast(labels.failed_more_expenses_toast, 'error');
         }
     }
 
@@ -642,7 +702,8 @@ class App {
             const maxExpenses = ui.maxMonthExpenses(data.months);
             for (const month of data.months) {
                 container.appendChild(
-                    ui.buildMonthRow(month, this.currentMonth, (m) => this.selectMonth(m), maxExpenses)
+                    ui.buildMonthRow(month, this.currentMonth, (m) => this.selectMonth(m), maxExpenses,
+                        (m) => this.handleDeleteMonth(m))
                 );
             }
 
@@ -652,7 +713,7 @@ class App {
                 );
             }
         } catch (error) {
-            ui.showToast('Failed to load more months', 'error');
+            ui.showToast(labels.failed_more_months_toast, 'error');
         }
     }
 
@@ -681,13 +742,14 @@ class App {
                     this.currentMonth,
                     (m) => this.selectMonth(m),
                     data.next_cursor,
-                    (cursor) => this.loadMoreMonths(cursor)
+                    (cursor) => this.loadMoreMonths(cursor),
+                    (month) => this.handleDeleteMonth(month)
                 );
             } else {
                 await this.loadInitialData();
             }
         } catch (error) {
-            ui.showToast('Failed to refresh', 'error');
+            ui.showToast(labels.failed_refresh_toast, 'error');
         }
     }
 
@@ -787,7 +849,7 @@ class App {
         try {
             await this.loadMonthView(month);
         } catch {
-            ui.showToast('Failed to load month data', 'error');
+            ui.showToast(labels.failed_month_toast, 'error');
         }
     }
 
@@ -805,17 +867,17 @@ class App {
         ui.hideError('expense-error');
 
         if (isNaN(amount) || amount <= 0) {
-            ui.showError('expense-error', 'Please enter a valid amount');
+            ui.showError('expense-error', labels.invalid_amount_error);
             return;
         }
 
         if (amount > 99999.99) {
-            ui.showError('expense-error', 'Amount cannot exceed $99,999.99');
+            ui.showError('expense-error', labels.amount_too_large_error);
             return;
         }
 
         if (!description) {
-            ui.showError('expense-error', 'Please enter a description');
+            ui.showError('expense-error', labels.description_required_error);
             return;
         }
 
@@ -835,7 +897,7 @@ class App {
         const submitBtn = document.querySelector('#expense-form button[type="submit"]');
         const origText = submitBtn.textContent;
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Saving...';
+        submitBtn.textContent = labels.saving_action;
 
         // Derive the target month from the chosen date when provided; otherwise
         // fall back to the current local month (original behaviour).
@@ -850,7 +912,7 @@ class App {
         try {
             await api.addExpense(amount, description, chosenDate || null);
             ui.closeModal('expense-modal');
-            ui.showToast('Expense added!', 'success');
+            ui.showToast(labels.expense_added_toast, 'success');
             ui.vibrate(15);
 
             // The mutation changed the target month (and possibly created it),
@@ -912,17 +974,17 @@ class App {
         ui.hideError('edit-expense-error');
 
         if (isNaN(amount) || amount <= 0) {
-            ui.showError('edit-expense-error', 'Please enter a valid amount');
+            ui.showError('edit-expense-error', labels.invalid_amount_error);
             return;
         }
 
         if (amount > 99999.99) {
-            ui.showError('edit-expense-error', 'Amount cannot exceed $99,999.99');
+            ui.showError('edit-expense-error', labels.amount_too_large_error);
             return;
         }
 
         if (!description) {
-            ui.showError('edit-expense-error', 'Please enter a description');
+            ui.showError('edit-expense-error', labels.description_required_error);
             return;
         }
 
@@ -942,7 +1004,7 @@ class App {
         const submitBtn = document.querySelector('#edit-expense-form button[type="submit"]');
         const origText = submitBtn.textContent;
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Saving...';
+        submitBtn.textContent = labels.saving_action;
 
         const editMonth = this.currentMonth;
         const editId = this.editingExpenseId;
@@ -969,7 +1031,7 @@ class App {
                     labels.expense_moved_to_toast.replace('{month}', ui.formatMonthName(movedTo)),
                     'success');
             } else {
-                ui.showToast('Expense updated!', 'success');
+                ui.showToast(labels.expense_updated_toast, 'success');
                 // Same-month edit (amount/description, or a same-month re-date):
                 // apply the response in place, then drop the month's cache so a
                 // later revisit refetches authoritative summary fields. A
@@ -1110,7 +1172,7 @@ class App {
         this.invalidateMonth(pending.month);
         api.deleteExpense(pending.month, pending.expenseId).catch(() => {
             this.restoreDeletedExpense(pending);
-            ui.showToast('Failed to delete expense', 'error');
+            ui.showToast(labels.failed_delete_expense_toast, 'error');
         });
     }
 
@@ -1171,7 +1233,7 @@ class App {
         ui.hideError('create-month-error');
 
         if (!month) {
-            ui.showError('create-month-error', 'Please enter a valid month (YYYY-MM)');
+            ui.showError('create-month-error', labels.invalid_month_error);
             return;
         }
         monthInput.value = month;
@@ -1179,12 +1241,12 @@ class App {
         const submitBtn = document.querySelector('#create-month-form button[type="submit"]');
         const origText = submitBtn.textContent;
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Creating...';
+        submitBtn.textContent = labels.creating_action;
 
         try {
             await api.createMonth(month);
             ui.closeModal('create-month-modal');
-            ui.showToast('Month created!', 'success');
+            ui.showToast(labels.month_created_toast, 'success');
             // A new month changes the list and (if now the latest) the view.
             this.invalidateMonth(month);
             await this.loadInitialData();
@@ -1203,24 +1265,24 @@ class App {
         ui.hideError('add-funds-error');
 
         if (isNaN(amount) || amount <= 0) {
-            ui.showError('add-funds-error', 'Please enter a valid amount');
+            ui.showError('add-funds-error', labels.invalid_amount_error);
             return;
         }
 
         if (amount > 99999.99) {
-            ui.showError('add-funds-error', 'Amount cannot exceed $99,999.99');
+            ui.showError('add-funds-error', labels.amount_too_large_error);
             return;
         }
 
         if (!this.currentMonth) {
-            ui.showError('add-funds-error', 'No month selected');
+            ui.showError('add-funds-error', labels.no_month_selected_error);
             return;
         }
 
         const submitBtn = document.querySelector('#add-funds-form button[type="submit"]');
         const origText = submitBtn.textContent;
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Adding...';
+        submitBtn.textContent = labels.adding_action;
 
         const fundsMonth = this.currentMonth;
 
@@ -1255,6 +1317,133 @@ class App {
         ui.updateDashboard(this.monthData);
     }
 
+    /**
+     * Deletes an empty month after confirmation, then reloads the dashboard.
+     *
+     * Only offered for months with nothing spent (the row hides the control
+     * otherwise) and the server independently refuses a non-empty month with
+     * a 409, whose message is surfaced as-is. Deleting also reverses the
+     * allowance that month credited, so the totals move — hence a full
+     * reload rather than a local patch.
+     * @param {string} month - "YYYY-MM"
+     */
+    async handleDeleteMonth(month) {
+        const name = ui.formatMonthName(month);
+        const accepted = await ui.showConfirm({
+            title: labels.delete_month_title || 'Delete this month?',
+            body: (labels.delete_month_body ||
+                'This removes {month} and takes back the funds it added. This cannot be undone.')
+                .replace('{month}', name),
+            confirmText: labels.delete_month_confirm || 'Delete',
+            cancelText: labels.cancel_action || 'Cancel',
+            danger: true,
+        });
+        if (!accepted) return;
+
+        try {
+            await api.deleteMonth(month);
+            ui.showToast(
+                (labels.month_deleted_toast || 'Deleted {month}').replace('{month}', name),
+                'success');
+
+            // Deleting debits the global balance and carry-propagates to every
+            // later month, so all cached payloads are stale — invalidateMonth
+            // clears the lot.
+            this.invalidateMonth(month);
+
+            // The deleted month may be the one on screen; loadInitialData
+            // re-picks a target from whatever months remain.
+            if (month === this.currentMonth) {
+                this.currentMonth = null;
+                try { localStorage.removeItem(LAST_MONTH_KEY); } catch { /* private mode */ }
+            }
+            await this.loadInitialData();
+        } catch (error) {
+            ui.showToast(error.message, 'error');
+        }
+    }
+
+    // --- Biometric unlock ---
+
+    /**
+     * Reflects the current biometric state on the menu button and wires the
+     * toggle.
+     *
+     * Before this the only way to enrol was a one-time prompt after login,
+     * remembered in localStorage — so a user who dismissed it once could
+     * never turn biometrics on again, and webauthn.disable() had no caller at
+     * all. It also became load-bearing when ChangePIN started revoking
+     * credentials: without a way back, rotating the PIN would silently strip
+     * biometric unlock for good.
+     */
+    async refreshBiometricMenu() {
+        const btn = document.getElementById('biometric-toggle-btn');
+        if (!btn) return;
+        try {
+            if (!webauthn.isWebAuthnSupported() ||
+                !(await webauthn.isPlatformAuthenticatorAvailable())) {
+                btn.classList.add('hidden');
+                return;
+            }
+            const status = await webauthn.getAuthStatus();
+            // getAuthStatus never rejects — it returns null on any failure —
+            // so a network error is indistinguishable from a real answer
+            // unless it is checked explicitly. Treating null as
+            // "not enrolled" would offer "Enable" to a user who already has a
+            // credential, and clicking it would enrol a SECOND authenticator.
+            // When the state is unknown, show nothing.
+            if (!status) {
+                btn.classList.add('hidden');
+                return;
+            }
+            const enrolled = !!status.webauthn_enrolled;
+            btn.dataset.enrolled = enrolled ? '1' : '';
+            btn.textContent = enrolled
+                ? (labels.biometrics_disable || 'Disable biometric unlock')
+                : (labels.biometrics_enable || 'Enable biometric unlock');
+            btn.classList.remove('hidden');
+        } catch {
+            // Defensive: the calls above are all total today, but a future
+            // change must not be able to strand the menu in a wrong state.
+            btn.classList.add('hidden');
+        }
+    }
+
+    /** Enrols or removes the platform authenticator, then refreshes the menu. */
+    async handleBiometricToggle() {
+        const btn = document.getElementById('biometric-toggle-btn');
+        if (!btn || btn.disabled) return;
+        const enrolled = !!btn.dataset.enrolled;
+        btn.disabled = true;
+        try {
+            if (enrolled) {
+                const accepted = await ui.showConfirm({
+                    title: labels.biometrics_disable_title || 'Turn off biometric unlock?',
+                    body: labels.biometrics_disable_body ||
+                        'You will need your PIN to unlock. You can turn this back on anytime.',
+                    confirmText: labels.biometrics_disable || 'Turn off',
+                    cancelText: labels.cancel_action || 'Cancel',
+                    danger: true,
+                });
+                if (!accepted) return;
+                await webauthn.disable();
+                ui.showToast(labels.biometrics_disabled_toast || 'Biometric unlock turned off', 'success');
+            } else {
+                await webauthn.register();
+                ui.showToast(labels.auth_biometrics_enabled || 'Biometric unlock enabled', 'success');
+            }
+            await this.refreshBiometricMenu();
+        } catch (error) {
+            // A dismissed OS prompt is a choice, not a failure.
+            if (error.name !== 'NotAllowedError' && error.name !== 'AbortError') {
+                ui.showToast(error.message ||
+                    labels.auth_biometrics_enable_failed || 'Could not change biometric unlock', 'error');
+            }
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
     // --- PIN management ---
 
     async handleChangePin() {
@@ -1267,23 +1456,23 @@ class App {
         ui.hideError('change-pin-error');
 
         if (!/^\d{4,6}$/.test(newPin)) {
-            ui.showError('change-pin-error', 'New PIN must be 4-6 digits');
+            ui.showError('change-pin-error', labels.change_pin_rule);
             return;
         }
 
         if (newPin !== confirmPin) {
-            ui.showError('change-pin-error', 'New PINs do not match');
+            ui.showError('change-pin-error', labels.change_pin_no_match);
             return;
         }
 
         // Show loading state
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Changing...';
+        submitBtn.textContent = labels.changing_action;
 
         try {
             await api.changePin(currentPin, newPin);
             this.closeChangePinModal();
-            ui.showToast('PIN changed successfully!', 'success');
+            ui.showToast(labels.pin_changed_toast, 'success');
         } catch (error) {
             ui.showError('change-pin-error', error.message);
         } finally {

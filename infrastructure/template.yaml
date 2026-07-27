@@ -45,6 +45,17 @@ Parameters:
     AllowedValues: ["true", "false"]
     Description: When "true", new months inherit previous month's ending balance as starting balance
 
+  WebAuthnDisplayName:
+    Type: String
+    Default: Passbook
+    MaxLength: 64
+    Description: >-
+      Relying-party name the OS shows in the biometric prompt (Face ID / Touch
+      ID / Windows Hello). The backend reads this via WEBAUTHN_RP_DISPLAY_NAME;
+      without it every instance identified itself as the built-in default
+      "Passbook", so a user with two instances installed could not tell which
+      one was asking.
+
 Resources:
   #===========================================
   # DynamoDB Table
@@ -145,6 +156,7 @@ Resources:
           MONTHLY_ALLOWANCE: !Ref MonthlyAllowance
           ALLOW_OVERSPENDING: !Ref AllowOverspending
           CARRY_OVER_BALANCE: !Ref CarryOverBalance
+          WEBAUTHN_RP_DISPLAY_NAME: !Ref WebAuthnDisplayName
       Tags:
         - Key: Application
           Value: Passbook

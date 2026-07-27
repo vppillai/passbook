@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/vppillai/passbook/backend/internal/httperr"
 	"github.com/vppillai/passbook/backend/internal/middleware"
 	"github.com/vppillai/passbook/backend/internal/model"
 	"github.com/vppillai/passbook/backend/internal/service"
@@ -40,7 +41,7 @@ func (rt *Router) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 	isSetup, err := rt.authService.IsSetup(r.Context())
 	if err != nil {
 		log.Printf("auth.status: %v", err)
-		http.Error(w, `{"error":"Failed to check setup status"}`, http.StatusInternalServerError)
+		httperr.WriteJSON(w, http.StatusInternalServerError, "Failed to check setup status")
 		return
 	}
 
@@ -62,21 +63,21 @@ func (rt *Router) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 func (rt *Router) handleSetupPIN(w http.ResponseWriter, r *http.Request) {
 	var req model.SetupPinRequest
 	if err := decodeStrict(&req, r); err != nil {
-		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
+		httperr.WriteJSON(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	if err := rt.authService.SetupPIN(r.Context(), req.Pin); err != nil {
 		switch {
 		case errors.Is(err, service.ErrPINAlreadySet):
-			http.Error(w, `{"error":"PIN already set up"}`, http.StatusConflict)
+			httperr.WriteJSON(w, http.StatusConflict, "PIN already set up")
 		case errors.Is(err, service.ErrPINTooShort):
-			http.Error(w, `{"error":"PIN must be 4-6 digits"}`, http.StatusBadRequest)
+			httperr.WriteJSON(w, http.StatusBadRequest, "PIN must be 4-6 digits")
 		case errors.Is(err, service.ErrPINNotNumeric):
-			http.Error(w, `{"error":"PIN must contain only digits"}`, http.StatusBadRequest)
+			httperr.WriteJSON(w, http.StatusBadRequest, "PIN must contain only digits")
 		default:
 			log.Printf("auth.setup: %v", err)
-			http.Error(w, `{"error":"Failed to set up PIN"}`, http.StatusInternalServerError)
+			httperr.WriteJSON(w, http.StatusInternalServerError, "Failed to set up PIN")
 		}
 		return
 	}
@@ -87,14 +88,14 @@ func (rt *Router) handleSetupPIN(w http.ResponseWriter, r *http.Request) {
 func (rt *Router) handleVerifyPIN(w http.ResponseWriter, r *http.Request) {
 	var req model.VerifyPinRequest
 	if err := decodeStrict(&req, r); err != nil {
-		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
+		httperr.WriteJSON(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	response, err := rt.authService.VerifyPIN(r.Context(), req.Pin, r.Header.Get(SourceIPHeader))
 	if err != nil {
 		log.Printf("auth.verify: %v", err)
-		http.Error(w, `{"error":"Failed to verify PIN"}`, http.StatusInternalServerError)
+		httperr.WriteJSON(w, http.StatusInternalServerError, "Failed to verify PIN")
 		return
 	}
 
@@ -116,21 +117,21 @@ func (rt *Router) handleVerifyPIN(w http.ResponseWriter, r *http.Request) {
 func (rt *Router) handleChangePIN(w http.ResponseWriter, r *http.Request) {
 	var req model.ChangePinRequest
 	if err := decodeStrict(&req, r); err != nil {
-		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
+		httperr.WriteJSON(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	if err := rt.authService.ChangePIN(r.Context(), req.CurrentPin, req.NewPin); err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidPIN):
-			http.Error(w, `{"error":"Current PIN is incorrect"}`, http.StatusUnauthorized)
+			httperr.WriteJSON(w, http.StatusUnauthorized, "Current PIN is incorrect")
 		case errors.Is(err, service.ErrPINTooShort):
-			http.Error(w, `{"error":"New PIN must be 4-6 digits"}`, http.StatusBadRequest)
+			httperr.WriteJSON(w, http.StatusBadRequest, "New PIN must be 4-6 digits")
 		case errors.Is(err, service.ErrPINNotNumeric):
-			http.Error(w, `{"error":"New PIN must contain only digits"}`, http.StatusBadRequest)
+			httperr.WriteJSON(w, http.StatusBadRequest, "New PIN must contain only digits")
 		default:
 			log.Printf("auth.change: %v", err)
-			http.Error(w, `{"error":"Failed to change PIN"}`, http.StatusInternalServerError)
+			httperr.WriteJSON(w, http.StatusInternalServerError, "Failed to change PIN")
 		}
 		return
 	}
@@ -146,7 +147,7 @@ func (rt *Router) handleLogout(w http.ResponseWriter, r *http.Request) {
 			// the token may still be valid server-side and a client
 			// that trusts our success would stop trying to revoke.
 			log.Printf("auth.logout: %v", err)
-			http.Error(w, `{"error":"Failed to revoke session"}`, http.StatusInternalServerError)
+			httperr.WriteJSON(w, http.StatusInternalServerError, "Failed to revoke session")
 			return
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/vppillai/passbook/backend/internal/httperr"
 	"github.com/vppillai/passbook/backend/internal/model"
 	"github.com/vppillai/passbook/backend/internal/service"
 )
@@ -15,7 +16,7 @@ import (
 // startup (nil service). PIN auth still works, so the client falls back.
 func (rt *Router) webauthnUnavailable(w http.ResponseWriter) bool {
 	if rt.webauthnService == nil {
-		http.Error(w, `{"error":"WebAuthn is not available"}`, http.StatusServiceUnavailable)
+		httperr.WriteJSON(w, http.StatusServiceUnavailable, "WebAuthn is not available")
 		return true
 	}
 	return false
@@ -31,7 +32,7 @@ func (rt *Router) handleWebAuthnRegisterOptions(w http.ResponseWriter, r *http.R
 	resp, err := rt.webauthnService.BeginRegistration(r.Context())
 	if err != nil {
 		log.Printf("webauthn.register.options: %v", err)
-		http.Error(w, `{"error":"Failed to start registration"}`, http.StatusInternalServerError)
+		httperr.WriteJSON(w, http.StatusInternalServerError, "Failed to start registration")
 		return
 	}
 	json.NewEncoder(w).Encode(resp)
@@ -45,18 +46,18 @@ func (rt *Router) handleWebAuthnRegister(w http.ResponseWriter, r *http.Request)
 	}
 	var req model.WebAuthnVerifyRequest
 	if err := decodeStrict(&req, r); err != nil {
-		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
+		httperr.WriteJSON(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 	if err := rt.webauthnService.FinishRegistration(r.Context(), &req); err != nil {
 		switch {
 		case errors.Is(err, service.ErrWebAuthnChallengeNotFound):
-			http.Error(w, `{"error":"Registration challenge expired, please retry"}`, http.StatusBadRequest)
+			httperr.WriteJSON(w, http.StatusBadRequest, "Registration challenge expired, please retry")
 		case errors.Is(err, service.ErrWebAuthnVerification):
-			http.Error(w, `{"error":"Could not verify the authenticator"}`, http.StatusBadRequest)
+			httperr.WriteJSON(w, http.StatusBadRequest, "Could not verify the authenticator")
 		default:
 			log.Printf("webauthn.register: %v", err)
-			http.Error(w, `{"error":"Failed to register"}`, http.StatusInternalServerError)
+			httperr.WriteJSON(w, http.StatusInternalServerError, "Failed to register")
 		}
 		return
 	}
@@ -72,11 +73,11 @@ func (rt *Router) handleWebAuthnLoginOptions(w http.ResponseWriter, r *http.Requ
 	resp, err := rt.webauthnService.BeginLogin(r.Context())
 	if err != nil {
 		if errors.Is(err, service.ErrWebAuthnNotEnrolled) {
-			http.Error(w, `{"error":"Biometric unlock is not set up"}`, http.StatusBadRequest)
+			httperr.WriteJSON(w, http.StatusBadRequest, "Biometric unlock is not set up")
 			return
 		}
 		log.Printf("webauthn.login.options: %v", err)
-		http.Error(w, `{"error":"Failed to start login"}`, http.StatusInternalServerError)
+		httperr.WriteJSON(w, http.StatusInternalServerError, "Failed to start login")
 		return
 	}
 	json.NewEncoder(w).Encode(resp)
@@ -93,18 +94,18 @@ func (rt *Router) handleWebAuthnLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	var req model.WebAuthnVerifyRequest
 	if err := decodeStrict(&req, r); err != nil {
-		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
+		httperr.WriteJSON(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	response, err := rt.webauthnService.FinishLogin(r.Context(), &req, r.Header.Get(SourceIPHeader))
 	if err != nil {
 		if errors.Is(err, service.ErrWebAuthnChallengeNotFound) {
-			http.Error(w, `{"error":"Login challenge expired, please retry"}`, http.StatusBadRequest)
+			httperr.WriteJSON(w, http.StatusBadRequest, "Login challenge expired, please retry")
 			return
 		}
 		log.Printf("webauthn.login: %v", err)
-		http.Error(w, `{"error":"Failed to verify"}`, http.StatusInternalServerError)
+		httperr.WriteJSON(w, http.StatusInternalServerError, "Failed to verify")
 		return
 	}
 
@@ -132,7 +133,7 @@ func (rt *Router) handleWebAuthnDisable(w http.ResponseWriter, r *http.Request) 
 	}
 	if err := rt.webauthnService.DisableWebAuthn(r.Context()); err != nil {
 		log.Printf("webauthn.disable: %v", err)
-		http.Error(w, `{"error":"Failed to disable biometric unlock"}`, http.StatusInternalServerError)
+		httperr.WriteJSON(w, http.StatusInternalServerError, "Failed to disable biometric unlock")
 		return
 	}
 	json.NewEncoder(w).Encode(model.SuccessResponse{Success: true, Message: "Biometric unlock disabled"})

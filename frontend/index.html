@@ -6,7 +6,14 @@
     <meta name="theme-color" content="#4A90A4">
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0c0e12">
     <meta name="description" content="Kids Passbook - Track allowance and expenses">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://*.execute-api.us-west-2.amazonaws.com; manifest-src 'self'">
+    <!-- base-uri 'none' stops injected markup from re-pointing every relative
+         URL (scripts, the manifest, API calls) at another origin; form-action
+         'none' is safe because this app never submits a form to the network
+         (every <form> is intercepted in JS). Both are honoured in a <meta>
+         CSP. frame-ancestors is NOT — it is header-only and GitHub Pages
+         cannot set headers, so clickjacking cover for the static origin
+         remains out of reach here; the API sends X-Frame-Options itself. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://*.execute-api.us-west-2.amazonaws.com; manifest-src 'self'; base-uri 'none'; form-action 'none'">
     <meta name="referrer" content="strict-origin">
     <title data-i18n="app_title">My Passbook</title>
     <link rel="preload" href="assets/fonts/bricolage-grotesque-var.woff2" as="font" type="font/woff2" crossorigin>
@@ -197,6 +204,9 @@
             <!-- Month items rendered here -->
         </ul>
         <div class="menu-footer">
+            <!-- Hidden until app.js confirms a platform authenticator exists;
+                 its label flips between enable/disable from server state. -->
+            <button id="biometric-toggle-btn" class="btn btn-secondary btn-full hidden" type="button"></button>
             <button id="change-pin-btn" class="btn btn-secondary btn-full">Change PIN</button>
             <button id="logout-btn" class="btn btn-outline btn-full">Lock</button>
             <span class="app-version">dev</span>

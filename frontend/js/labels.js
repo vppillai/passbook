@@ -41,6 +41,87 @@ const defaultLabels = {
     // is replaced with the target month's display name. Instance-divergent.
     expense_moved_to_toast: 'Moved to {month}',
 
+    // ---- PIN screens ----
+    auth_enter_pin: 'Enter your PIN',
+    auth_verifying: 'Verifying',
+    auth_logging_in: 'Logging in...',
+    setup_create_pin: 'Create your PIN (4-6 digits)',
+    setup_confirm_pin: 'Confirm your PIN',
+    setup_pins_no_match: 'PINs do not match. Try again.',
+    pin_created_toast: 'PIN created successfully!',
+    pin_changed_toast: 'PIN changed successfully!',
+    change_pin_rule: 'New PIN must be 4-6 digits',
+    change_pin_no_match: 'New PINs do not match',
+
+    // ---- In-flight button states ----
+    saving_action: 'Saving...',
+    creating_action: 'Creating...',
+    adding_action: 'Adding...',
+    changing_action: 'Changing...',
+    load_more_action: 'Load More',
+    retry_action: 'Retry',
+
+    // ---- Day grouping in the expense list ----
+    day_today: 'Today',
+    day_yesterday: 'Yesterday',
+
+    // ---- Empty / loading / error states ----
+    no_expenses_this_month: 'No expenses yet this month',
+    no_history: 'No history yet',
+    no_data_title: 'No Data Yet',
+    empty_state_body: 'No entries yet. Open the menu to create a new month.',
+    loading_text: 'Loading…',
+    error_load_title: 'Couldn’t load',
+    error_load_body: 'Couldn’t load your data. Check your connection.',
+
+    // ---- Toasts and inline validation ----
+    expense_added_toast: 'Expense added!',
+    expense_updated_toast: 'Expense updated!',
+    month_created_toast: 'Month created!',
+    session_expired_toast: 'Session expired. Please log in again.',
+    failed_connect_toast: 'Failed to connect to server',
+    failed_history_toast: 'Failed to load history',
+    failed_refresh_toast: 'Failed to refresh',
+    failed_month_toast: 'Failed to load month data',
+    failed_more_expenses_toast: 'Failed to load more expenses',
+    failed_more_months_toast: 'Failed to load more months',
+    failed_delete_expense_toast: 'Failed to delete expense',
+    invalid_amount_error: 'Please enter a valid amount',
+    // Carries a literal $ because it is a label, not a formatted amount. A
+    // non-USD instance should override this alongside its format: block.
+    amount_too_large_error: 'Amount cannot exceed $99,999.99',
+    description_required_error: 'Please enter a description',
+    invalid_month_error: 'Please enter a valid month (YYYY-MM)',
+    no_month_selected_error: 'No month selected',
+
+    // ---- Biometric unlock ----
+    // These were referenced by auth.js from the start but never defined here,
+    // so they always fell through to the inline English fallbacks and no
+    // instance could override them.
+    auth_use_biometrics: 'Use biometrics',
+    auth_biometric_failed: 'Biometric unlock failed',
+    auth_enable_biometrics_title: 'Enable fingerprint/Face unlock?',
+    auth_enable_biometrics_body: 'Unlock the app with your fingerprint or face instead of typing your PIN. You can turn this off anytime.',
+    auth_enable_biometrics_confirm: 'Enable',
+    auth_enable_biometrics_cancel: 'Not now',
+    auth_biometrics_enabled: 'Biometric unlock enabled',
+    auth_biometrics_enable_failed: 'Could not enable biometric unlock',
+    // Menu toggle, which is the only way to turn biometrics back ON after
+    // dismissing the one-time offer or after a PIN change revokes credentials.
+    biometrics_enable: 'Enable biometric unlock',
+    biometrics_disable: 'Disable biometric unlock',
+    biometrics_disable_title: 'Turn off biometric unlock?',
+    biometrics_disable_body: 'You will need your PIN to unlock. You can turn this back on anytime.',
+    biometrics_disabled_toast: 'Biometric unlock turned off',
+
+    // ---- Month deletion ----
+    delete_month_aria: 'Delete month',
+    delete_month_title: 'Delete this month?',
+    delete_month_body: 'This removes {month} and takes back the funds it added. This cannot be undone.',
+    delete_month_confirm: 'Delete',
+    month_deleted_toast: 'Deleted {month}',
+    cancel_action: 'Cancel',
+
     // Auth error messages shown on the PIN screen.
     // `{n}` is replaced with the numeric attempts_remaining value.
     auth_wrong_pin: 'Incorrect PIN — {n} attempts remaining',
