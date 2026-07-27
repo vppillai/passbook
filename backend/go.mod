@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/aws/aws-lambda-go v1.54.0
-	github.com/aws/aws-sdk-go-v2 v1.41.12
+	github.com/aws/aws-sdk-go-v2 v1.42.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.23
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.20.46
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.58.0
