@@ -520,7 +520,7 @@ export function showConfirm({ title, body, confirmText = 'Confirm', cancelText =
     });
 }
 
-export function renderMonthsList(months, currentMonth, onSelect, nextCursor = null, onLoadMore = null) {
+export function renderMonthsList(months, currentMonth, onSelect, nextCursor = null, onLoadMore = null, onDelete = null) {
     const container = document.getElementById('months-list');
     container.replaceChildren();
 
@@ -536,7 +536,7 @@ export function renderMonthsList(months, currentMonth, onSelect, nextCursor = nu
 
     const maxExpenses = maxMonthExpenses(months);
     for (const month of months) {
-        container.appendChild(buildMonthRow(month, currentMonth, onSelect, maxExpenses));
+        container.appendChild(buildMonthRow(month, currentMonth, onSelect, maxExpenses, onDelete));
     }
 
     if (nextCursor && onLoadMore) {
@@ -561,7 +561,7 @@ export function maxMonthExpenses(months) {
     return max;
 }
 
-export function buildMonthRow(month, currentMonth, onSelect, maxExpenses = 0) {
+export function buildMonthRow(month, currentMonth, onSelect, maxExpenses = 0, onDelete = null) {
     // The selectable row is a real <button> (inside a list <li>) so it is
     // keyboard- and screen-reader-accessible — Enter/Space activate it and
     // it's announced as a button, unlike the previous click-only <li> (a11y).
@@ -613,6 +613,29 @@ export function buildMonthRow(month, currentMonth, onSelect, maxExpenses = 0) {
         btn.addEventListener('click', () => onSelect(month.month));
     }
     li.appendChild(btn);
+
+    // Delete is offered only for a month with nothing spent in it. The server
+    // enforces the same rule (409 while expenses remain) — this just avoids
+    // showing an action that is guaranteed to fail. It sits outside the
+    // selectable button so activating it never also switches month.
+    if (typeof onDelete === 'function' && Number(month.total_expenses) === 0) {
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'month-delete';
+        del.setAttribute('aria-label',
+            `${labels.delete_month_aria || 'Delete'} ${formatMonthName(month.month)}`);
+        del.title = labels.delete_month_aria || 'Delete month';
+        del.appendChild(svgIcon(
+            '<line x1="18" y1="6" x2="6" y2="18"></line>' +
+            '<line x1="6" y1="6" x2="18" y2="18"></line>'
+        ));
+        del.addEventListener('click', (e) => {
+            e.stopPropagation();
+            onDelete(month.month);
+        });
+        li.appendChild(del);
+    }
+
     return li;
 }
 

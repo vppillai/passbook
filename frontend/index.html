@@ -204,6 +204,9 @@
             <!-- Month items rendered here -->
         </ul>
         <div class="menu-footer">
+            <!-- Hidden until app.js confirms a platform authenticator exists;
+                 its label flips between enable/disable from server state. -->
+            <button id="biometric-toggle-btn" class="btn btn-secondary btn-full hidden" type="button"></button>
             <button id="change-pin-btn" class="btn btn-secondary btn-full">Change PIN</button>
             <button id="logout-btn" class="btn btn-outline btn-full">Lock</button>
             <span class="app-version">dev</span>

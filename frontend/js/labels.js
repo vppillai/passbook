@@ -41,6 +41,34 @@ const defaultLabels = {
     // is replaced with the target month's display name. Instance-divergent.
     expense_moved_to_toast: 'Moved to {month}',
 
+    // ---- Biometric unlock ----
+    // These were referenced by auth.js from the start but never defined here,
+    // so they always fell through to the inline English fallbacks and no
+    // instance could override them.
+    auth_use_biometrics: 'Use biometrics',
+    auth_biometric_failed: 'Biometric unlock failed',
+    auth_enable_biometrics_title: 'Enable fingerprint/Face unlock?',
+    auth_enable_biometrics_body: 'Unlock the app with your fingerprint or face instead of typing your PIN. You can turn this off anytime.',
+    auth_enable_biometrics_confirm: 'Enable',
+    auth_enable_biometrics_cancel: 'Not now',
+    auth_biometrics_enabled: 'Biometric unlock enabled',
+    auth_biometrics_enable_failed: 'Could not enable biometric unlock',
+    // Menu toggle, which is the only way to turn biometrics back ON after
+    // dismissing the one-time offer or after a PIN change revokes credentials.
+    biometrics_enable: 'Enable biometric unlock',
+    biometrics_disable: 'Disable biometric unlock',
+    biometrics_disable_title: 'Turn off biometric unlock?',
+    biometrics_disable_body: 'You will need your PIN to unlock. You can turn this back on anytime.',
+    biometrics_disabled_toast: 'Biometric unlock turned off',
+
+    // ---- Month deletion ----
+    delete_month_aria: 'Delete month',
+    delete_month_title: 'Delete this month?',
+    delete_month_body: 'This removes {month} and takes back the funds it added. This cannot be undone.',
+    delete_month_confirm: 'Delete',
+    month_deleted_toast: 'Deleted {month}',
+    cancel_action: 'Cancel',
+
     // Auth error messages shown on the PIN screen.
     // `{n}` is replaced with the numeric attempts_remaining value.
     auth_wrong_pin: 'Incorrect PIN — {n} attempts remaining',

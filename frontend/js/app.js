@@ -4,6 +4,7 @@ import { auth } from './auth.js';
 import * as ui from './ui.js';
 import { labels, applyLabels } from './labels.js';
 import { removeExpense, insertExpense } from './expense_state.js';
+import * as webauthn from './webauthn.js';
 
 // ---- Haptic feedback via capture-phase event delegation on .pin-pad ----
 // auth.js owns the PIN pad buttons; we attach here in capture phase so we
@@ -231,7 +232,8 @@ class App {
             target,
             (month) => this.selectMonth(month),
             data.next_cursor,
-            (cursor) => this.loadMoreMonths(cursor)
+            (cursor) => this.loadMoreMonths(cursor),
+            (month) => this.handleDeleteMonth(month)
         );
 
         if (target) {
@@ -344,7 +346,17 @@ class App {
         document.getElementById('menu-btn').addEventListener('click', () => {
             ui.showMenu();
             this.loadMonthsList();
+            // Re-read enrollment each time: it can change from the post-login
+            // offer, from another device, or from a PIN change (which revokes
+            // every credential).
+            this.refreshBiometricMenu();
         });
+
+        // Biometric unlock toggle
+        const biometricBtn = document.getElementById('biometric-toggle-btn');
+        if (biometricBtn) {
+            biometricBtn.addEventListener('click', () => this.handleBiometricToggle());
+        }
 
         document.getElementById('close-menu').addEventListener('click', () => {
             ui.hideMenu();
@@ -595,7 +607,8 @@ class App {
                 this.currentMonth,
                 (month) => this.selectMonth(month),
                 data.next_cursor,
-                (cursor) => this.loadMoreMonths(cursor)
+                (cursor) => this.loadMoreMonths(cursor),
+                (month) => this.handleDeleteMonth(month)
             );
         } catch (error) {
             console.error('Failed to load months list:', error);
@@ -653,7 +666,8 @@ class App {
             const maxExpenses = ui.maxMonthExpenses(data.months);
             for (const month of data.months) {
                 container.appendChild(
-                    ui.buildMonthRow(month, this.currentMonth, (m) => this.selectMonth(m), maxExpenses)
+                    ui.buildMonthRow(month, this.currentMonth, (m) => this.selectMonth(m), maxExpenses,
+                        (m) => this.handleDeleteMonth(m))
                 );
             }
 
@@ -692,7 +706,8 @@ class App {
                     this.currentMonth,
                     (m) => this.selectMonth(m),
                     data.next_cursor,
-                    (cursor) => this.loadMoreMonths(cursor)
+                    (cursor) => this.loadMoreMonths(cursor),
+                    (month) => this.handleDeleteMonth(month)
                 );
             } else {
                 await this.loadInitialData();
@@ -1264,6 +1279,118 @@ class App {
         if (res.summary) this.monthData.summary = res.summary;
         if (typeof res.total_balance === 'number') this.monthData.total_balance = res.total_balance;
         ui.updateDashboard(this.monthData);
+    }
+
+    /**
+     * Deletes an empty month after confirmation, then reloads the dashboard.
+     *
+     * Only offered for months with nothing spent (the row hides the control
+     * otherwise) and the server independently refuses a non-empty month with
+     * a 409, whose message is surfaced as-is. Deleting also reverses the
+     * allowance that month credited, so the totals move — hence a full
+     * reload rather than a local patch.
+     * @param {string} month - "YYYY-MM"
+     */
+    async handleDeleteMonth(month) {
+        const name = ui.formatMonthName(month);
+        const accepted = await ui.showConfirm({
+            title: labels.delete_month_title || 'Delete this month?',
+            body: (labels.delete_month_body ||
+                'This removes {month} and takes back the funds it added. This cannot be undone.')
+                .replace('{month}', name),
+            confirmText: labels.delete_month_confirm || 'Delete',
+            cancelText: labels.cancel_action || 'Cancel',
+            danger: true,
+        });
+        if (!accepted) return;
+
+        try {
+            await api.deleteMonth(month);
+            ui.showToast(
+                (labels.month_deleted_toast || 'Deleted {month}').replace('{month}', name),
+                'success');
+
+            this.invalidateMonth(month);
+            // The deleted month may be the one on screen; loadInitialData
+            // re-picks a target from whatever months remain.
+            if (month === this.currentMonth) {
+                this.currentMonth = null;
+                try { localStorage.removeItem(LAST_MONTH_KEY); } catch { /* private mode */ }
+            }
+            await this.loadInitialData();
+        } catch (error) {
+            ui.showToast(error.message, 'error');
+        }
+    }
+
+    // --- Biometric unlock ---
+
+    /**
+     * Reflects the current biometric state on the menu button and wires the
+     * toggle.
+     *
+     * Before this the only way to enrol was a one-time prompt after login,
+     * remembered in localStorage — so a user who dismissed it once could
+     * never turn biometrics on again, and webauthn.disable() had no caller at
+     * all. It also became load-bearing when ChangePIN started revoking
+     * credentials: without a way back, rotating the PIN would silently strip
+     * biometric unlock for good.
+     */
+    async refreshBiometricMenu() {
+        const btn = document.getElementById('biometric-toggle-btn');
+        if (!btn) return;
+        try {
+            if (!webauthn.isWebAuthnSupported() ||
+                !(await webauthn.isPlatformAuthenticatorAvailable())) {
+                btn.classList.add('hidden');
+                return;
+            }
+            const status = await webauthn.getAuthStatus();
+            const enrolled = !!(status && status.webauthn_enrolled);
+            btn.dataset.enrolled = enrolled ? '1' : '';
+            btn.textContent = enrolled
+                ? (labels.biometrics_disable || 'Disable biometric unlock')
+                : (labels.biometrics_enable || 'Enable biometric unlock');
+            btn.classList.remove('hidden');
+        } catch {
+            // A status hiccup must never strand the menu in a wrong state.
+            btn.classList.add('hidden');
+        }
+    }
+
+    /** Enrols or removes the platform authenticator, then refreshes the menu. */
+    async handleBiometricToggle() {
+        const btn = document.getElementById('biometric-toggle-btn');
+        if (!btn || btn.disabled) return;
+        const enrolled = !!btn.dataset.enrolled;
+        btn.disabled = true;
+        try {
+            if (enrolled) {
+                const accepted = await ui.showConfirm({
+                    title: labels.biometrics_disable_title || 'Turn off biometric unlock?',
+                    body: labels.biometrics_disable_body ||
+                        'You will need your PIN to unlock. You can turn this back on anytime.',
+                    confirmText: labels.biometrics_disable || 'Turn off',
+                    cancelText: labels.cancel_action || 'Cancel',
+                    danger: true,
+                });
+                if (!accepted) return;
+                await webauthn.disable();
+                ui.showToast(labels.biometrics_disabled_toast || 'Biometric unlock turned off', 'success');
+            } else {
+                await webauthn.register();
+                ui.showToast(labels.auth_biometrics_enabled || 'Biometric unlock enabled', 'success');
+            }
+            await this.refreshBiometricMenu();
+        } catch (error) {
+            // A dismissed OS prompt is a choice, not a failure.
+            if (error.name !== 'NotAllowedError' && error.name !== 'AbortError') {
+                ui.showToast(error.message ||
+                    labels.auth_biometrics_enable_failed || 'Could not change biometric unlock', 'error');
+            }
+        } finally {
+            btn.disabled = false;
+        }
     }
 
     // --- PIN management ---

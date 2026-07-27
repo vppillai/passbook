@@ -452,6 +452,20 @@ class Api {
     }
 
     /**
+     * Deletes a month and reverses the allowance it credited.
+     *
+     * The server refuses (409) while the month still holds expenses, so the
+     * caller should only offer this for an empty month — but the check is the
+     * server's, not the client's.
+     *
+     * @param {string} month - Month key in "YYYY-MM" format
+     * @returns {Promise<Object>} Server response confirming deletion
+     */
+    async deleteMonth(month) {
+        return this.request('DELETE', `/api/month/${month}`);
+    }
+
+    /**
      * Adds funds (allowance) to a specific month.
      *
      * This increases the month's allowance, which affects the monthly savings

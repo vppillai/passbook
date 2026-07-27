@@ -19,8 +19,9 @@ A simple, secure budget-tracker app. One codebase, multiple independent deployme
 - Expense tracking with descriptions (add, edit, delete)
 - Running balance calculation (monthly and total)
 - Monthly history view with pagination
-- Month management from the UI (create months, add funds)
+- Month management from the UI (create months, add funds, delete an empty month)
 - PIN-protected access (4-6 digits)
+- Optional biometric unlock (Face ID / Touch ID / Windows Hello), toggleable from the menu
 - Mobile-first responsive design with bottom-sheet dialogs
 - Automatic dark mode (follows system preference)
 - Carried-over balance surfaced as its own dashboard chip (deficits stay visible)
@@ -87,6 +88,7 @@ A simple, secure budget-tracker app. One codebase, multiple independent deployme
 | GET | `/api/month/{yyyy-mm}?limit=50&cursor=` | Yes | Get month summary + expenses (paginated) |
 | POST | `/api/month` | Yes | Create a new month with allowance |
 | POST | `/api/month/{yyyy-mm}/funds` | Yes | Add funds to an existing month |
+| DELETE | `/api/month/{yyyy-mm}` | Yes | Delete an empty month (409 if it still has expenses; reverses its allowance) |
 | POST | `/api/expense` | Yes | Add new expense |
 | PUT | `/api/expense/{month}/{id}` | Yes | Edit expense amount and/or description |
 | DELETE | `/api/expense/{month}/{id}` | Yes | Delete expense (refunds balance) |
