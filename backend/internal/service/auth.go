@@ -206,11 +206,12 @@ func rateLimitedResponse(entry *model.RateLimitEntry) *model.VerifyPinResponse {
 // account from its own owner) and do NOT mint stray session tokens.
 //
 // Order of operations is deliberately revoke-then-update:
-//  1. Revoke every session. If this fails, we abort — the user will
-//     see an error and can retry. The PIN is unchanged.
-//  2. Update the PIN hash. If this fails, sessions are already gone
-//     and the user has to re-authenticate with the OLD PIN. That's
-//     recoverable.
+//  1. Revoke every session AND every enrolled biometric credential. If
+//     either fails, we abort — the user will see an error and can retry.
+//     The PIN is unchanged.
+//  2. Update the PIN hash. If this fails, sessions and credentials are
+//     already gone and the user has to re-authenticate with the OLD PIN
+//     and re-enrol biometrics. That's recoverable.
 //
 // The OLD ordering (update PIN first, then revoke) silently logged
 // session-revoke failures and returned success. A stolen token could
@@ -246,6 +247,17 @@ func (s *AuthService) ChangePIN(ctx context.Context, currentPIN, newPIN string) 
 	// Step 1: revoke every session. Hard failure aborts the change.
 	if err := s.repo.DeleteAllSessions(ctx); err != nil {
 		return fmt.Errorf("failed to revoke sessions: %w", err)
+	}
+
+	// Step 1b: revoke every enrolled biometric credential, for the same
+	// reason and with the same hard-failure handling. Biometric unlock is an
+	// independent path to a session that never involves the PIN, so an
+	// attacker who reached an authenticated session once could enroll their
+	// own authenticator and keep minting sessions straight through a PIN
+	// rotation. Rotating the PIN has to close every door, not just the one
+	// the PIN opens. The user re-enrols from the post-login prompt.
+	if err := s.repo.DeleteAllWebAuthnCredentials(ctx); err != nil {
+		return fmt.Errorf("failed to revoke biometric credentials: %w", err)
 	}
 
 	// Step 2: update the PIN hash. If this fails after the revoke,

@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/google/uuid"
@@ -93,6 +94,33 @@ func NewExpenseService(repo repository.RepositoryInterface, monthlyAllowance flo
 		allowOverspending: allowOverspending,
 		carryOverBalance:  carryOverBalance,
 	}
+}
+
+const (
+	// maxAmount is the ceiling for any single money input — an expense, an
+	// edit, or a funds top-up. The frontend's number inputs already carry
+	// max="99999.99"; this is the server-side half of that rule, so a
+	// request that bypasses the form cannot credit or debit an arbitrary
+	// figure into the ledger.
+	maxAmount = 99999.99
+
+	// maxDescriptionRunes is the description limit in CHARACTERS, matching
+	// both the user-facing error text and the HTML input's maxlength.
+	// Measuring bytes instead rejected any 100-character description in a
+	// non-Latin script that the form had already accepted.
+	maxDescriptionRunes = 100
+)
+
+// validateDescription trims surrounding whitespace and enforces
+// maxDescriptionRunes. Trimming BEFORE measuring is the shared rule: the add
+// path used to measure first and the edit path second, so a space-padded
+// description was rejected by one and accepted by the other.
+func validateDescription(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if utf8.RuneCountInString(s) > maxDescriptionRunes {
+		return "", ErrDescriptionTooLong
+	}
+	return s, nil
 }
 
 // roundCents rounds a dollar amount to 2 decimal places. JSON inputs and
@@ -616,13 +644,14 @@ func (s *ExpenseService) mirroredMonths(ctx context.Context) (map[string]bool, e
 // balances are walked forward to keep the ledger consistent (B3).
 func (s *ExpenseService) AddExpense(ctx context.Context, req *model.AddExpenseRequest) (*model.AddExpenseResponse, error) {
 	req.Amount = roundCents(req.Amount)
-	if req.Amount <= 0 || req.Amount > 99999.99 {
+	if req.Amount <= 0 || req.Amount > maxAmount {
 		return nil, ErrInvalidAmount
 	}
-	if len(req.Description) > 100 {
-		return nil, ErrDescriptionTooLong
+	description, err := validateDescription(req.Description)
+	if err != nil {
+		return nil, err
 	}
-	req.Description = strings.TrimSpace(req.Description)
+	req.Description = description
 	if req.Description == "" {
 		req.Description = "Expense"
 	}
@@ -781,16 +810,16 @@ func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expens
 	if req.Amount != nil {
 		rounded := roundCents(*req.Amount)
 		req.Amount = &rounded
-		if *req.Amount <= 0 || *req.Amount > 99999.99 {
+		if *req.Amount <= 0 || *req.Amount > maxAmount {
 			return nil, ErrInvalidAmount
 		}
 	}
 	if req.Description != nil {
-		trimmed := strings.TrimSpace(*req.Description)
-		req.Description = &trimmed
-		if len(*req.Description) > 100 {
-			return nil, ErrDescriptionTooLong
+		trimmed, derr := validateDescription(*req.Description)
+		if derr != nil {
+			return nil, derr
 		}
+		req.Description = &trimmed
 	}
 
 	currentExpense, err := s.repo.GetExpense(ctx, month, expenseID)
@@ -1307,6 +1336,13 @@ func (s *ExpenseService) AddFunds(ctx context.Context, month string, amount floa
 	amount = roundCents(amount)
 	if amount <= 0 {
 		return nil, ErrFundsNotPositive
+	}
+	// Upper bound, matching AddExpense and the form's max="99999.99". Without
+	// it a request that bypassed the form could credit an arbitrary figure
+	// into both the month summary and the global balance, with no undo short
+	// of hand-editing DynamoDB.
+	if amount > maxAmount {
+		return nil, ErrInvalidAmount
 	}
 
 	// Pre-check existence so the user gets a precise ErrMonthNotFound
