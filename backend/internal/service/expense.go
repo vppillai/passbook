@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strings"
@@ -419,16 +420,43 @@ func (s *ExpenseService) propagateToLaterMonths(ctx context.Context, month strin
 	if len(later) == 0 {
 		return nil
 	}
-	// Each later month's mirror must exist before the conditional delta
-	// update runs (delta updates are not upserts). On a freshly backfilled
-	// table the mirror exists; on a partially-backfilled one this closes
-	// the gap. EnsureMonthListMirror is a no-op when the mirror is present.
+	// Every target needs BOTH of its rows present before the conditional
+	// delta update runs, because delta updates are not upserts:
+	//
+	//   - Missing mirror: back-fill it. EnsureMonthListMirror is a no-op
+	//     when the mirror is already there.
+	//   - Missing CANONICAL row: the month came from an ORPHAN mirror whose
+	//     MONTH#<m>/SUMMARY row is gone. Since later months are discovered
+	//     from the MONTHLIST index, such a row would otherwise be handed to
+	//     PropagateLaterMonthDeltas, fail its canonical leg's
+	//     attribute_exists(PK) condition, and cancel the ENTIRE transaction
+	//     — losing the shift for every legitimate month too, after the
+	//     originating mutation had already committed. Skip it instead, so
+	//     one stale index row cannot break the whole carry chain.
+	//
+	// Orphans are reachable: scripts/add-data.sh's rmmonth deletes the
+	// canonical row and the mirror in separate calls, and DeleteMonth cannot
+	// clear one (it pre-reads the canonical summary and returns
+	// ErrMonthNotFound before touching the mirror).
+	targets := make([]string, 0, len(later))
 	for _, m := range later {
+		summary, err := s.repo.GetMonthSummary(ctx, m)
+		if err != nil {
+			return err
+		}
+		if summary == nil {
+			log.Printf("warn: MONTHLIST has an entry for %s with no canonical month row; skipping it in carry propagation", m)
+			continue
+		}
 		if err := s.repo.EnsureMonthListMirror(ctx, m); err != nil {
 			return err
 		}
+		targets = append(targets, m)
 	}
-	return s.repo.PropagateLaterMonthDeltas(ctx, later, roundCents(endingDelta))
+	if len(targets) == 0 {
+		return nil
+	}
+	return s.repo.PropagateLaterMonthDeltas(ctx, targets, roundCents(endingDelta))
 }
 
 // monthsAfterPageSize bounds each MONTHLIST Query page. Months are one row
@@ -519,14 +547,27 @@ func (s *ExpenseService) ensureMonthListComplete(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		var missing []model.MonthSummary
 		for _, m := range canonical {
-			if !mirrored[m.Month] {
-				missing = append(missing, m)
+			if mirrored[m.Month] {
+				continue
 			}
-		}
-		if len(missing) > 0 {
-			if err := s.repo.BackfillMonthList(ctx, missing); err != nil {
+			// EnsureMonthListMirror rather than BackfillMonthList. Backfill
+			// writes through BatchWriteItem, which cannot carry a
+			// ConditionExpression, so it is an unconditional full-item Put:
+			// between our mirror read and that write another container can
+			// create the mirror and delta-update it, and the Put would
+			// silently overwrite that with our older snapshot. Because every
+			// subsequent mirror write is a composable delta and nothing ever
+			// recomputes a mirror from its canonical row, such a clobber is
+			// permanent.
+			//
+			// EnsureMonthListMirror re-reads the canonical row and writes
+			// under attribute_not_exists(PK), so a mirror that appeared in
+			// the meantime is left untouched and our snapshot cannot go
+			// stale. That costs a point read and a conditional write per
+			// MISSING mirror — zero on an already-migrated table, and a
+			// one-time cost proportional to the month count on a legacy one.
+			if err := s.repo.EnsureMonthListMirror(ctx, m.Month); err != nil {
 				return err
 			}
 		}

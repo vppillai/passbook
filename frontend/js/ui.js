@@ -272,9 +272,14 @@ export function showUndoToast({ message, actionText, onUndo, onExpire, durationM
         settled = true;
         clearTimeout(timer);
         if (undoToastDismiss === settle) undoToastDismiss = null;
-        toast.classList.add('hidden');
         toast.replaceChildren();
+        // Assign className BEFORE adding 'hidden'. Assigning it replaces the
+        // whole class attribute, so doing it afterwards dropped the class
+        // that had just been added and left an empty toast pill on screen
+        // after every undo tap, expiry, and flush — `.hidden` is the only
+        // rule in styles.css that hides this element.
         toast.className = 'toast';
+        toast.classList.add('hidden');
         if (reason === 'undo') {
             if (typeof onUndo === 'function') onUndo();
         } else if (typeof onExpire === 'function') {

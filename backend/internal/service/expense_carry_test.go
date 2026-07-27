@@ -135,6 +135,51 @@ func TestExpenseMutation_DoesNotScanTablePerWrite(t *testing.T) {
 	})
 }
 
+// TestPropagation_IgnoresOrphanMonthListMirror pins a hazard created by
+// sourcing later months from the MONTHLIST index instead of the canonical
+// rows: a mirror row whose MONTH#<m>/SUMMARY row is gone.
+//
+// Reading canonical rows made such an orphan inert. Reading the index puts
+// it into the propagation set, where EnsureMonthListMirror no-ops (the
+// mirror is present, so there is nothing to back-fill) and
+// PropagateLaterMonthDeltas' attribute_exists(PK) condition on the CANONICAL
+// leg then cancels the whole TransactWriteItems — taking every legitimate
+// later month down with it, after the originating mutation has already
+// committed. The user sees a 500 on an expense that was in fact saved, and
+// the carry chain is left half-updated.
+//
+// Orphans are producible: scripts/add-data.sh's rmmonth deletes the
+// canonical row and the mirror in separate calls, so an interruption
+// between them leaves one behind, and DeleteMonth cannot clear it (it
+// pre-reads the canonical summary and returns ErrMonthNotFound first).
+func TestPropagation_IgnoresOrphanMonthListMirror(t *testing.T) {
+	ctx := context.Background()
+	svc, repo := newExpenseService(t, true, true, 100)
+	testutil.SeedMonth(repo, "2026-01", 0, 100, 0, 100)
+	testutil.SeedMonth(repo, "2026-02", 100, 100, 0, 200)
+	repo.Balance = &model.Balance{TotalBalance: 200}
+
+	// A mirror with no canonical row behind it.
+	repo.MonthList["2026-03"] = &model.MonthSummary{
+		Month: "2026-03", StartingBalance: 200, EndingBalance: 300,
+	}
+
+	if _, err := svc.AddExpense(ctx, &model.AddExpenseRequest{
+		Amount: 30, Description: "past", Month: "2026-01",
+	}); err != nil {
+		t.Fatalf("AddExpense failed because of an orphan mirror: %v", err)
+	}
+
+	// The real later month must still have been shifted.
+	if got := repo.Months["2026-02"].StartingBalance; got != 70 {
+		t.Errorf("Feb starting = %v, want 70 (propagation must survive the orphan)", got)
+	}
+	if got := repo.Months["2026-02"].EndingBalance; got != 170 {
+		t.Errorf("Feb ending = %v, want 170", got)
+	}
+	assertLedgerConsistent(t, repo, "2026-01", "2026-02")
+}
+
 // =====================================================================
 // Carry chain on MONTH-level mutations.
 //

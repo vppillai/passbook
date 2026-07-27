@@ -83,6 +83,39 @@ describe('undo toast settlement', () => {
         expect(calls).toEqual(['expire']);
     });
 
+    // settle() adds 'hidden' and then assigns toast.className, which replaces
+    // the WHOLE class attribute — dropping the class it just added. Nothing
+    // else hides the element (.hidden{display:none!important} is the only
+    // hiding rule in styles.css), so the empty pill stays on screen.
+    test('the toast is hidden after an undo tap', async () => {
+        ui.showUndoToast({
+            message: 'Expense deleted', actionText: 'Undo', durationMs: 5000,
+            onUndo: () => {}, onExpire: () => {},
+        });
+        toastEl().querySelector('.toast-undo').click();
+        expect(toastEl().classList.contains('hidden')).toBe(true);
+        expect(toastEl().textContent).toBe('');
+    });
+
+    test('the toast is hidden after the undo timer expires', async () => {
+        ui.showUndoToast({
+            message: 'Expense deleted', actionText: 'Undo', durationMs: 20,
+            onUndo: () => {}, onExpire: () => {},
+        });
+        await new Promise(r => setTimeout(r, 60));
+        expect(toastEl().classList.contains('hidden')).toBe(true);
+        expect(toastEl().textContent).toBe('');
+    });
+
+    test('the toast is hidden after flushUndoToast', () => {
+        ui.showUndoToast({
+            message: 'Expense deleted', actionText: 'Undo', durationMs: 5000,
+            onUndo: () => {}, onExpire: () => {},
+        });
+        ui.flushUndoToast();
+        expect(toastEl().classList.contains('hidden')).toBe(true);
+    });
+
     test('a second undo toast commits the first', () => {
         const calls = [];
         ui.showUndoToast({

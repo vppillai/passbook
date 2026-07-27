@@ -3,9 +3,15 @@ name: Test
 on:
   pull_request:
     branches: [main]
-  # Also gate direct pushes to main. deploy-backend.yaml re-runs the Go
-  # tests before deploying, but nothing re-ran the FRONTEND checks, so a
-  # push straight to main shipped the PWA with no test run at all.
+  # Also run on direct pushes to main. deploy-backend.yaml re-runs the Go
+  # tests before deploying, but nothing ran the FRONTEND checks on a push,
+  # so a commit straight to main shipped the PWA with no test run at all.
+  #
+  # NOTE: this reports, it does not gate. deploy-frontend.yaml triggers on
+  # the same push and has no `needs`/`workflow_run` dependency on this
+  # workflow, so Pages still publishes in parallel regardless of the result.
+  # Making it a true gate means restructuring deploy-frontend to wait on
+  # this workflow (or enabling a branch protection rule).
   push:
     branches: [main]
 
