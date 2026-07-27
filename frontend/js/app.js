@@ -621,6 +621,17 @@ class App {
             this.allExpenses = [...this.allExpenses, ...(data.expenses || [])];
             this.expensesCursor = data.next_cursor || null;
 
+            // Fold the newly-loaded page into the month's cache entry.
+            // loadMonthView serves that entry verbatim on a revisit, so
+            // without this every extra page the user paged in was silently
+            // discarded the moment they switched months and came back — the
+            // list would collapse to page one with the Load More button back.
+            const cached = this.monthCache.get(this.currentMonth);
+            if (cached) {
+                cached.expenses = this.allExpenses;
+                cached.next_cursor = this.expensesCursor;
+            }
+
             ui.renderExpenses(this.allExpenses, this.expenseCallbacks(), this.expensesCursor);
         } catch (error) {
             ui.showToast('Failed to load more expenses', 'error');

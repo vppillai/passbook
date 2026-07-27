@@ -56,6 +56,18 @@ class Auth {
         this.refreshBiometricButton();
     }
 
+    /**
+     * True while a rate-limit countdown is running. _startLockout disables
+     * the on-screen pad's buttons, but that only stops the mouse/touch path:
+     * the physical-keyboard handler synthesises the same input and never
+     * looks at the buttons. Both routes funnel through handleAuthInput, so
+     * that is where this is enforced.
+     * @returns {boolean}
+     */
+    _isLockedOut() {
+        return this._lockoutInterval !== null;
+    }
+
     /** Cancels any running lockout countdown and re-enables the PIN pad. */
     _clearLockout() {
         if (this._lockoutInterval !== null) {
@@ -415,6 +427,12 @@ class Auth {
     }
 
     handleAuthInput(value) {
+        // Refuse every input while the lockout countdown is showing. Both the
+        // on-screen pad and the physical keyboard land here, so one check
+        // covers both; previously the keyboard route stayed live and could
+        // fire a real verify request underneath a "try again in 2:34"
+        // message, which the server then refused anyway.
+        if (this._isLockedOut()) return;
         ui.hideError('auth-error');
 
         if (value === 'back') {

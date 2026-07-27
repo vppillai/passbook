@@ -42,6 +42,24 @@ export function roundCents(amount) {
     return Math.round(amount * 100) / 100;
 }
 
+/**
+ * Asks the service worker to drop every cached API response.
+ *
+ * The SW caches GET /api/months and /api/month/* so the dashboard repaints
+ * offline, which means the user's balances and expense descriptions live in
+ * Cache Storage. Dropping the session token does nothing to that copy, so
+ * without this the last-seen financial data stayed readable on disk after
+ * Lock/logout. Best-effort and silent: no SW (or no controller yet) simply
+ * means there is no such cache to clear.
+ */
+function purgeApiCache() {
+    try {
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({ type: 'PURGE_API_CACHE' });
+        }
+    } catch { /* SW unavailable — nothing cached to purge */ }
+}
+
 // Network request timeout. Without this, a flaky mobile connection makes
 // the spinner / disabled submit-button persist until the OS TCP timeout
 // (~2 min). 15s is long enough for a slow API GW cold start, short enough
@@ -209,6 +227,7 @@ class Api {
         this.sessionToken = null;
         localStorage.removeItem(SESSION_KEY);
         localStorage.removeItem(SESSION_EXPIRY_KEY);
+        purgeApiCache();
     }
 
     /**

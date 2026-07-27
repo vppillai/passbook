@@ -494,15 +494,23 @@ export function showConfirm({ title, body, confirmText = 'Confirm', cancelText =
             if (e.key === 'Escape') close(false);
         }
 
+        // The backdrop lives in index.html and outlives every confirm, so its
+        // listener must be removed explicitly. {once:true} was not enough: it
+        // only detaches when the listener FIRES, so every confirm dismissed
+        // by a button or by Escape left one attached forever, each closing
+        // over an already-settled promise.
+        const backdropEl = modal.querySelector('.modal-backdrop');
+        function onBackdrop() { close(false); }
+
         function close(result) {
             document.removeEventListener('keydown', onKeydown, true);
+            backdropEl.removeEventListener('click', onBackdrop);
             hideModal('confirm-modal');
             resolve(result);
         }
         newConfirm.addEventListener('click', () => close(true));
         newCancel.addEventListener('click', () => close(false));
-        modal.querySelector('.modal-backdrop').addEventListener(
-            'click', () => close(false), { once: true });
+        backdropEl.addEventListener('click', onBackdrop);
         // Capture phase so this fires before (and instead of) the global
         // Escape handler, which is bubble-phase and skips #confirm-modal.
         document.addEventListener('keydown', onKeydown, true);
