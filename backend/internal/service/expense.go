@@ -1154,6 +1154,11 @@ func (s *ExpenseService) CreateMonth(ctx context.Context, month string) (*model.
 				}
 				return nil, err
 			}
+			// Activating the allowance raises this month's ending balance,
+			// so every later month carries that much more.
+			if err := s.propagateToLaterMonths(ctx, month, allowance); err != nil {
+				return nil, err
+			}
 		}
 		updated, balance, err := s.fetchSummaryAndBalance(ctx, month)
 		if err != nil {
@@ -1189,6 +1194,15 @@ func (s *ExpenseService) CreateMonth(ctx context.Context, month string) (*model.
 		if errors.Is(err, repository.ErrMonthAlreadyExists) {
 			return nil, ErrMonthExists
 		}
+		return nil, err
+	}
+
+	// Creating a month that is NOT the latest splices it into the middle of
+	// the carry chain: months after it were carrying from whatever preceded
+	// this gap, and must now carry from this month's ending balance instead.
+	// The shift is exactly what this month contributes — its allowance, since
+	// a freshly created month has no expenses.
+	if err := s.propagateToLaterMonths(ctx, month, allowance); err != nil {
 		return nil, err
 	}
 
@@ -1233,6 +1247,16 @@ func (s *ExpenseService) DeleteMonth(ctx context.Context, month string) error {
 		}
 		return err
 	}
+
+	// Removing a month takes its contribution out of the carry chain, so
+	// later months must fall back to carrying from whatever preceded it.
+	// The delete is conditioned on total_expenses == 0, so this month's
+	// contribution (ending - starting) is exactly its allowance — the same
+	// figure AtomicDeleteMonth debits from the global balance, which keeps
+	// the two in lockstep.
+	if err := s.propagateToLaterMonths(ctx, month, -summary.AllowanceAdded); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1265,6 +1289,14 @@ func (s *ExpenseService) AddFunds(ctx context.Context, month string, amount floa
 			// Month vanished between our pre-check and the transaction.
 			return nil, ErrMonthNotFound
 		}
+		return nil, err
+	}
+
+	// Topping up raises this month's ending balance, so every later month
+	// carries that much more. Without this, funds added to a PAST month
+	// moved the global balance while later months kept their old carried
+	// figures, and the two drifted apart permanently.
+	if err := s.propagateToLaterMonths(ctx, month, amount); err != nil {
 		return nil, err
 	}
 

@@ -134,3 +134,190 @@ func TestExpenseMutation_DoesNotScanTablePerWrite(t *testing.T) {
 		}
 	})
 }
+
+// =====================================================================
+// Carry chain on MONTH-level mutations.
+//
+// propagateToLaterMonths is wired into every EXPENSE mutation, but the
+// three month-level operations that also move money — AddFunds,
+// CreateMonth, DeleteMonth — skipped it. Applied to anything other than
+// the newest month, each one shifted that month's ending balance and the
+// global BALANCE while leaving every later month's carried balance
+// untouched, so the two drifted apart permanently and every later write
+// compounded the gap.
+//
+// The invariant each test asserts is the one that actually matters to a
+// user: with carry-over on, the global BALANCE equals the newest month's
+// ending balance.
+// =====================================================================
+
+// assertLedgerConsistent checks the carry chain end to end: every month's
+// starting balance equals the previous month's ending balance, each ending
+// balance follows from its own inputs, and the global BALANCE matches the
+// newest month's ending balance. months must be in ascending order.
+func assertLedgerConsistent(t *testing.T, repo *testutil.FakeRepo, months ...string) {
+	t.Helper()
+	var prevEnding float64
+	for i, m := range months {
+		s := repo.Months[m]
+		if s == nil {
+			t.Fatalf("month %s missing", m)
+		}
+		if i > 0 && s.StartingBalance != prevEnding {
+			t.Errorf("%s starting = %v, want %v (previous month's ending)",
+				m, s.StartingBalance, prevEnding)
+		}
+		if want := s.StartingBalance + s.AllowanceAdded - s.TotalExpenses; s.EndingBalance != want {
+			t.Errorf("%s ending = %v, want %v (start + allowance - expenses)",
+				m, s.EndingBalance, want)
+		}
+		if mirror := repo.MonthList[m]; mirror != nil {
+			if mirror.StartingBalance != s.StartingBalance || mirror.EndingBalance != s.EndingBalance {
+				t.Errorf("%s mirror (%v/%v) drifted from canonical (%v/%v)",
+					m, mirror.StartingBalance, mirror.EndingBalance,
+					s.StartingBalance, s.EndingBalance)
+			}
+		}
+		prevEnding = s.EndingBalance
+	}
+	if repo.Balance.TotalBalance != prevEnding {
+		t.Errorf("global BALANCE = %v, want %v (newest month's ending balance)",
+			repo.Balance.TotalBalance, prevEnding)
+	}
+}
+
+func TestAddFunds_PropagatesCarryToLaterMonths(t *testing.T) {
+	ctx := context.Background()
+	svc, repo := newExpenseService(t, true, true, 100)
+	testutil.SeedMonth(repo, "2026-01", 0, 100, 0, 100)
+	testutil.SeedMonth(repo, "2026-02", 100, 100, 0, 200)
+	testutil.SeedMonth(repo, "2026-03", 200, 100, 0, 300)
+	repo.Balance = &model.Balance{TotalBalance: 300}
+
+	// Top up a PAST month: January's ending rises by 50, so February and
+	// March must each carry 50 more.
+	if _, err := svc.AddFunds(ctx, "2026-01", 50); err != nil {
+		t.Fatalf("AddFunds: %v", err)
+	}
+
+	if got := repo.Months["2026-01"].EndingBalance; got != 150 {
+		t.Errorf("Jan ending = %v, want 150", got)
+	}
+	if got := repo.Months["2026-02"].StartingBalance; got != 150 {
+		t.Errorf("Feb starting = %v, want 150 (carry shifted by +50)", got)
+	}
+	if got := repo.Months["2026-03"].EndingBalance; got != 350 {
+		t.Errorf("Mar ending = %v, want 350 (carry shifted by +50)", got)
+	}
+	assertLedgerConsistent(t, repo, "2026-01", "2026-02", "2026-03")
+}
+
+func TestCreateMonth_PropagatesCarryToLaterMonths(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("back-filling a skipped month re-links the chain", func(t *testing.T) {
+		svc, repo := newExpenseService(t, true, true, 100)
+		// January and March exist; February was skipped, so March carried
+		// straight from January.
+		testutil.SeedMonth(repo, "2026-01", 0, 100, 0, 100)
+		testutil.SeedMonth(repo, "2026-03", 100, 100, 0, 200)
+		repo.Balance = &model.Balance{TotalBalance: 200}
+
+		if _, err := svc.CreateMonth(ctx, "2026-02"); err != nil {
+			t.Fatalf("CreateMonth: %v", err)
+		}
+
+		// February carries from January and adds its own allowance, so March
+		// must now start from February's ending, not January's.
+		if got := repo.Months["2026-02"].EndingBalance; got != 200 {
+			t.Errorf("Feb ending = %v, want 200", got)
+		}
+		if got := repo.Months["2026-03"].StartingBalance; got != 200 {
+			t.Errorf("Mar starting = %v, want 200 (should carry from Feb, not Jan)", got)
+		}
+		assertLedgerConsistent(t, repo, "2026-01", "2026-02", "2026-03")
+	})
+
+	t.Run("activating an auto-created zero-allowance month", func(t *testing.T) {
+		svc, repo := newExpenseService(t, true, true, 100)
+		testutil.SeedMonth(repo, "2026-01", 0, 100, 0, 100)
+		// February was auto-created by an expense filed into it, so it carries
+		// a $0 allowance. CreateMonth activates the real allowance (U1).
+		testutil.SeedMonth(repo, "2026-02", 100, 0, 20, 80)
+		testutil.SeedMonth(repo, "2026-03", 80, 100, 0, 180)
+		repo.Balance = &model.Balance{TotalBalance: 180}
+
+		if _, err := svc.CreateMonth(ctx, "2026-02"); err != nil {
+			t.Fatalf("CreateMonth (activation): %v", err)
+		}
+
+		if got := repo.Months["2026-02"].AllowanceAdded; got != 100 {
+			t.Errorf("Feb allowance = %v, want 100", got)
+		}
+		if got := repo.Months["2026-03"].StartingBalance; got != 180 {
+			t.Errorf("Mar starting = %v, want 180 (carry shifted by +100)", got)
+		}
+		assertLedgerConsistent(t, repo, "2026-01", "2026-02", "2026-03")
+	})
+}
+
+func TestDeleteMonth_PropagatesCarryToLaterMonths(t *testing.T) {
+	ctx := context.Background()
+	svc, repo := newExpenseService(t, true, true, 100)
+	testutil.SeedMonth(repo, "2026-01", 0, 100, 0, 100)
+	testutil.SeedMonth(repo, "2026-02", 100, 100, 0, 200)
+	testutil.SeedMonth(repo, "2026-03", 200, 100, 0, 300)
+	repo.Balance = &model.Balance{TotalBalance: 300}
+
+	// Removing February takes its $100 allowance out of the ledger, so March
+	// must fall back to carrying from January.
+	if err := svc.DeleteMonth(ctx, "2026-02"); err != nil {
+		t.Fatalf("DeleteMonth: %v", err)
+	}
+
+	if repo.Months["2026-02"] != nil {
+		t.Fatal("Feb still present after delete")
+	}
+	if got := repo.Months["2026-03"].StartingBalance; got != 100 {
+		t.Errorf("Mar starting = %v, want 100 (should carry from Jan now)", got)
+	}
+	if got := repo.Months["2026-03"].EndingBalance; got != 200 {
+		t.Errorf("Mar ending = %v, want 200", got)
+	}
+	assertLedgerConsistent(t, repo, "2026-01", "2026-03")
+}
+
+// Carry-over off means later months start from zero, so none of the three
+// month-level operations may touch them.
+func TestMonthMutations_NoPropagationWhenCarryDisabled(t *testing.T) {
+	ctx := context.Background()
+
+	newSvc := func(t *testing.T) (*ExpenseService, *testutil.FakeRepo) {
+		t.Helper()
+		svc, repo := newExpenseService(t, true, false, 100)
+		testutil.SeedMonth(repo, "2026-01", 0, 100, 0, 100)
+		testutil.SeedMonth(repo, "2026-02", 0, 100, 0, 100)
+		repo.Balance = &model.Balance{TotalBalance: 200}
+		return svc, repo
+	}
+
+	t.Run("AddFunds", func(t *testing.T) {
+		svc, repo := newSvc(t)
+		if _, err := svc.AddFunds(ctx, "2026-01", 50); err != nil {
+			t.Fatalf("AddFunds: %v", err)
+		}
+		if got := repo.Months["2026-02"].StartingBalance; got != 0 {
+			t.Errorf("Feb starting = %v, want 0 (no carry, no propagation)", got)
+		}
+	})
+
+	t.Run("DeleteMonth", func(t *testing.T) {
+		svc, repo := newSvc(t)
+		if err := svc.DeleteMonth(ctx, "2026-01"); err != nil {
+			t.Fatalf("DeleteMonth: %v", err)
+		}
+		if got := repo.Months["2026-02"].StartingBalance; got != 0 {
+			t.Errorf("Feb starting = %v, want 0 (no carry, no propagation)", got)
+		}
+	})
+}
