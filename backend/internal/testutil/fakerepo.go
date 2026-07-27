@@ -42,6 +42,10 @@ type FakeRepo struct {
 	// enumeration partition).
 	WAChallenges  map[string]*model.WebAuthnChallenge
 	WACredentials map[string]*model.WebAuthnCredential
+
+	// LegacyScans counts ListAllMonthsLegacy calls — the full-table Scan.
+	// Tests assert this stays at 0 on the hot expense-mutation paths.
+	LegacyScans int
 }
 
 func NewFakeRepo() *FakeRepo {
@@ -254,7 +258,12 @@ func (f *FakeRepo) ListMonths(_ context.Context, limit int32, cursor map[string]
 	return page, lastKey, nil
 }
 
+// ListAllMonthsLegacy models the full-table Scan. LegacyScans counts calls so
+// tests can assert the hot mutation paths never reach it — in DynamoDB this
+// Scan reads (and bills for) every item in the table, so its cost grows with
+// every expense ever written.
 func (f *FakeRepo) ListAllMonthsLegacy(_ context.Context) ([]model.MonthSummary, error) {
+	f.LegacyScans++
 	out := make([]model.MonthSummary, 0, len(f.Months))
 	for _, s := range f.Months {
 		out = append(out, *s)

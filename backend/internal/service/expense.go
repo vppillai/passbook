@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -76,6 +77,12 @@ type ExpenseService struct {
 	monthlyAllowance  float64
 	allowOverspending bool
 	carryOverBalance  bool
+	// monthListReady records that the MONTHLIST index has been proven
+	// complete for this process, so carry propagation can discover later
+	// months with a sorted Query instead of a full-table Scan. See
+	// ensureMonthListComplete. Reset per process (a Lambda cold start
+	// re-verifies once), never persisted.
+	monthListReady atomic.Bool
 }
 
 func NewExpenseService(repo repository.RepositoryInterface, monthlyAllowance float64, allowOverspending bool, carryOverBalance bool) *ExpenseService {
@@ -424,32 +431,130 @@ func (s *ExpenseService) propagateToLaterMonths(ctx context.Context, month strin
 	return s.repo.PropagateLaterMonthDeltas(ctx, later, roundCents(endingDelta))
 }
 
+// monthsAfterPageSize bounds each MONTHLIST Query page. Months are one row
+// per calendar month, so a single page covers eight years.
+const monthsAfterPageSize = 100
+
 // monthsAfter returns the keys of every month strictly greater than `month`,
-// ascending. It reads the CANONICAL month rows (ListAllMonthsLegacy — the
-// full scan over MONTH#<m>/SUMMARY) rather than the MONTHLIST index.
+// ascending.
 //
-// The index is the wrong source here: on a legacy table its partition is
-// empty or partial, and reading it would silently miss later months, leaving
-// their starting_balance permanently wrong (the HIGH defect this fix
-// targets). It would also miss months whose mirror was just back-filled for
-// THIS month but not yet for the later ones. The canonical rows are always
-// complete regardless of mirror state, so propagation always sees the true
-// set of later months. Propagation only fires when carry-over is on and a
-// PAST month was mutated (a rare edit), and months are few (one row per
-// calendar month), so the scan cost is negligible.
+// It reads the MONTHLIST index — one sorted Query, descending, stopping at
+// the first month <= `month` — after ensureMonthListComplete has made that
+// index authoritative. It used to read the CANONICAL rows via
+// ListAllMonthsLegacy, a full-table Scan, on EVERY call. Because carry-over
+// defaults on and an expense delta is never zero, propagateToLaterMonths
+// reached here on every add/edit/delete, so every expense write Scanned the
+// whole table (DynamoDB bills a Scan for every item it reads, not every item
+// returned) — a cost that grew with every expense ever written, to answer a
+// question that is usually "none".
+//
+// Reading the index directly was previously rejected — correctly — because
+// on a legacy table the partition is empty or PARTIAL, and a partial index
+// silently misses later months, leaving their starting_balance permanently
+// wrong. ensureMonthListComplete removes that hazard before the Query runs.
 func (s *ExpenseService) monthsAfter(ctx context.Context, month string) ([]string, error) {
-	canonical, err := s.repo.ListAllMonthsLegacy(ctx)
-	if err != nil {
+	if err := s.ensureMonthListComplete(ctx); err != nil {
 		return nil, err
 	}
-	var later []string
-	for _, m := range canonical {
-		if m.Month > month {
+
+	var (
+		later  []string
+		cursor map[string]types.AttributeValue
+	)
+	for {
+		page, lastKey, err := s.repo.ListMonths(ctx, monthsAfterPageSize, cursor)
+		if err != nil {
+			return nil, err
+		}
+		stop := false
+		for _, m := range page {
+			if m.Month <= month {
+				// ListMonths is descending, so this and everything after it
+				// is at or before the target — nothing left to collect.
+				stop = true
+				break
+			}
 			later = append(later, m.Month)
 		}
+		if stop || lastKey == nil {
+			break
+		}
+		cursor = lastKey
 	}
+
 	sort.Slice(later, func(i, j int) bool { return later[i] < later[j] })
 	return later, nil
+}
+
+// ensureMonthListComplete guarantees that the MONTHLIST index holds a mirror
+// for every canonical month, so monthsAfter can trust a Query over it.
+//
+// Tables written before the index existed start with an empty partition, and
+// EnsureMonthListMirror back-fills a SINGLE month at a time on each mutation
+// — so the partition passes through a partial state in which it names some
+// real months but not all. Trusting it then would under-report the later
+// months and corrupt the carry chain, which is why propagation used to Scan.
+//
+// This runs the same lazy migration ListMonths already performs, but once per
+// process rather than once per write: Scan the canonical rows, compare
+// against what the index already holds, and write ONLY the missing mirrors.
+// Writing only the missing ones matters — BackfillMonthList Puts a snapshot,
+// so re-writing a mirror that already exists could clobber a concurrent
+// delta update (the same snapshot-vs-delta hazard documented on
+// PropagateLaterMonthDeltas).
+//
+// On failure the ready flag stays unset so the next call retries; a stale
+// "ready" would be the dangerous direction, an extra Scan is merely slow.
+func (s *ExpenseService) ensureMonthListComplete(ctx context.Context) error {
+	if s.monthListReady.Load() {
+		return nil
+	}
+
+	canonical, err := s.repo.ListAllMonthsLegacy(ctx)
+	if err != nil {
+		return err
+	}
+	if len(canonical) > 0 {
+		mirrored, err := s.mirroredMonths(ctx)
+		if err != nil {
+			return err
+		}
+		var missing []model.MonthSummary
+		for _, m := range canonical {
+			if !mirrored[m.Month] {
+				missing = append(missing, m)
+			}
+		}
+		if len(missing) > 0 {
+			if err := s.repo.BackfillMonthList(ctx, missing); err != nil {
+				return err
+			}
+		}
+	}
+
+	s.monthListReady.Store(true)
+	return nil
+}
+
+// mirroredMonths returns the set of months present in the MONTHLIST index,
+// paging through the partition.
+func (s *ExpenseService) mirroredMonths(ctx context.Context) (map[string]bool, error) {
+	present := make(map[string]bool)
+	var cursor map[string]types.AttributeValue
+	for {
+		page, lastKey, err := s.repo.ListMonths(ctx, monthsAfterPageSize, cursor)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range page {
+			present[m.Month] = true
+		}
+		if lastKey == nil {
+			break
+		}
+		cursor = lastKey
+	}
+	return present, nil
 }
 
 // AddExpense adds a new expense in a single DynamoDB transaction
