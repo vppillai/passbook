@@ -98,7 +98,7 @@ class Auth {
             if (remaining <= 0) {
                 this._clearLockout();
                 ui.hideError('auth-error');
-                document.getElementById('auth-message').textContent = 'Enter your PIN';
+                document.getElementById('auth-message').textContent = labels.auth_enter_pin;
                 return;
             }
             const msg = labels.auth_too_many_attempts.replace('{time}', formatCountdown(remaining));
@@ -179,7 +179,7 @@ class Auth {
         try {
             const result = await webauthn.login();
             this.setLoading(false, 'auth');
-            document.getElementById('auth-message').textContent = 'Enter your PIN';
+            document.getElementById('auth-message').textContent = labels.auth_enter_pin;
 
             if (result && result.success && result.token) {
                 // Mirror api.verifyPin's success path: persist the session,
@@ -195,7 +195,7 @@ class Auth {
             ui.showError('auth-error', (result && result.error) || labels.auth_biometric_failed || 'Biometric unlock failed');
         } catch (error) {
             this.setLoading(false, 'auth');
-            document.getElementById('auth-message').textContent = 'Enter your PIN';
+            document.getElementById('auth-message').textContent = labels.auth_enter_pin;
 
             // A 429 lockout from the shared rate limiter: reuse the PIN countdown.
             if (error.status === 429 && error.retry_after_seconds) {
@@ -307,7 +307,7 @@ class Auth {
         if (loading) {
             // Build "Verifying..." via DOM nodes (not innerHTML) so this stays
             // safe even if a future change pipes localized text through it.
-            message.textContent = 'Verifying';
+            message.textContent = labels.auth_verifying;
             for (let i = 0; i < 3; i++) {
                 const dot = document.createElement('span');
                 dot.className = 'dot';
@@ -333,7 +333,7 @@ class Auth {
                 } else {
                     // Go back to first PIN entry
                     this.isConfirmMode = false;
-                    document.getElementById('setup-message').textContent = 'Create your PIN (4-6 digits)';
+                    document.getElementById('setup-message').textContent = labels.setup_create_pin;
                     ui.updatePinDisplay('setup-screen', this.pin.length);
                 }
             } else {
@@ -352,7 +352,7 @@ class Auth {
                 if (this.pin.length >= 4) {
                     // Move to confirm mode
                     this.isConfirmMode = true;
-                    document.getElementById('setup-message').textContent = 'Confirm your PIN';
+                    document.getElementById('setup-message').textContent = labels.setup_confirm_pin;
                     ui.updatePinDisplay('setup-screen', 0);
                 }
             }
@@ -379,12 +379,12 @@ class Auth {
         ui.hideError('setup-error');
 
         if (this.pin !== this.confirmPin) {
-            ui.showError('setup-error', 'PINs do not match. Try again.');
+            ui.showError('setup-error', labels.setup_pins_no_match);
             ui.showPinError('setup-screen');
             this.pin = '';
             this.confirmPin = '';
             this.isConfirmMode = false;
-            document.getElementById('setup-message').textContent = 'Create your PIN (4-6 digits)';
+            document.getElementById('setup-message').textContent = labels.setup_create_pin;
             return;
         }
 
@@ -393,7 +393,7 @@ class Auth {
         try {
             await api.setupPin(this.pin);
             this.setLoading(false, 'setup');
-            ui.showToast('PIN created successfully!', 'success');
+            ui.showToast(labels.pin_created_toast, 'success');
 
             const savedPin = this.pin;
             this.pin = '';
@@ -401,7 +401,7 @@ class Auth {
             this.isConfirmMode = false;
 
             // Auto-login after setup
-            document.getElementById('auth-message').textContent = 'Logging in...';
+            document.getElementById('auth-message').textContent = labels.auth_logging_in;
             ui.showScreen('auth-screen');
 
             this.setLoading(true, 'auth');
@@ -413,7 +413,7 @@ class Auth {
                 // One-time offer to enable biometric unlock after first login.
                 this.maybeOfferBiometricEnrollment();
             } else {
-                document.getElementById('auth-message').textContent = 'Enter your PIN';
+                document.getElementById('auth-message').textContent = labels.auth_enter_pin;
             }
         } catch (error) {
             this.setLoading(false, 'setup');
@@ -422,7 +422,7 @@ class Auth {
             this.pin = '';
             this.confirmPin = '';
             this.isConfirmMode = false;
-            document.getElementById('setup-message').textContent = 'Create your PIN (4-6 digits)';
+            document.getElementById('setup-message').textContent = labels.setup_create_pin;
         }
     }
 
@@ -464,7 +464,7 @@ class Auth {
         try {
             const result = await api.verifyPin(this.pin);
             this.setLoading(false, 'auth');
-            document.getElementById('auth-message').textContent = 'Enter your PIN';
+            document.getElementById('auth-message').textContent = labels.auth_enter_pin;
 
             if (result.success) {
                 this._clearLockout();
@@ -497,7 +497,7 @@ class Auth {
 
             // 429 from an auth endpoint: structured lockout with countdown.
             if (error.status === 429 && error.retry_after_seconds) {
-                document.getElementById('auth-message').textContent = 'Enter your PIN';
+                document.getElementById('auth-message').textContent = labels.auth_enter_pin;
                 ui.showPinError('auth-pin-display');
                 this._startLockout(error.retry_after_seconds);
                 return;
@@ -505,7 +505,7 @@ class Auth {
 
             // 401 from an auth endpoint: structured wrong-PIN response.
             if (error.status === 401) {
-                document.getElementById('auth-message').textContent = 'Enter your PIN';
+                document.getElementById('auth-message').textContent = labels.auth_enter_pin;
                 ui.showPinError('auth-pin-display');
                 const d = error.responseData;
                 if (d && d.attempts_remaining !== undefined) {
@@ -517,7 +517,7 @@ class Auth {
                 return;
             }
 
-            document.getElementById('auth-message').textContent = 'Enter your PIN';
+            document.getElementById('auth-message').textContent = labels.auth_enter_pin;
             ui.showPinError('auth-pin-display');
             ui.showError('auth-error', error.message);
         }

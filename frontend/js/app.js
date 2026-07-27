@@ -103,7 +103,7 @@ class App {
             this.registerServiceWorker();
         } catch (error) {
             console.error('Failed to initialize:', error);
-            ui.showToast('Failed to connect to server', 'error');
+            ui.showToast(labels.failed_connect_toast, 'error');
             // Show auth screen anyway
             ui.showScreen('auth-screen');
             auth.init(() => this.onAuthSuccess());
@@ -503,7 +503,7 @@ class App {
             });
             this.editingExpenseId = null;
             this.editingOriginalDate = null;
-            ui.showToast('Session expired. Please log in again.', 'error');
+            ui.showToast(labels.session_expired_toast, 'error');
             ui.showScreen('auth-screen');
         });
     }
@@ -612,7 +612,7 @@ class App {
             );
         } catch (error) {
             console.error('Failed to load months list:', error);
-            ui.showToast('Failed to load history', 'error');
+            ui.showToast(labels.failed_history_toast, 'error');
         }
     }
 
@@ -647,7 +647,7 @@ class App {
 
             ui.renderExpenses(this.allExpenses, this.expenseCallbacks(), this.expensesCursor);
         } catch (error) {
-            ui.showToast('Failed to load more expenses', 'error');
+            ui.showToast(labels.failed_more_expenses_toast, 'error');
         }
     }
 
@@ -677,7 +677,7 @@ class App {
                 );
             }
         } catch (error) {
-            ui.showToast('Failed to load more months', 'error');
+            ui.showToast(labels.failed_more_months_toast, 'error');
         }
     }
 
@@ -713,7 +713,7 @@ class App {
                 await this.loadInitialData();
             }
         } catch (error) {
-            ui.showToast('Failed to refresh', 'error');
+            ui.showToast(labels.failed_refresh_toast, 'error');
         }
     }
 
@@ -813,7 +813,7 @@ class App {
         try {
             await this.loadMonthView(month);
         } catch {
-            ui.showToast('Failed to load month data', 'error');
+            ui.showToast(labels.failed_month_toast, 'error');
         }
     }
 
@@ -831,17 +831,17 @@ class App {
         ui.hideError('expense-error');
 
         if (isNaN(amount) || amount <= 0) {
-            ui.showError('expense-error', 'Please enter a valid amount');
+            ui.showError('expense-error', labels.invalid_amount_error);
             return;
         }
 
         if (amount > 99999.99) {
-            ui.showError('expense-error', 'Amount cannot exceed $99,999.99');
+            ui.showError('expense-error', labels.amount_too_large_error);
             return;
         }
 
         if (!description) {
-            ui.showError('expense-error', 'Please enter a description');
+            ui.showError('expense-error', labels.description_required_error);
             return;
         }
 
@@ -861,7 +861,7 @@ class App {
         const submitBtn = document.querySelector('#expense-form button[type="submit"]');
         const origText = submitBtn.textContent;
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Saving...';
+        submitBtn.textContent = labels.saving_action;
 
         // Derive the target month from the chosen date when provided; otherwise
         // fall back to the current local month (original behaviour).
@@ -876,7 +876,7 @@ class App {
         try {
             await api.addExpense(amount, description, chosenDate || null);
             ui.closeModal('expense-modal');
-            ui.showToast('Expense added!', 'success');
+            ui.showToast(labels.expense_added_toast, 'success');
             ui.vibrate(15);
 
             // The mutation changed the target month (and possibly created it),
@@ -938,17 +938,17 @@ class App {
         ui.hideError('edit-expense-error');
 
         if (isNaN(amount) || amount <= 0) {
-            ui.showError('edit-expense-error', 'Please enter a valid amount');
+            ui.showError('edit-expense-error', labels.invalid_amount_error);
             return;
         }
 
         if (amount > 99999.99) {
-            ui.showError('edit-expense-error', 'Amount cannot exceed $99,999.99');
+            ui.showError('edit-expense-error', labels.amount_too_large_error);
             return;
         }
 
         if (!description) {
-            ui.showError('edit-expense-error', 'Please enter a description');
+            ui.showError('edit-expense-error', labels.description_required_error);
             return;
         }
 
@@ -968,7 +968,7 @@ class App {
         const submitBtn = document.querySelector('#edit-expense-form button[type="submit"]');
         const origText = submitBtn.textContent;
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Saving...';
+        submitBtn.textContent = labels.saving_action;
 
         const editMonth = this.currentMonth;
         const editId = this.editingExpenseId;
@@ -995,7 +995,7 @@ class App {
                     labels.expense_moved_to_toast.replace('{month}', ui.formatMonthName(movedTo)),
                     'success');
             } else {
-                ui.showToast('Expense updated!', 'success');
+                ui.showToast(labels.expense_updated_toast, 'success');
                 // Same-month edit (amount/description, or a same-month re-date):
                 // apply the response in place, then drop the month's cache so a
                 // later revisit refetches authoritative summary fields. A
@@ -1136,7 +1136,7 @@ class App {
         this.invalidateMonth(pending.month);
         api.deleteExpense(pending.month, pending.expenseId).catch(() => {
             this.restoreDeletedExpense(pending);
-            ui.showToast('Failed to delete expense', 'error');
+            ui.showToast(labels.failed_delete_expense_toast, 'error');
         });
     }
 
@@ -1197,7 +1197,7 @@ class App {
         ui.hideError('create-month-error');
 
         if (!month) {
-            ui.showError('create-month-error', 'Please enter a valid month (YYYY-MM)');
+            ui.showError('create-month-error', labels.invalid_month_error);
             return;
         }
         monthInput.value = month;
@@ -1205,12 +1205,12 @@ class App {
         const submitBtn = document.querySelector('#create-month-form button[type="submit"]');
         const origText = submitBtn.textContent;
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Creating...';
+        submitBtn.textContent = labels.creating_action;
 
         try {
             await api.createMonth(month);
             ui.closeModal('create-month-modal');
-            ui.showToast('Month created!', 'success');
+            ui.showToast(labels.month_created_toast, 'success');
             // A new month changes the list and (if now the latest) the view.
             this.invalidateMonth(month);
             await this.loadInitialData();
@@ -1229,24 +1229,24 @@ class App {
         ui.hideError('add-funds-error');
 
         if (isNaN(amount) || amount <= 0) {
-            ui.showError('add-funds-error', 'Please enter a valid amount');
+            ui.showError('add-funds-error', labels.invalid_amount_error);
             return;
         }
 
         if (amount > 99999.99) {
-            ui.showError('add-funds-error', 'Amount cannot exceed $99,999.99');
+            ui.showError('add-funds-error', labels.amount_too_large_error);
             return;
         }
 
         if (!this.currentMonth) {
-            ui.showError('add-funds-error', 'No month selected');
+            ui.showError('add-funds-error', labels.no_month_selected_error);
             return;
         }
 
         const submitBtn = document.querySelector('#add-funds-form button[type="submit"]');
         const origText = submitBtn.textContent;
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Adding...';
+        submitBtn.textContent = labels.adding_action;
 
         const fundsMonth = this.currentMonth;
 
@@ -1405,23 +1405,23 @@ class App {
         ui.hideError('change-pin-error');
 
         if (!/^\d{4,6}$/.test(newPin)) {
-            ui.showError('change-pin-error', 'New PIN must be 4-6 digits');
+            ui.showError('change-pin-error', labels.change_pin_rule);
             return;
         }
 
         if (newPin !== confirmPin) {
-            ui.showError('change-pin-error', 'New PINs do not match');
+            ui.showError('change-pin-error', labels.change_pin_no_match);
             return;
         }
 
         // Show loading state
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Changing...';
+        submitBtn.textContent = labels.changing_action;
 
         try {
             await api.changePin(currentPin, newPin);
             this.closeChangePinModal();
-            ui.showToast('PIN changed successfully!', 'success');
+            ui.showToast(labels.pin_changed_toast, 'success');
         } catch (error) {
             ui.showError('change-pin-error', error.message);
         } finally {

@@ -41,6 +41,57 @@ const defaultLabels = {
     // is replaced with the target month's display name. Instance-divergent.
     expense_moved_to_toast: 'Moved to {month}',
 
+    // ---- PIN screens ----
+    auth_enter_pin: 'Enter your PIN',
+    auth_verifying: 'Verifying',
+    auth_logging_in: 'Logging in...',
+    setup_create_pin: 'Create your PIN (4-6 digits)',
+    setup_confirm_pin: 'Confirm your PIN',
+    setup_pins_no_match: 'PINs do not match. Try again.',
+    pin_created_toast: 'PIN created successfully!',
+    pin_changed_toast: 'PIN changed successfully!',
+    change_pin_rule: 'New PIN must be 4-6 digits',
+    change_pin_no_match: 'New PINs do not match',
+
+    // ---- In-flight button states ----
+    saving_action: 'Saving...',
+    creating_action: 'Creating...',
+    adding_action: 'Adding...',
+    changing_action: 'Changing...',
+    load_more_action: 'Load More',
+    retry_action: 'Retry',
+
+    // ---- Day grouping in the expense list ----
+    day_today: 'Today',
+    day_yesterday: 'Yesterday',
+
+    // ---- Empty / loading / error states ----
+    no_expenses_this_month: 'No expenses yet this month',
+    no_history: 'No history yet',
+    no_data_title: 'No Data Yet',
+    empty_state_body: 'No entries yet. Open the menu to create a new month.',
+    loading_text: 'Loading…',
+    error_load_title: 'Couldn’t load',
+    error_load_body: 'Couldn’t load your data. Check your connection.',
+
+    // ---- Toasts and inline validation ----
+    expense_added_toast: 'Expense added!',
+    expense_updated_toast: 'Expense updated!',
+    month_created_toast: 'Month created!',
+    session_expired_toast: 'Session expired. Please log in again.',
+    failed_connect_toast: 'Failed to connect to server',
+    failed_history_toast: 'Failed to load history',
+    failed_refresh_toast: 'Failed to refresh',
+    failed_month_toast: 'Failed to load month data',
+    failed_more_expenses_toast: 'Failed to load more expenses',
+    failed_more_months_toast: 'Failed to load more months',
+    failed_delete_expense_toast: 'Failed to delete expense',
+    invalid_amount_error: 'Please enter a valid amount',
+    amount_too_large_error: 'Amount cannot exceed $99,999.99',
+    description_required_error: 'Please enter a description',
+    invalid_month_error: 'Please enter a valid month (YYYY-MM)',
+    no_month_selected_error: 'No month selected',
+
     // ---- Biometric unlock ----
     // These were referenced by auth.js from the start but never defined here,
     // so they always fell through to the inline English fallbacks and no

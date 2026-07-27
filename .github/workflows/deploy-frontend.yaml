@@ -181,10 +181,16 @@ jobs:
             CONFIG_FILE="config/instances/$INSTANCE.yaml"
             LABELS_JSON=$(yq -o=json '.labels // {}' "$CONFIG_FILE")
 
+            # Money/date formatting (currency + locale). Kept separate from
+            # labels: labels are copy, this decides how amounts render. The
+            # frontend falls back to en-US/USD when the block is absent.
+            FORMAT_JSON=$(yq -o=json '.format // {}' "$CONFIG_FILE")
+
             # Generate config.js: use jq to safely JSON-encode the API URL string
             {
               printf 'window.PASSBOOK_API_URL = %s;\n' "$(printf '%s' "$API_URL" | jq -Rs .)"
               printf 'window.PASSBOOK_LABELS = %s;\n' "$LABELS_JSON"
+              printf 'window.PASSBOOK_FORMAT = %s;\n' "$FORMAT_JSON"
             } > "build/$INSTANCE/js/config.js"
 
             # Insert config.js script tag before app.js (must execute first)

@@ -29,25 +29,45 @@ const MONTHS = [
     'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
+// Money/date formatting, overridable per instance via window.PASSBOOK_FORMAT
+// (CI bakes it from the `format:` block of config/instances/<name>.yaml).
+// This is deliberately separate from labels: labels are copy, these choose how
+// numbers and dates are rendered. Everything about this app was otherwise
+// per-instance configurable — theme, PWA, wording — while the currency stayed
+// hardcoded to USD, so a non-dollar deployment had no way to render its own.
+const FORMAT = (typeof window !== 'undefined' && window.PASSBOOK_FORMAT) || {};
+const LOCALE = FORMAT.locale || 'en-US';
+const CURRENCY = FORMAT.currency || 'USD';
+
+// Built once: Intl.NumberFormat construction is the expensive part, and
+// formatCurrency runs for every expense row and every dashboard repaint.
+// An invalid locale/currency from config must not blank the whole UI, so an
+// unusable pair falls back to the default rather than throwing.
+const currencyFormatter = (() => {
+    try {
+        return new Intl.NumberFormat(LOCALE, { style: 'currency', currency: CURRENCY });
+    } catch {
+        return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+    }
+})();
+
 /**
- * Formats a numeric amount as a US dollar currency string (e.g. "$1,234.56").
+ * Formats a numeric amount as a currency string in the instance's configured
+ * currency and locale (default "$1,234.56").
  * @param {number} amount - The monetary amount to format
- * @returns {string} Locale-formatted USD currency string
+ * @returns {string} Locale-formatted currency string
  */
 export function formatCurrency(amount) {
-    return new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD',
-    }).format(amount);
+    return currencyFormatter.format(amount);
 }
 
 /**
  * Formats an ISO-8601 timestamp from the API as a locale time string.
  * @param {string} dateStr - ISO-8601 timestamp (e.g. "2024-06-10T14:30:00Z")
- * @returns {string} Time in locale h:mm AM/PM format (e.g. "2:30 PM")
+ * @returns {string} Time in locale h:mm format (e.g. "2:30 PM")
  */
 export function formatTime(dateStr) {
-    return new Date(dateStr).toLocaleTimeString('en-US', {
+    return new Date(dateStr).toLocaleTimeString(LOCALE, {
         hour: 'numeric',
         minute: '2-digit',
     });
@@ -93,9 +113,9 @@ function dayKey(dateStr) {
 function formatDayLabel(dateStr) {
     const d = new Date(dateStr);
     const now = new Date();
-    if (sameDay(d, now)) return 'Today';
+    if (sameDay(d, now)) return labels.day_today;
     const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-    if (sameDay(d, yesterday)) return 'Yesterday';
+    if (sameDay(d, yesterday)) return labels.day_yesterday;
     return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
@@ -354,7 +374,7 @@ export function renderExpenses(expenses, callbacks, nextCursor = null) {
     if (!expenses || expenses.length === 0) {
         const empty = document.createElement('p');
         empty.className = 'no-expenses';
-        empty.textContent = 'No expenses yet this month';
+        empty.textContent = labels.no_expenses_this_month;
         container.appendChild(empty);
         return;
     }
@@ -383,7 +403,7 @@ export function renderExpenses(expenses, callbacks, nextCursor = null) {
         const loadMoreBtn = document.createElement('button');
         loadMoreBtn.id = 'load-more-expenses';
         loadMoreBtn.className = 'btn btn-secondary btn-full load-more-btn';
-        loadMoreBtn.textContent = 'Load More';
+        loadMoreBtn.textContent = labels.load_more_action;
         loadMoreBtn.addEventListener('click', () => callbacks.onLoadMore(nextCursor));
         container.appendChild(loadMoreBtn);
     }
@@ -528,7 +548,7 @@ export function renderMonthsList(months, currentMonth, onSelect, nextCursor = nu
         const li = document.createElement('li');
         li.className = 'month-item';
         const span = document.createElement('span');
-        span.textContent = 'No history yet';
+        span.textContent = labels.no_history;
         li.appendChild(span);
         container.appendChild(li);
         return;
@@ -651,7 +671,7 @@ function buildLoadMoreMonthsItem(onClick) {
     btn.type = 'button';
     btn.id = 'load-more-months';
     btn.className = 'month-item load-more-item';
-    btn.textContent = 'Load More';
+    btn.textContent = labels.load_more_action;
     btn.addEventListener('click', onClick);
     li.appendChild(btn);
     return li;
@@ -772,7 +792,7 @@ export function updateDashboard(data) {
 
 export function showEmptyState() {
     // Show empty state when no months exist
-    document.getElementById('month-title').textContent = 'No Data Yet';
+    document.getElementById('month-title').textContent = labels.no_data_title;
     document.getElementById('carryover-chip').classList.add('hidden');
     const emptyMonthBalanceEl = document.getElementById('month-balance');
     emptyMonthBalanceEl.textContent = formatCurrency(0);
@@ -785,7 +805,7 @@ export function showEmptyState() {
     list.replaceChildren();
     const empty = document.createElement('p');
     empty.className = 'no-expenses';
-    empty.textContent = 'No entries yet. Open the menu to create a new month.';
+    empty.textContent = labels.empty_state_body;
     list.appendChild(empty);
 }
 
@@ -812,7 +832,7 @@ export function showDashboardLoading() {
     list.replaceChildren();
     const loading = document.createElement('p');
     loading.className = 'no-expenses';
-    loading.textContent = 'Loading…';
+    loading.textContent = labels.loading_text;
     list.appendChild(loading);
 }
 
@@ -830,7 +850,7 @@ function clearDashboardLoading() {
  */
 export function showDashboardError(onRetry) {
     clearDashboardLoading();
-    document.getElementById('month-title').textContent = 'Couldn’t load';
+    document.getElementById('month-title').textContent = labels.error_load_title;
     document.getElementById('total-balance').textContent = '—';
     document.getElementById('month-balance').textContent = '—';
     document.getElementById('expenses-total').textContent = '';
@@ -841,11 +861,11 @@ export function showDashboardError(onRetry) {
     wrap.className = 'dashboard-error';
     const msg = document.createElement('p');
     msg.className = 'no-expenses';
-    msg.textContent = 'Couldn’t load your data. Check your connection.';
+    msg.textContent = labels.error_load_body;
     const retry = document.createElement('button');
     retry.type = 'button';
     retry.className = 'btn btn-secondary btn-full';
-    retry.textContent = 'Retry';
+    retry.textContent = labels.retry_action;
     if (typeof onRetry === 'function') retry.addEventListener('click', onRetry);
     wrap.appendChild(msg);
     wrap.appendChild(retry);

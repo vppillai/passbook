@@ -86,3 +86,16 @@ describe('months list', () => {
         });
     });
 });
+
+// formatCurrency drives every amount on screen. It hardcoded en-US/USD while
+// everything else about an instance — theme, PWA identity, wording — was
+// configurable, so a non-dollar deployment had no way to render its own
+// currency. It now reads window.PASSBOOK_FORMAT, which CI bakes from the
+// `format:` block of the instance YAML.
+describe('currency formatting', () => {
+    test('defaults to USD when no format config is injected', () => {
+        expect(ui.formatCurrency(1234.5)).toBe('$1,234.50');
+        expect(ui.formatCurrency(-10)).toBe('-$10.00');
+        expect(ui.formatCurrency(0)).toBe('$0.00');
+    });
+});

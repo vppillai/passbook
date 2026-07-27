@@ -108,6 +108,12 @@ Each instance's `config/instances/<name>.yaml` drives three layers of customizat
 | `pwa:` | PWA install (name, icon, theme color, start URL) | CI writes `build/<instance>/manifest.json`; meta tags rewritten in `index.html` |
 | `colors:` | In-app accent / background colors | CI writes `build/<instance>/css/theme.css` (linked after `styles.css`); cascade overrides CSS custom properties |
 | `labels:` | Divergent UI strings ("Allowance" vs "Budget") | CI bakes `window.PASSBOOK_LABELS` into `build/<instance>/js/config.js`; `applyLabels()` runs at page init |
+| `format:` | Currency and locale for every rendered amount and time | CI bakes `window.PASSBOOK_FORMAT` into the same `config.js`; `ui.formatCurrency`/`formatTime` read it (default `en-US` / `USD`) |
+| `webauthn_display_name:` | Name the OS shows in the Face ID / Touch ID / Windows Hello prompt | Passed to CloudFormation as `WebAuthnDisplayName` → the Lambda's `WEBAUTHN_RP_DISPLAY_NAME` (falls back to `display_name`, then the instance name) |
+
+Every key in `frontend/js/labels.js` can be overridden by listing it under
+`labels:`; anything omitted falls back to the default English string, so a
+partial `labels:` block is fine.
 
 The CSS theming is a separate stylesheet (not an inline `<style>` block) because the app's Content-Security-Policy uses `style-src 'self'`, which blocks inline styles. External same-origin stylesheets are allowed.
 
@@ -133,6 +139,13 @@ To customize the PWA icon for an instance, drop a square SVG at `frontend/assets
    labels:
      app_title: My App
      # ... see config/instances/kids.yaml for the full label set
+   ```
+   Optional blocks:
+   ```yaml
+   format:                        # defaults to en-US / USD
+     locale: en-GB
+     currency: GBP
+   webauthn_display_name: My App  # defaults to display_name
    ```
 2. (Optional) Add a custom PWA icon at `frontend/assets/icons/<name>.svg`. If not present, the instance uses the default `frontend/assets/icon.svg`.
 3. Commit and push to `main`.
