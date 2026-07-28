@@ -277,8 +277,17 @@ class Auth {
         if (this.isLoading) return;
         // Route to whichever PIN screen is currently visible; ignore otherwise
         // (e.g. while a modal or the dashboard is up).
-        const setupVisible = !document.getElementById('setup-screen').classList.contains('hidden');
-        const authVisible = !document.getElementById('auth-screen').classList.contains('hidden');
+        //
+        // Both lookups are null-guarded because this is a DOCUMENT-level
+        // handler: it stays attached for the life of the page and fires for
+        // every keystroke, so it must not assume the PIN screens are in the
+        // DOM. Dereferencing a missing element throws inside an event handler,
+        // where the failure is silent and swallows the keystroke.
+        const setupScreen = document.getElementById('setup-screen');
+        const authScreen = document.getElementById('auth-screen');
+        if (!setupScreen && !authScreen) return;
+        const setupVisible = !!setupScreen && !setupScreen.classList.contains('hidden');
+        const authVisible = !!authScreen && !authScreen.classList.contains('hidden');
         if (!setupVisible && !authVisible) return;
         // Don't hijack keys while focus is in a text field.
         const tag = e.target && e.target.tagName;

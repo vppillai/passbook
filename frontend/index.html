@@ -3,9 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <!-- theme-color and description are REWRITTEN per instance at build time
+         from config/instances/<name>.yaml (see deploy-frontend.yaml). The
+         values here are the neutral defaults used when serving this file
+         directly during local development; they are not any instance's real
+         configuration. They previously held one instance's values, which had
+         since drifted from that instance's YAML — dead data that read as
+         authoritative. -->
     <meta name="theme-color" content="#4A90A4">
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0c0e12">
-    <meta name="description" content="Kids Passbook - Track allowance and expenses">
+    <meta name="description" content="Passbook - Track a budget and expenses">
     <!-- base-uri 'none' stops injected markup from re-pointing every relative
          URL (scripts, the manifest, API calls) at another origin; form-action
          'none' is safe because this app never submits a form to the network

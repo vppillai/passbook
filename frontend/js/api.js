@@ -167,7 +167,11 @@ class Api {
         } catch (err) {
             // AbortSignal.timeout throws a TimeoutError on expiry.
             if (err.name === 'TimeoutError' || err.name === 'AbortError') {
-                throw new Error('Request timed out. Check your connection and try again.');
+                // Keep the original as `cause`: the user-facing message is
+                // deliberately vague, but a devtools trace should still show
+                // whether this was our 15s timeout or a browser abort.
+                throw new Error('Request timed out. Check your connection and try again.',
+                    { cause: err });
             }
             throw err;
         }

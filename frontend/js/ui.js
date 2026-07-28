@@ -23,11 +23,15 @@ export function vibrate(pattern) {
     try { navigator.vibrate(pattern); } catch { /* silently ignore unsupported */ }
 }
 
-/** Full month names indexed 0-11 for converting "YYYY-MM" keys to display strings */
-const MONTHS = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
-];
+/**
+ * Returns the locale every formatter in this module uses. Exported so tests —
+ * and any future caller that formats a date itself — stay consistent with it
+ * instead of re-deciding.
+ * @returns {string}
+ */
+export function activeLocale() {
+    return LOCALE;
+}
 
 // Money/date formatting, overridable per instance via window.PASSBOOK_FORMAT
 // (CI bakes it from the `format:` block of config/instances/<name>.yaml).
@@ -48,6 +52,20 @@ const currencyFormatter = (() => {
         return new Intl.NumberFormat(LOCALE, { style: 'currency', currency: CURRENCY });
     } catch {
         return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+    }
+})();
+
+// Month names come from Intl rather than a hardcoded English table, so they
+// match the currency and times beside them. timeZone: 'UTC' is essential — a
+// "YYYY-MM" key is a calendar month, not an instant, and formatting a
+// locally-constructed first-of-month for a viewer west of UTC renders the
+// PREVIOUS month.
+const monthNameFormatter = (() => {
+    const opts = { month: 'long', year: 'numeric', timeZone: 'UTC' };
+    try {
+        return new Intl.DateTimeFormat(LOCALE, opts);
+    } catch {
+        return new Intl.DateTimeFormat('en-US', opts);
     }
 })();
 
@@ -116,12 +134,18 @@ function formatDayLabel(dateStr) {
     if (sameDay(d, now)) return labels.day_today;
     const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
     if (sameDay(d, yesterday)) return labels.day_yesterday;
-    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    return d.toLocaleDateString(LOCALE, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+/**
+ * Formats a "YYYY-MM" key as a display month in the instance's locale
+ * (e.g. "February 2026", or "Februar 2026" under de-DE).
+ * @param {string} monthKey
+ * @returns {string}
+ */
 export function formatMonthName(monthKey) {
-    const [year, month] = monthKey.split('-');
-    return `${MONTHS[parseInt(month, 10) - 1]} ${year}`;
+    const [year, month] = String(monthKey).split('-').map(Number);
+    return monthNameFormatter.format(new Date(Date.UTC(year, month - 1, 1)));
 }
 
 export function getCurrentMonthKey() {
@@ -142,6 +166,93 @@ export function showScreen(screenId) {
 // modal id, so focus can return to the triggering control on close (a11y M3).
 const modalReturnFocus = new Map();
 
+// Selector for things a user can Tab to. Disabled controls and tabindex="-1"
+// are excluded; `.hidden` descendants are filtered separately because an
+// invisible control must not become a tab stop (the PIN toggles and the
+// eye/eye-off icon buttons rely on that).
+const FOCUSABLE = 'a[href], input:not([disabled]), select:not([disabled]), ' +
+    'textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+// The active trap's keydown handler, so it can be detached on close. Only one
+// modal is ever open at a time in this app, and a single slot makes leaking a
+// handler per open/close cycle impossible.
+let activeFocusTrap = null;
+
+/**
+ * Returns a modal's tabbable elements in document order, skipping anything
+ * inside a `.hidden` subtree.
+ * @param {HTMLElement} modal
+ * @returns {HTMLElement[]}
+ */
+function focusableWithin(modal) {
+    // Visibility is judged by the app's own mechanism — the `.hidden` class
+    // (display:none!important) and the `hidden` attribute — NOT by layout.
+    // offsetParent looks like the obvious test and is wrong here: it is null
+    // for position:fixed elements, which every .modal is, so it would report
+    // every control in every dialog as unfocusable. A headless DOM has no
+    // layout either, so that mistake cannot fail a test — only production.
+    return Array.from(modal.querySelectorAll(FOCUSABLE))
+        .filter((el) => !el.closest('.hidden') && !el.hasAttribute('hidden'));
+}
+
+/**
+ * Confines Tab to the modal and pulls focus back if anything moves it out.
+ *
+ * role="dialog" + aria-modal="true" only TELL assistive tech the rest of the
+ * page is inert; they do nothing about Tab. Without this, a keyboard or
+ * screen-reader user tabs straight out of an open dialog into content sitting
+ * behind the backdrop, where they can operate the app underneath a modal that
+ * still looks like it owns the screen.
+ * @param {HTMLElement} modal
+ */
+function trapFocus(modal) {
+    releaseFocusTrap();
+
+    const handler = (e) => {
+        if (e.key !== 'Tab') return;
+        const items = focusableWithin(modal);
+        if (items.length === 0) return;
+        const first = items[0];
+        const last = items[items.length - 1];
+
+        // Only intervene at the boundaries; interior Tab order is the
+        // browser's job and overriding it would break nothing but would also
+        // help nothing.
+        if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+        } else if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+        } else if (!modal.contains(document.activeElement)) {
+            // Focus is already outside (e.g. it was moved programmatically);
+            // bring it back rather than letting Tab walk further away.
+            e.preventDefault();
+            first.focus();
+        }
+    };
+
+    // Capture phase, so focus leaving the dialog is corrected before anything
+    // else reacts to it.
+    const focusGuard = (e) => {
+        if (modal.contains(e.target)) return;
+        const items = focusableWithin(modal);
+        if (items.length > 0) items[0].focus();
+    };
+
+    document.addEventListener('keydown', handler);
+    document.addEventListener('focusin', focusGuard, true);
+    activeFocusTrap = { handler, focusGuard };
+}
+
+/** Detaches the active trap, if any. Safe to call when none is installed. */
+function releaseFocusTrap() {
+    if (!activeFocusTrap) return;
+    document.removeEventListener('keydown', activeFocusTrap.handler);
+    document.removeEventListener('focusin', activeFocusTrap.focusGuard, true);
+    activeFocusTrap = null;
+}
+
 export function showModal(modalId) {
     const modal = document.getElementById(modalId);
     // Capture the trigger so focus can be restored on close.
@@ -150,19 +261,23 @@ export function showModal(modalId) {
     modal.classList.remove('hidden');
     document.body.style.overflow = 'hidden';
     // Move focus into the modal: first focusable control, else the dialog.
-    const focusable = modal.querySelector(
-        'input, select, textarea, button, [tabindex]:not([tabindex="-1"])');
+    const focusable = focusableWithin(modal)[0];
     if (focusable) {
         focusable.focus();
     } else {
         modal.setAttribute('tabindex', '-1');
         modal.focus();
     }
+    // Confine Tab to the dialog for as long as it is open.
+    trapFocus(modal);
 }
 
 export function hideModal(modalId) {
     document.getElementById(modalId).classList.add('hidden');
     document.body.style.overflow = '';
+    // Release before restoring focus, so the guard does not yank focus back
+    // into the dialog we are closing.
+    releaseFocusTrap();
     // Return focus to whatever opened the modal so keyboard users aren't
     // dumped back at the top of the document.
     const trigger = modalReturnFocus.get(modalId);
@@ -738,9 +853,10 @@ export function setEditExpenseMonthHint(currentMonth, chosenDate) {
 // formatPrevMonthName returns the display name of the month before the
 // given "YYYY-MM" key (JS Date handles the year rollover for January).
 function formatPrevMonthName(monthKey) {
-    const [year, month] = monthKey.split('-').map(Number);
-    const prev = new Date(year, month - 2, 1); // month-1 is this month (0-based), so month-2 is the previous one
-    return `${MONTHS[prev.getMonth()]} ${prev.getFullYear()}`;
+    const [year, month] = String(monthKey).split('-').map(Number);
+    // month-1 is this month (0-based), so month-2 is the previous one; Date.UTC
+    // normalizes the January rollover into the previous year.
+    return monthNameFormatter.format(new Date(Date.UTC(year, month - 2, 1)));
 }
 
 export function updateDashboard(data) {

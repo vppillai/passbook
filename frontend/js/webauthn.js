@@ -223,7 +223,9 @@ async function apiPost(endpoint, body, withAuth) {
         });
     } catch (err) {
         if (err.name === 'TimeoutError' || err.name === 'AbortError') {
-            throw new Error('Request timed out. Check your connection and try again.');
+            // Preserve the original for diagnosis; see api.js for the rationale.
+            throw new Error('Request timed out. Check your connection and try again.',
+                { cause: err });
         }
         throw err;
     }

@@ -330,7 +330,8 @@ jobs:
             # being served as part of the PWA. (node_modules is gitignored so it
             # is never in the checkout, but remove it too in case of a local run.)
             rm -rf "build/$INSTANCE/test" "build/$INSTANCE/node_modules"
-            rm -f "build/$INSTANCE/package.json" "build/$INSTANCE/bunfig.toml" "build/$INSTANCE/bun.lock"
+            rm -f "build/$INSTANCE/package.json" "build/$INSTANCE/bunfig.toml" \
+                  "build/$INSTANCE/bun.lock" "build/$INSTANCE/eslint.config.mjs"
           done
 
           echo ""
