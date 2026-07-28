@@ -194,10 +194,31 @@ This app is hosted in a **public GitHub repository**. Below is a comprehensive s
 
 | Control | Value | Purpose |
 |---------|-------|---------|
-| Attempt limit | 5 failed attempts per 15-minute window | Per source IP; further attempts refused until the window's TTL elapses |
+| Per-IP attempt limit | 5 failed attempts per 15-minute window | Scoped per source IP so one attacker cannot lock the household out |
+| Account-wide attempt limit | 50 failed attempts per 15-minute window | Bounds **distributed** guessing, which the per-IP limit does nothing about |
 | Counter storage | DynamoDB row with 15-minute TTL | Auto-expires, no manual cleanup |
 | Argon2id cost | 16 MB / 3 iterations | Each verification is deliberately slow |
 | API rate limit | 5 req/sec, 10 burst | API Gateway level |
+
+**Why both limits.** A 4-digit PIN is 10,000 combinations. With only a per-IP
+cap, 5 free guesses per address means roughly 2,000 addresses exhaust the entire
+keyspace inside one window, leaving Argon2's cost as the only obstacle. The
+account-wide counter bounds total wrong guesses no matter how many addresses are
+used.
+
+The account-wide limit carries a deliberate trade-off: to prevent a guess being
+*evaluated*, the counter is checked before the hash comparison, so while it is
+tripped the correct PIN is refused too — an attacker can deny PIN login for up
+to 15 minutes. Two things bound that cost:
+
+- 50 is far above believable legitimate use, so it is only reached under attack.
+- **Biometric unlock is exempt**, because a WebAuthn credential is not
+  guessable. An enrolled user keeps a way in during an attack.
+- The counter's increment is conditional on being below the cap, so once
+  tripped the row's TTL stops being refreshed. A sustained attack therefore
+  cannot extend the window beyond 15 minutes from the attempt that reached it.
+
+If you want a larger keyspace, use a 6-digit PIN — the app accepts 4-6.
 
 ### Network Security
 
@@ -234,7 +255,7 @@ This app is hosted in a **public GitHub repository**. Below is a comprehensive s
 
 | Vector | Risk | Mitigation |
 |--------|------|------------|
-| PIN brute force | Low | Rate limiting (5 / 15 min per IP), Argon2id slowness |
+| PIN brute force | Low | Per-IP limit (5 / 15 min), account-wide limit (50 / 15 min) bounding distributed guessing, Argon2id slowness |
 | Session hijacking | Low | HTTPS only, short TTL, no persistent storage |
 | XSS | Low | No user-generated HTML, minimal DOM manipulation |
 | CSRF | Low | Origin validation, no cookies used |

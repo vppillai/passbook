@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -206,5 +208,100 @@ func TestFlattenHeaders(t *testing.T) {
 	}
 	if _, exists := flat["X-Empty"]; exists {
 		t.Error("empty header slice must be skipped")
+	}
+}
+
+// TestConvertToHTTPRequest_DecodesBase64Body pins that a base64-encoded body is
+// decoded before handlers see it.
+//
+// API Gateway sets IsBase64Encoded and base64s the payload whenever it decides
+// the body is binary — which it does based on Content-Type, not on the actual
+// content. A client posting perfectly good JSON under, say,
+// application/octet-stream therefore delivered base64 text straight into
+// json.Decoder, and the caller got an opaque "Invalid request body" 400 with no
+// hint as to why. The flag was ignored entirely.
+func TestConvertToHTTPRequest_DecodesBase64Body(t *testing.T) {
+	const payload = `{"pin":"1234"}`
+	event := events.APIGatewayV2HTTPRequest{
+		RawPath:         "/api/auth/verify",
+		Body:            base64.StdEncoding.EncodeToString([]byte(payload)),
+		IsBase64Encoded: true,
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
+				Method: http.MethodPost, SourceIP: "203.0.113.1",
+			},
+		},
+	}
+
+	req, err := convertToHTTPRequest(context.Background(), event)
+	if err != nil {
+		t.Fatalf("convertToHTTPRequest: %v", err)
+	}
+	got, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if string(got) != payload {
+		t.Errorf("body = %q, want %q", got, payload)
+	}
+}
+
+// A plain (already-decoded) body must pass through untouched — the common case.
+func TestConvertToHTTPRequest_PlainBodyUnchanged(t *testing.T) {
+	const payload = `{"amount":5}`
+	event := events.APIGatewayV2HTTPRequest{
+		RawPath: "/api/expense",
+		Body:    payload,
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
+				Method: http.MethodPost, SourceIP: "203.0.113.1",
+			},
+		},
+	}
+	req, err := convertToHTTPRequest(context.Background(), event)
+	if err != nil {
+		t.Fatalf("convertToHTTPRequest: %v", err)
+	}
+	got, _ := io.ReadAll(req.Body)
+	if string(got) != payload {
+		t.Errorf("body = %q, want %q", got, payload)
+	}
+}
+
+// A body flagged as base64 but not actually decodable must not be silently
+// handed on as-is in a way that hides the problem; the request should fail
+// rather than produce a confusing downstream JSON error.
+func TestConvertToHTTPRequest_InvalidBase64Errors(t *testing.T) {
+	event := events.APIGatewayV2HTTPRequest{
+		RawPath:         "/api/expense",
+		Body:            "!!!not-base64!!!",
+		IsBase64Encoded: true,
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
+				Method: http.MethodPost, SourceIP: "203.0.113.1",
+			},
+		},
+	}
+	if _, err := convertToHTTPRequest(context.Background(), event); err == nil {
+		t.Error("expected an error for a body flagged base64 that does not decode")
+	}
+}
+
+// The 32 KB body cap must measure the DECODED size. base64 inflates by ~33%, so
+// checking the encoded length rejected payloads that are actually well under
+// the limit.
+func TestHandleRequest_BodyLimitMeasuresDecodedSize(t *testing.T) {
+	// 30 KB of real content -> ~40 KB encoded: under the cap once decoded,
+	// over it if measured encoded.
+	raw := strings.Repeat("a", 30*1024)
+	encoded := base64.StdEncoding.EncodeToString([]byte(raw))
+	if len(encoded) <= 32*1024 {
+		t.Fatalf("fixture is not large enough encoded (%d bytes)", len(encoded))
+	}
+	if decodedTooLarge(int64(len(raw))) {
+		t.Fatalf("fixture should be under the cap decoded (%d bytes)", len(raw))
+	}
+	if !decodedTooLarge(33 * 1024) {
+		t.Error("33 KB decoded should exceed the cap")
 	}
 }

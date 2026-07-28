@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +21,18 @@ import (
 	"github.com/vppillai/passbook/backend/internal/repository"
 	"github.com/vppillai/passbook/backend/internal/service"
 )
+
+// maxBodyBytes caps the DECODED request body. Every endpoint here takes a
+// small JSON object, so this is generous.
+const maxBodyBytes = 32 * 1024
+
+// errBadBase64Body marks a body that API Gateway flagged as base64-encoded but
+// which does not decode. That is a client-side fault, so handleRequest maps it
+// to 400 rather than 500.
+var errBadBase64Body = errors.New("request body is not valid base64")
+
+// decodedTooLarge reports whether a decoded body exceeds the cap.
+func decodedTooLarge(n int64) bool { return n > maxBodyBytes }
 
 var (
 	router    *handler.Router
@@ -104,8 +117,10 @@ func handleRequest(ctx context.Context, event events.APIGatewayV2HTTPRequest) (e
 		}, nil
 	}
 
-	// Reject oversized request bodies (32 KB limit)
-	if len(event.Body) > 32*1024 {
+	// Cheap pre-filter on the wire size, before spending anything on decoding.
+	// base64 inflates by about a third, so this bound is deliberately loose;
+	// the real limit is enforced on the DECODED body below.
+	if len(event.Body) > 2*maxBodyBytes {
 		return events.APIGatewayV2HTTPResponse{
 			StatusCode: http.StatusRequestEntityTooLarge,
 			Body:       `{"error":"Request body too large"}`,
@@ -116,9 +131,28 @@ func handleRequest(ctx context.Context, event events.APIGatewayV2HTTPRequest) (e
 	// Convert API Gateway event to http.Request
 	req, err := convertToHTTPRequest(ctx, event)
 	if err != nil {
+		// A body flagged base64 that does not decode is the client's problem,
+		// not ours — reporting 500 would blame the server for a malformed
+		// request. Anything else here is genuinely internal.
+		if errors.Is(err, errBadBase64Body) {
+			return events.APIGatewayV2HTTPResponse{
+				StatusCode: http.StatusBadRequest,
+				Body:       `{"error":"Invalid request body encoding"}`,
+				Headers:    map[string]string{"Content-Type": "application/json"},
+			}, nil
+		}
 		return events.APIGatewayV2HTTPResponse{
 			StatusCode: http.StatusInternalServerError,
 			Body:       `{"error":"Failed to process request"}`,
+			Headers:    map[string]string{"Content-Type": "application/json"},
+		}, nil
+	}
+
+	// Enforce the real limit on the decoded body.
+	if decodedTooLarge(req.ContentLength) {
+		return events.APIGatewayV2HTTPResponse{
+			StatusCode: http.StatusRequestEntityTooLarge,
+			Body:       `{"error":"Request body too large"}`,
 			Headers:    map[string]string{"Content-Type": "application/json"},
 		}, nil
 	}
@@ -172,10 +206,27 @@ func convertToHTTPRequest(ctx context.Context, event events.APIGatewayV2HTTPRequ
 	// per client.
 	req.Header.Set("X-Source-Ip", event.RequestContext.HTTP.SourceIP)
 
+	// Decode the body when API Gateway base64-encoded it. It makes that
+	// decision from the request's Content-Type, not from the actual content,
+	// so a client posting valid JSON under a non-text content type arrives
+	// base64-encoded. Ignoring the flag fed that straight to json.Decoder and
+	// produced an opaque 400 the caller could not act on.
+	body := []byte(event.Body)
+	if event.IsBase64Encoded {
+		decoded, derr := base64.StdEncoding.DecodeString(event.Body)
+		if derr != nil {
+			return nil, fmt.Errorf("%w: %v", errBadBase64Body, derr)
+		}
+		body = decoded
+	}
+
 	// Always set a non-nil body. decodeStrict and any future handler
 	// using json.NewDecoder(r.Body) would crash on a nil body —
 	// guard at the boundary instead of in every handler.
-	req.Body = &bodyReader{data: []byte(event.Body)}
+	req.Body = &bodyReader{data: body}
+	// ContentLength lets handleRequest enforce the size cap on the DECODED
+	// bytes rather than the encoded wire form.
+	req.ContentLength = int64(len(body))
 
 	return req, nil
 }
