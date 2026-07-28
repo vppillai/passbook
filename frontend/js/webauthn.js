@@ -7,40 +7,24 @@
  * binary fields (challenge, user.id, credential id, allowCredentials[].id)
  * are base64url strings on the wire and ArrayBuffers in the browser API.
  *
- * SHARED CONTRACT: this module does NOT import api.js. It issues raw fetch
- * calls using the SAME conventions api.js uses — API base from
- * window.PASSBOOK_API_URL and the per-instance X-Session-Token from
- * localStorage — mirrored here so the two stay in lockstep without coupling.
+ * Transport is api.js's shared client. This module used to carry its own copy
+ * of it — API base, 15s timeout, instance detection, session-key derivation
+ * and fetch/error shaping all duplicated — on the stated grounds of staying "in
+ * lockstep without coupling". Duplication does the opposite: the copy read the
+ * session token without api.js's expiry check, so it would send a token
+ * api.js already considered dead.
+ *
+ * The one thing that genuinely required a separate client was api.js clearing
+ * the session on any 401; these endpoints return 401 for a failed assertion,
+ * which must surface as "biometric unlock failed" rather than bouncing the user
+ * to the lock screen. That is now handled by listing /api/auth/webauthn in
+ * api.js's AUTH_ENDPOINTS, so the bypass is declared in one place instead of
+ * being achieved by avoiding the module.
  *
  * @module webauthn
  */
 
-// Mirror api.js exactly: API base is injected at build time, empty for local.
-const API_BASE = window.PASSBOOK_API_URL || '';
-
-// Network request timeout (mirrors api.js): long enough for an API GW cold
-// start, short enough to fail visibly rather than hang on a flaky connection.
-const REQUEST_TIMEOUT_MS = 15000;
-
-// Mirror api.js's per-instance session key derivation. The app is served from
-// /passbook/<instance>/ on GitHub Pages; the instance segment namespaces the
-// token so co-hosted instances don't clobber each other.
-function detectInstance() {
-    const parts = window.location.pathname.split('/').filter(Boolean);
-    if (parts.length >= 2 && parts[0] === 'passbook') return parts[1];
-    return parts[parts.length - 1] || 'default';
-}
-const SESSION_KEY = `passbook_session_${detectInstance()}`;
-
-/**
- * Reads the current session token from localStorage (same key api.js writes).
- * Returns null when absent. Used to attach X-Session-Token on the
- * session-gated register endpoints.
- * @returns {string|null}
- */
-function sessionToken() {
-    return localStorage.getItem(SESSION_KEY) || null;
-}
+import { api } from './api.js';
 
 /**
  * Feature-detects the WebAuthn API. False on browsers/contexts (e.g. http://)
@@ -193,60 +177,6 @@ function encodeAssertionCredential(cred) {
     return json;
 }
 
-// ---- raw fetch (no api.js) ----
-
-/**
- * Issues a JSON fetch against the API, mirroring api.js's conventions:
- * API_BASE prefix, Content-Type: application/json, X-Session-Token attached
- * when withAuth and a token exists, credentials omitted, 15s timeout.
- * Returns the parsed JSON body (or null). Throws an Error carrying .status and
- * .responseData on a non-2xx response so callers can branch on it.
- * @param {string} endpoint
- * @param {Object|null} body
- * @param {boolean} withAuth
- * @returns {Promise<Object|null>}
- */
-async function apiPost(endpoint, body, withAuth) {
-    const headers = { 'Content-Type': 'application/json' };
-    if (withAuth) {
-        const token = sessionToken();
-        if (token) headers['X-Session-Token'] = token;
-    }
-    let response;
-    try {
-        response = await fetch(`${API_BASE}${endpoint}`, {
-            method: 'POST',
-            headers,
-            credentials: 'omit',
-            body: body ? JSON.stringify(body) : undefined,
-            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        });
-    } catch (err) {
-        if (err.name === 'TimeoutError' || err.name === 'AbortError') {
-            // Preserve the original for diagnosis; see api.js for the rationale.
-            throw new Error('Request timed out. Check your connection and try again.',
-                { cause: err });
-        }
-        throw err;
-    }
-
-    let data = null;
-    if (response.status !== 204) {
-        const text = await response.text();
-        if (text) {
-            try { data = JSON.parse(text); } catch { /* leave null */ }
-        }
-    }
-    if (!response.ok) {
-        const err = new Error((data && data.error) || `Request failed (HTTP ${response.status})`);
-        err.status = response.status;
-        err.responseData = data;
-        if (data && data.retry_after_seconds !== undefined) err.retry_after_seconds = data.retry_after_seconds;
-        throw err;
-    }
-    return data;
-}
-
 /**
  * Fetches /api/auth/status and returns the parsed body, including the
  * webauthn_enrolled flag the lock screen needs. Public (no auth). Resolves
@@ -254,14 +184,11 @@ async function apiPost(endpoint, body, withAuth) {
  * @returns {Promise<{is_setup?: boolean, webauthn_enrolled?: boolean}|null>}
  */
 export async function getAuthStatus() {
+    // Deliberately total: callers use this to decide whether to SHOW a control,
+    // and a status hiccup must not throw into that path. api.request rejects on
+    // failure, so the swallow stays here.
     try {
-        const response = await fetch(`${API_BASE}/api/auth/status`, {
-            method: 'GET',
-            credentials: 'omit',
-            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        });
-        if (!response.ok) return null;
-        return await response.json();
+        return await api.request('GET', '/api/auth/status');
     } catch {
         return null;
     }
@@ -277,16 +204,16 @@ export async function getAuthStatus() {
  * @returns {Promise<void>}
  */
 export async function register() {
-    const options = await apiPost('/api/auth/webauthn/register/options', null, true);
+    const options = await api.request('POST', '/api/auth/webauthn/register/options');
     const publicKey = decodeCreationOptions(options.options.publicKey);
 
     const cred = await navigator.credentials.create({ publicKey });
     if (!cred) throw new Error('No credential created');
 
-    await apiPost('/api/auth/webauthn/register', {
+    await api.request('POST', '/api/auth/webauthn/register', {
         challenge_id: options.challenge_id,
         credential: encodeRegistrationCredential(cred),
-    }, true);
+    });
 }
 
 /**
@@ -299,16 +226,16 @@ export async function register() {
  * @returns {Promise<{success: boolean, token?: string, error?: string}>}
  */
 export async function login() {
-    const options = await apiPost('/api/auth/webauthn/login/options', null, false);
+    const options = await api.request('POST', '/api/auth/webauthn/login/options');
     const publicKey = decodeRequestOptions(options.options.publicKey);
 
     const cred = await navigator.credentials.get({ publicKey });
     if (!cred) throw new Error('No assertion produced');
 
-    return apiPost('/api/auth/webauthn/login', {
+    return api.request('POST', '/api/auth/webauthn/login', {
         challenge_id: options.challenge_id,
         credential: encodeAssertionCredential(cred),
-    }, false);
+    });
 }
 
 /**
@@ -317,16 +244,5 @@ export async function login() {
  * @returns {Promise<void>}
  */
 export async function disable() {
-    const token = sessionToken();
-    const headers = {};
-    if (token) headers['X-Session-Token'] = token;
-    const response = await fetch(`${API_BASE}/api/auth/webauthn`, {
-        method: 'DELETE',
-        headers,
-        credentials: 'omit',
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-    if (!response.ok) {
-        throw new Error(`Failed to disable biometric unlock (HTTP ${response.status})`);
-    }
+    await api.request('DELETE', '/api/auth/webauthn');
 }

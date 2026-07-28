@@ -87,7 +87,18 @@ const REQUEST_TIMEOUT_MS = 15000;
 // generic 401→session-expired interception so callers receive the parsed
 // body (attempts_remaining, retry_after_seconds) instead of being bounced
 // to the login screen.
-const AUTH_ENDPOINTS = ['/api/auth/verify', '/api/auth/setup', '/api/auth/change'];
+// '/api/auth/webauthn' covers login, login/options, register and
+// register/options. The login endpoints return 401 for a failed assertion and
+// 429 when rate-limited, exactly like PIN verify — without this entry a failed
+// biometric attempt would clear the session and bounce the user to the lock
+// screen instead of surfacing "biometric unlock failed". This omission is why
+// webauthn.js used to carry its own copy of the fetch client.
+const AUTH_ENDPOINTS = [
+    '/api/auth/verify',
+    '/api/auth/setup',
+    '/api/auth/change',
+    '/api/auth/webauthn',
+];
 
 class Api {
     constructor() {
