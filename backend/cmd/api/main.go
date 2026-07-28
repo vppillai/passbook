@@ -106,16 +106,12 @@ func setupRouter() error {
 }
 
 func handleRequest(ctx context.Context, event events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	// Lazy init on first invocation. Errors become 500 instead of a
-	// process-killing log.Fatal — Lambda will then retry the cold start.
-	setupOnce.Do(func() { setupErr = setupRouter() })
-	if setupErr != nil {
-		return events.APIGatewayV2HTTPResponse{
-			StatusCode: http.StatusInternalServerError,
-			Body:       `{"error":"Service initialization failed"}`,
-			Headers:    map[string]string{"Content-Type": "application/json"},
-		}, nil
-	}
+	// Body validation runs BEFORE router construction. It needs nothing from
+	// the router, and rejecting an oversized or undecodable body without first
+	// building a DynamoDB client and an Argon2-capable service is both cheaper
+	// and independently testable — handleRequest previously could not be
+	// exercised at all without a full environment, which is why its status
+	// mapping had no coverage.
 
 	// Cheap pre-filter on the wire size, before spending anything on decoding.
 	// base64 inflates by about a third, so this bound is deliberately loose;
@@ -153,6 +149,22 @@ func handleRequest(ctx context.Context, event events.APIGatewayV2HTTPRequest) (e
 		return events.APIGatewayV2HTTPResponse{
 			StatusCode: http.StatusRequestEntityTooLarge,
 			Body:       `{"error":"Request body too large"}`,
+			Headers:    map[string]string{"Content-Type": "application/json"},
+		}, nil
+	}
+
+	// Lazy init on first invocation. Errors become 500 instead of a
+	// process-killing log.Fatal — Lambda will then retry the cold start.
+	setupOnce.Do(func() { setupErr = setupRouter() })
+	if setupErr != nil {
+		// Log it: the error is memoized for the life of the container, so
+		// without this every subsequent 500 is indistinguishable from any other
+		// and the actual cause (a missing env var, an unusable AWS config) is
+		// never recorded anywhere.
+		log.Printf("error: router initialization failed: %v", setupErr)
+		return events.APIGatewayV2HTTPResponse{
+			StatusCode: http.StatusInternalServerError,
+			Body:       `{"error":"Service initialization failed"}`,
 			Headers:    map[string]string{"Content-Type": "application/json"},
 		}, nil
 	}

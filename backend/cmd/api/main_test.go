@@ -287,21 +287,116 @@ func TestConvertToHTTPRequest_InvalidBase64Errors(t *testing.T) {
 	}
 }
 
-// The 32 KB body cap must measure the DECODED size. base64 inflates by ~33%, so
-// checking the encoded length rejected payloads that are actually well under
-// the limit.
-func TestHandleRequest_BodyLimitMeasuresDecodedSize(t *testing.T) {
-	// 30 KB of real content -> ~40 KB encoded: under the cap once decoded,
-	// over it if measured encoded.
-	raw := strings.Repeat("a", 30*1024)
+// handleRequest's status mapping had no coverage at all: every test in this
+// file stopped at convertToHTTPRequest, and the previous attempt at this test
+// only called the one-line decodedTooLarge comparator, never handleRequest, so
+// nothing verified that the cap is applied to the DECODED length rather than
+// the wire length.
+//
+// These reach handleRequest for real. They are able to because body validation
+// now runs before router construction — so no TABLE_NAME, no AWS config and no
+// DynamoDB client are needed to observe the mapping.
+func TestHandleRequest_RejectsOversizedDecodedBody(t *testing.T) {
+	// 40 KB of real content: over the 32 KB decoded cap, but under the 64 KB
+	// wire pre-filter, so it can only be caught by the decoded check.
+	raw := strings.Repeat("x", 40*1024)
+	if len(raw) <= maxBodyBytes {
+		t.Fatalf("fixture must exceed the decoded cap")
+	}
+	if len(raw) > 2*maxBodyBytes {
+		t.Fatalf("fixture must stay under the wire pre-filter so the decoded check is what fires")
+	}
+
+	resp, err := handleRequest(context.Background(), events.APIGatewayV2HTTPRequest{
+		RawPath: "/api/expense",
+		Body:    raw,
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
+				Method: http.MethodPost, SourceIP: "203.0.113.1",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("handleRequest: %v", err)
+	}
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want 413", resp.StatusCode)
+	}
+}
+
+// A body that is over the cap once base64 is EXPANDED but under it decoded must
+// be accepted, not rejected. Measuring the encoded length turned a ~24 KB
+// payload into a false 413.
+func TestHandleRequest_AcceptsBodyOversizedOnlyWhenEncoded(t *testing.T) {
+	raw := strings.Repeat("y", 26*1024) // 26 KB decoded -> ~35 KB encoded
 	encoded := base64.StdEncoding.EncodeToString([]byte(raw))
-	if len(encoded) <= 32*1024 {
-		t.Fatalf("fixture is not large enough encoded (%d bytes)", len(encoded))
+	if len(encoded) <= maxBodyBytes {
+		t.Fatalf("fixture must exceed the cap once encoded (%d)", len(encoded))
 	}
-	if decodedTooLarge(int64(len(raw))) {
-		t.Fatalf("fixture should be under the cap decoded (%d bytes)", len(raw))
+	if len(raw) > maxBodyBytes {
+		t.Fatalf("fixture must be under the cap decoded (%d)", len(raw))
 	}
-	if !decodedTooLarge(33 * 1024) {
-		t.Error("33 KB decoded should exceed the cap")
+
+	resp, err := handleRequest(context.Background(), events.APIGatewayV2HTTPRequest{
+		RawPath:         "/api/expense",
+		Body:            encoded,
+		IsBase64Encoded: true,
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
+				Method: http.MethodPost, SourceIP: "203.0.113.1",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("handleRequest: %v", err)
+	}
+	if resp.StatusCode == http.StatusRequestEntityTooLarge {
+		t.Errorf("status = 413 for a body that is only oversized when encoded; "+
+			"the cap must measure decoded bytes (decoded=%d, encoded=%d, cap=%d)",
+			len(raw), len(encoded), maxBodyBytes)
+	}
+}
+
+// A body flagged base64 that does not decode is the caller's fault: 400, not
+// the 500 that "failed to process request" would imply.
+func TestHandleRequest_InvalidBase64Is400(t *testing.T) {
+	resp, err := handleRequest(context.Background(), events.APIGatewayV2HTTPRequest{
+		RawPath:         "/api/expense",
+		Body:            "!!!not-base64!!!",
+		IsBase64Encoded: true,
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
+				Method: http.MethodPost, SourceIP: "203.0.113.1",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("handleRequest: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+	if ct := resp.Headers["Content-Type"]; ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+}
+
+// The wire pre-filter still fires for something genuinely enormous, without
+// attempting to decode it.
+func TestHandleRequest_RejectsOversizedWireBody(t *testing.T) {
+	resp, err := handleRequest(context.Background(), events.APIGatewayV2HTTPRequest{
+		RawPath: "/api/expense",
+		Body:    strings.Repeat("z", 2*maxBodyBytes+1),
+		RequestContext: events.APIGatewayV2HTTPRequestContext{
+			HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
+				Method: http.MethodPost, SourceIP: "203.0.113.1",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("handleRequest: %v", err)
+	}
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want 413", resp.StatusCode)
 	}
 }

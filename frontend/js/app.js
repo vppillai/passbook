@@ -571,6 +571,8 @@ class App {
      * @param {string} month - "YYYY-MM" month key
      */
     async loadMonthView(month) {
+        // Remember what we were showing, so a failed load can put it back.
+        const previousMonth = this.currentMonth;
         this.currentMonth = month;
 
         const cached = this.monthCache.get(month);
@@ -579,7 +581,27 @@ class App {
             return;
         }
 
-        const data = await api.getMonth(month);
+        let data;
+        try {
+            data = await api.getMonth(month);
+        } catch (err) {
+            // Restore the month that is actually still on screen.
+            //
+            // Committing currentMonth up front and leaving it committed on
+            // failure meant a failed switch left the dashboard rendering the
+            // PREVIOUS month — title, expenses, balances — while every handler
+            // keyed off currentMonth targeted the month that never loaded. The
+            // consequence was money: handleAddFunds reads currentMonth, so an
+            // allowance entered while looking at March was posted to April, and
+            // applyFundsUpdate then repainted April's figures under March's
+            // title with no error shown. Only roll back if nothing newer has
+            // claimed the slot in the meantime.
+            if (this.currentMonth === month) {
+                this.currentMonth = previousMonth;
+            }
+            throw err;
+        }
+
         // Bail if the user switched months while we awaited (review F2):
         // rendering month A's data while currentMonth is B would desync the
         // dashboard and send later edits to the wrong month.

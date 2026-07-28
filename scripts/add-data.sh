@@ -101,6 +101,7 @@ Commands:
   rmfunds YYYY-MM <amount>                   Remove funds from a month
   rmmonth YYYY-MM                            Delete a month and all its expenses
   audit                                      Check ledger consistency (READ-ONLY; exits 1 on drift)
+  prune-orphans                              Delete MONTHLIST rows whose month no longer exists
   repair                                     Full reconciliation: expenses -> carry chain -> balance
   fixexpenses [YYYY-MM]                      Recompute total_expenses from the actual expense rows
   recalc                                     Recalculate total balance from all months
@@ -340,8 +341,22 @@ ensure_monthlist_mirror() {
 recompute_carry_chain() {
     local from_month="$1"
     load_settings
+    # NOTE: this does NOT return early when carry-over is off.
+    #
+    # It used to, which left ending_balance with no writer at all in that mode:
+    # recompute_total_expenses writes only total_expenses and recalc_balance
+    # only the BALANCE row. But the backend maintains ending_balance in both
+    # modes (from a zero starting balance), and audit checks it in both modes —
+    # so on a carry-off instance every ending_balance discrepancy was reported
+    # forever, unfixable by any command, while `repair` still printed success
+    # and `fixchain` still claimed to have recomputed the chain. The
+    # audit -> repair -> audit loop could never converge.
+    #
+    # With carry-over off every month simply starts from zero; the arithmetic
+    # below is otherwise identical, so the mode only changes the seed.
+    local carry_enabled=true
     if [[ "$CARRY_OVER_BALANCE" == "false" ]]; then
-        return 0
+        carry_enabled=false
     fi
 
     # Under --dry-run there is no real table; skip the carry-chain scan and
@@ -373,7 +388,13 @@ recompute_carry_chain() {
             '.[] | select(.month.S==$mm) | .allowance_added.N // "0"')
         expenses=$(echo "$months_json" | jq -r --arg mm "$m" \
             '.[] | select(.month.S==$mm) | .total_expenses.N // "0"')
-        new_start=$(calc "$prev_ending")
+        # Carry-over off means every month starts from zero rather than from the
+        # previous month's ending.
+        if [[ "$carry_enabled" == "true" ]]; then
+            new_start=$(calc "$prev_ending")
+        else
+            new_start="0.00"
+        fi
         new_ending=$(calc "$new_start + $allowance - $expenses")
         echo "  Carry: $m starting_balance -> \$$new_start, ending_balance -> \$$new_ending"
         local carry_ts
@@ -480,6 +501,17 @@ sum_month_expenses() {
 recompute_total_expenses() {
     local only_month="${1:-}"
 
+    # Honour --dry-run like its sibling repair primitives. preflight is skipped
+    # under --dry-run on purpose (so a preview works against a fake instance
+    # with no AWS), which means the Query below would fail and
+    # `calc "$(sum_month_expenses ...)"` would hand awk an empty expression —
+    # the operator got `awk: syntax error` instead of a preview.
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "  [DRY-RUN] recompute_total_expenses${only_month:+ for $only_month}" \
+             "(skipping expense-row scan — no real table)" >&2
+        return 0
+    fi
+
     local months
     if [[ -n "$only_month" ]]; then
         months="$only_month"
@@ -536,6 +568,43 @@ recompute_total_expenses() {
     done <<< "$months"
 }
 
+# prune_orphan_mirrors — delete MONTHLIST rows whose canonical month is gone.
+#
+# audit flags these because the months list is served from the mirror partition,
+# so an orphan shows as a phantom month in the history menu. Nothing could
+# remove one: recompute_total_expenses only back-fills mirrors,
+# recompute_carry_chain only updates existing ones, and DeleteMonth refuses
+# because it pre-reads the (missing) canonical summary first. audit therefore
+# reported a problem that no documented command could fix, so it could never
+# return 0 on such a table.
+#
+# Reachable in practice: add-data.sh's own rmmonth deletes the canonical row and
+# the mirror in separate calls, so an interruption between them leaves one.
+prune_orphan_mirrors() {
+    local months mirror_months orphans=0
+    months=$(scan_month_summaries | jq -r '[.Items[] | .month.S] | sort | .[]')
+    mirror_months=$(aws dynamodb query --table-name "$TABLE_NAME" --region "$REGION" \
+        --key-condition-expression "PK = :pk" \
+        --expression-attribute-values '{":pk": {"S": "MONTHLIST"}}' \
+        --output json | jq -r '.Items[]?.SK.S')
+
+    local m
+    while IFS= read -r m; do
+        [[ -z "$m" ]] && continue
+        if echo "$months" | grep -qx "$m"; then
+            continue
+        fi
+        echo "  Orphan: deleting MONTHLIST/$m (no MONTH#$m/SUMMARY behind it)"
+        aws_write dynamodb delete-item --table-name "$TABLE_NAME" --region "$REGION" \
+            --key "{\"PK\": {\"S\": \"MONTHLIST\"}, \"SK\": {\"S\": \"$m\"}}" >/dev/null
+        orphans=$((orphans + 1))
+    done <<< "$mirror_months"
+
+    if [[ "$orphans" -eq 0 ]]; then
+        echo "  No orphan MONTHLIST rows."
+    fi
+}
+
 # repair_ledger — the full reconciliation, in dependency order.
 #
 # Everything downstream is derived from total_expenses, so it goes first; the
@@ -558,14 +627,19 @@ repair_ledger() {
     fi
 
     echo ""
-    echo "Step 1/3: total_expenses from expense rows"
+    echo "Step 1/4: prune orphan MONTHLIST rows"
+    # First: an orphan would otherwise be re-reported by audit after a
+    # successful repair, and it must not be mistaken for a real month by
+    # anything downstream.
+    prune_orphan_mirrors
+    echo "Step 2/4: total_expenses from expense rows"
     recompute_total_expenses
-    echo "Step 2/3: carry chain from $earliest"
+    echo "Step 3/4: carry chain from $earliest"
     # recompute_carry_chain seeds from the given month's ending and rewrites
     # everything AFTER it, so seed from the month before the earliest one to
     # have the earliest month itself recomputed too.
     recompute_carry_chain "$(prev_month "$earliest")"
-    echo "Step 3/3: global balance"
+    echo "Step 4/4: global balance"
     recalc_balance
 
     echo ""
@@ -580,7 +654,7 @@ repair_ledger() {
 # anything is actually broken, and neither validates total_expenses against
 # the expense rows at all.
 #
-# Four invariants, in the order a discrepancy propagates:
+# Five invariants, in the order a discrepancy propagates:
 #
 #   1. total_expenses == sum of the month's EXP# rows.
 #   2. starting_balance == previous month's ending_balance (carry-over on
@@ -613,7 +687,26 @@ audit_ledger() {
     months=$(echo "$items" | jq -r '[.[] | .month.S] | sort | .[]')
 
     if [[ -z "$months" ]]; then
-        echo "  No month summaries found — nothing to audit."
+        # No months means the expected global balance is exactly zero, which
+        # makes a non-zero total_balance the single most detectable corruption
+        # there is — precisely the ledger-zeroing failure this script's history
+        # warns about. Returning 0 here without looking would have audit exit
+        # clean on the clearest possible drift.
+        local empty_balance
+        empty_balance=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+            --key '{"PK": {"S": "BALANCE"}, "SK": {"S": "BALANCE"}}' \
+            --output json | jq -r '.Item.total_balance.N // "0"')
+        echo "  No month summaries found."
+        printf '  %-24s %12s\n' "BALANCE (stored)"   "$empty_balance"
+        printf '  %-24s %12s\n' "BALANCE (expected)" "0.00"
+        if [[ "$(calc "$empty_balance")" != "0.00" ]]; then
+            echo "     DRIFT total_balance: stored \$$empty_balance with no months to justify it"
+            echo ""
+            echo "  1 problem(s) found. Nothing was modified."
+            echo "  Repair with:  $0 --instance $INSTANCE recalc"
+            return 1
+        fi
+        echo "  OK — empty ledger is consistent."
         return 0
     fi
 
@@ -729,6 +822,7 @@ audit_ledger() {
     echo "                  $0 --instance $INSTANCE repair"
     echo ""
     echo "  Or step by step (same order — each stage feeds the next):"
+    echo "    0. $0 --instance $INSTANCE prune-orphans     # drop phantom MONTHLIST rows"
     echo "    1. $0 --instance $INSTANCE fixexpenses      # total_expenses from the rows"
     echo "    2. $0 --instance $INSTANCE fixchain <YYYY-MM>  # carry chain onward"
     echo "    3. $0 --instance $INSTANCE recalc           # global balance"
@@ -1622,6 +1716,11 @@ case "${1:-}" in
         # Full reconciliation in dependency order. Confirmation-gated.
         repair_ledger
         ;;
+    prune-orphans)
+        # Delete MONTHLIST rows with no canonical month behind them.
+        preflight
+        prune_orphan_mirrors
+        ;;
     fixexpenses)
         # Rewrite total_expenses from the actual expense rows, for one month
         # or (with no argument) all of them.
@@ -1650,7 +1749,13 @@ case "${1:-}" in
             exit 1
         fi
         validate_month "$2"
-        recompute_carry_chain "$2"
+        # INCLUSIVE of $2, matching this command's documented "from a month
+        # onward". recompute_carry_chain is exclusive — it skips its argument
+        # and seeds from that month's STORED ending_balance — so passing the
+        # user's month directly left that very month unrepaired and wrote its
+        # stale ending into the next month's starting_balance. Seeding from the
+        # month before makes the named month the first one recomputed.
+        recompute_carry_chain "$(prev_month "$2")"
         echo "Carry chain recomputed from $2 onward."
         ;;
     *)

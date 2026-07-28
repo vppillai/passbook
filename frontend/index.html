@@ -3,13 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <!-- theme-color and description are REWRITTEN per instance at build time
-         from config/instances/<name>.yaml (see deploy-frontend.yaml). The
-         values here are the neutral defaults used when serving this file
-         directly during local development; they are not any instance's real
-         configuration. They previously held one instance's values, which had
-         since drifted from that instance's YAML — dead data that read as
-         authoritative. -->
+    <!-- The LIGHT theme-color and the description are rewritten per instance
+         at build time from config/instances/<name>.yaml (see
+         deploy-frontend.yaml); the values here are neutral local-development
+         defaults, not any instance's real configuration. They previously held
+         one instance's values, which had drifted from that instance's YAML.
+
+         The DARK theme-color below is NOT rewritten: the build's sed matches
+         `name="theme-color" content="..."` with those attributes adjacent, and
+         the media query sits between them. #0c0e12 is therefore what every
+         instance actually ships, and no instance YAML carries a dark colour
+         key — so unlike the light value, it is live configuration. -->
     <meta name="theme-color" content="#4A90A4">
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0c0e12">
     <meta name="description" content="Passbook - Track a budget and expenses">

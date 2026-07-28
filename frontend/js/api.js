@@ -87,17 +87,25 @@ const REQUEST_TIMEOUT_MS = 15000;
 // generic 401→session-expired interception so callers receive the parsed
 // body (attempts_remaining, retry_after_seconds) instead of being bounced
 // to the login screen.
-// '/api/auth/webauthn' covers login, login/options, register and
-// register/options. The login endpoints return 401 for a failed assertion and
-// 429 when rate-limited, exactly like PIN verify — without this entry a failed
-// biometric attempt would clear the session and bounce the user to the lock
-// screen instead of surfacing "biometric unlock failed". This omission is why
-// webauthn.js used to carry its own copy of the fetch client.
+// Only the biometric LOGIN pair belongs here, not all of /api/auth/webauthn.
+// These are public endpoints where a 401 describes the credential just
+// supplied — a failed assertion — and must surface as "biometric unlock
+// failed" rather than clearing the session and bouncing to the lock screen.
+// The prefix covers both /login and /login/options.
+//
+// The register endpoints and DELETE /api/auth/webauthn are deliberately NOT
+// listed: they are session-gated protected routes whose only source of 401 is
+// the auth middleware rejecting a dead session, and a failed registration
+// verification is a 400, not a 401. Including them (an earlier version of this
+// list said just '/api/auth/webauthn', which prefix-matches all five paths)
+// suppressed session-expiry detection exactly where it is correct — a user
+// whose session had lapsed would tap the biometric toggle and get a bare error
+// instead of being asked to re-authenticate.
 const AUTH_ENDPOINTS = [
     '/api/auth/verify',
     '/api/auth/setup',
     '/api/auth/change',
-    '/api/auth/webauthn',
+    '/api/auth/webauthn/login',
 ];
 
 class Api {

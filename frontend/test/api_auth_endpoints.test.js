@@ -38,15 +38,40 @@ describe('401 handling per endpoint', () => {
         });
     };
 
-    const webauthnPaths = [
+    // ONLY the login pair. These are public endpoints where a 401 describes the
+    // credential just supplied, so it must not be read as "session dead".
+    const biometricLoginPaths = [
         '/api/auth/webauthn/login',
         '/api/auth/webauthn/login/options',
+    ];
+
+    // Session-GATED endpoints. Their only source of 401 is the auth middleware
+    // rejecting a dead session (a failed registration verification is a 400),
+    // so a 401 here must behave like any other protected route: clear the
+    // session and bounce. An earlier version of this suite asserted the
+    // opposite for these three and so enshrined the defect as intended.
+    const sessionGatedPaths = [
         '/api/auth/webauthn/register',
         '/api/auth/webauthn/register/options',
         '/api/auth/webauthn',
     ];
 
-    for (const path of webauthnPaths) {
+    for (const path of sessionGatedPaths) {
+        test(`401 from ${path} clears the session and fires session-expired`, async () => {
+            stub(401, { error: 'Unauthorized' });
+            let caught;
+            try {
+                await api.request('POST', path);
+            } catch (e) {
+                caught = e;
+            }
+            expect(caught).toBeDefined();
+            expect(api.sessionToken).toBeNull();
+            expect(expiredEvents).toBe(1);
+        });
+    }
+
+    for (const path of biometricLoginPaths) {
         test(`401 from ${path} keeps the session`, async () => {
             stub(401, { error: 'Could not verify the authenticator' });
             let caught;

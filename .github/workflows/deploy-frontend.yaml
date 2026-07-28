@@ -90,7 +90,25 @@ jobs:
             VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
+
+          # The service worker's cache names must change on EVERY deploy, not
+          # every tag. sw.js serves assets cache-first with no revalidation, so
+          # the only thing that can replace a cached file is a new cache name,
+          # which comes from this token. Using the bare tag meant any deploy
+          # without a fresh tag produced a byte-identical sw.js: the browser
+          # saw no worker update, install/activate never ran, and installed
+          # PWAs kept serving the previously tagged assets forever — while
+          # navigations, being stale-while-revalidate, DID pick up the new
+          # index.html. That combination ships new markup against old JS, and
+          # the user cannot clear it (no update toast fires, because no update
+          # was detected).
+          #
+          # Appending the commit SHA makes the cache identity track content.
+          # The footer keeps the clean tag: this token is only ever substituted
+          # into sw.js.
+          SW_VERSION="${VERSION}-$(git rev-parse --short HEAD)"
+          echo "sw_version=$SW_VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION (service-worker cache token: $SW_VERSION)"
 
       - name: Install rsvg-convert for PNG icon generation
         run: sudo apt-get update -qq && sudo apt-get install -y -qq librsvg2-bin
@@ -99,6 +117,7 @@ jobs:
         env:
           INSTANCES: ${{ needs.discover.outputs.instances }}
           VERSION: ${{ steps.version.outputs.version }}
+          SW_VERSION: ${{ steps.version.outputs.sw_version }}
           # GitHub Pages serves a project site under /<repo-name>/, so the PWA
           # start_url base path is the repo name — derived here so forks work
           # without editing this file (no hardcoded "passbook").
@@ -136,10 +155,18 @@ jobs:
             # Inject version into footer
             sed -i "s|>dev</span>|>$VERSION</span>|" "build/$INSTANCE/index.html"
 
-            # Inject the same version into the service worker so its cache
-            # name rotates on every release (sw.js falls back to fetching
-            # ./VERSION at runtime when the placeholder isn't replaced).
-            sed -i "s|__SW_VERSION__|$VERSION|" "build/$INSTANCE/sw.js"
+            # Inject the CACHE token (tag + commit SHA), not the display
+            # version, so the worker's cache names rotate on every deploy
+            # rather than only on a new tag. The guard below is why this is not
+            # left to sw.js's ./VERSION fallback: that fallback yields the bare
+            # tag, which is exactly the non-rotating behaviour being fixed.
+            sed -i "s|__SW_VERSION__|$SW_VERSION|" "build/$INSTANCE/sw.js"
+            if grep -q "__SW_VERSION__" "build/$INSTANCE/sw.js"; then
+              echo "::error::__SW_VERSION__ placeholder not substituted in build/$INSTANCE/sw.js."
+              echo "::error::sw.js would fall back to fetching ./VERSION (the bare tag), so caches"
+              echo "::error::would stop rotating per deploy and installed clients would pin assets."
+              exit 1
+            fi
 
             # Fetch API URL from CloudFormation outputs. FAIL (don't warn) when
             # it's missing: baking an empty API URL ships a dead frontend. This
