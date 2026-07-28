@@ -100,6 +100,9 @@ Commands:
   funds YYYY-MM <amount>                     Add funds to a month
   rmfunds YYYY-MM <amount>                   Remove funds from a month
   rmmonth YYYY-MM                            Delete a month and all its expenses
+  audit                                      Check ledger consistency (READ-ONLY; exits 1 on drift)
+  repair                                     Full reconciliation: expenses -> carry chain -> balance
+  fixexpenses [YYYY-MM]                      Recompute total_expenses from the actual expense rows
   recalc                                     Recalculate total balance from all months
   fixchain YYYY-MM                           Repair the carry chain (starting balances) from a month onward
   export [filename]                          Export all data to JSON
@@ -442,6 +445,295 @@ scan_month_summaries() {
         --filter-expression "begins_with(PK, :pk) AND SK = :sk" \
         --expression-attribute-values '{":pk": {"S": "MONTH#"}, ":sk": {"S": "SUMMARY"}}' \
         --output json
+}
+
+# sum_month_expenses MONTH — total of the ACTUAL EXP# rows in a month.
+#
+# This is the figure nothing else in this script derives. `recalc` and
+# `fixchain` both trust the summary's stored total_expenses; if that field has
+# itself drifted from the rows beneath it, they faithfully propagate the wrong
+# number. Summing the rows is the only way to catch that.
+#
+# The AWS CLI paginates queries automatically, so a month with more expenses
+# than fit in one 1 MB page is still fully summed.
+sum_month_expenses() {
+    local month="$1"
+    aws dynamodb query --table-name "$TABLE_NAME" --region "$REGION" \
+        --key-condition-expression "PK = :pk AND begins_with(SK, :sk)" \
+        --expression-attribute-values "{\":pk\": {\"S\": \"MONTH#$month\"}, \":sk\": {\"S\": \"EXP#\"}}" \
+        --projection-expression "amount" \
+        --output json \
+        | jq -r '[.Items[]? | (.amount.N // "0" | tonumber)] | add // 0'
+}
+
+# recompute_total_expenses — rewrite every month's total_expenses from the
+# actual EXP# rows beneath it (canonical row + MONTHLIST mirror, atomically).
+#
+# This was the missing repair primitive. `fixchain` and `recalc` both consume
+# total_expenses and so faithfully propagate a wrong value, and the `month`
+# command deliberately REFUSES to touch a month that has expense rows (it would
+# clobber them) — which is exactly the month whose total needs correcting. So a
+# drifted total had no supported repair at all; it had to be fixed by hand.
+#
+# Safe to re-run: it writes the value it derives, so a month already correct is
+# rewritten with the same number.
+recompute_total_expenses() {
+    local only_month="${1:-}"
+
+    local months
+    if [[ -n "$only_month" ]]; then
+        months="$only_month"
+    else
+        months=$(scan_month_summaries | jq -r '[.Items[] | .month.S] | sort | .[]')
+    fi
+
+    local m
+    while IFS= read -r m; do
+        [[ -z "$m" ]] && continue
+        local actual ts expr vals tx
+        actual=$(calc "$(sum_month_expenses "$m")")
+        echo "  Expenses: $m total_expenses -> \$$actual"
+        ts=$(now_iso)
+        expr="SET total_expenses = :t, updated_at = :u"
+        vals="{\":t\": {\"N\": \"$actual\"}, \":u\": {\"S\": \"$ts\"}}"
+
+        # The mirror must exist before a conditional update lands on it.
+        ensure_monthlist_mirror "$m" || true
+
+        tx=$(jq -n \
+            --arg table "$TABLE_NAME" \
+            --arg pk_canon "MONTH#$m" \
+            --arg pk_list  "MONTHLIST" \
+            --arg sk_sum   "SUMMARY" \
+            --arg sk_m     "$m" \
+            --arg expr     "$expr" \
+            --argjson vals "$vals" \
+            '{
+                "TransactItems": [
+                    {"Update": {
+                        "TableName": $table,
+                        "Key": {"PK": {"S": $pk_canon}, "SK": {"S": $sk_sum}},
+                        "UpdateExpression": $expr,
+                        "ConditionExpression": "attribute_exists(PK)",
+                        "ExpressionAttributeValues": $vals
+                    }},
+                    {"Update": {
+                        "TableName": $table,
+                        "Key": {"PK": {"S": $pk_list}, "SK": {"S": $sk_m}},
+                        "UpdateExpression": $expr,
+                        "ConditionExpression": "attribute_exists(PK)",
+                        "ExpressionAttributeValues": $vals
+                    }}
+                ]
+            }')
+        if [[ "$DRY_RUN" == "true" ]]; then
+            echo "  [DRY-RUN] transact-write-items (total_expenses $m):" >&2
+            echo "$tx" | jq -c . >&2
+        else
+            aws dynamodb transact-write-items --region "$REGION" \
+                --transact-items "$(echo "$tx" | jq -c '.TransactItems')" >/dev/null
+        fi
+    done <<< "$months"
+}
+
+# repair_ledger — the full reconciliation, in dependency order.
+#
+# Everything downstream is derived from total_expenses, so it goes first; the
+# carry chain is derived from that; the global balance from both. Running them
+# out of order leaves the ledger self-consistent but wrong.
+repair_ledger() {
+    preflight
+    load_settings
+
+    echo "This rewrites total_expenses, starting/ending balances and the global"
+    echo "balance for EVERY month of instance '$INSTANCE', derived from the"
+    echo "expense rows and allowances actually stored."
+    confirm_destructive "REPAIR" "Type 'REPAIR' to proceed: "
+
+    local earliest
+    earliest=$(scan_month_summaries | jq -r '[.Items[] | .month.S] | sort | .[0] // empty')
+    if [[ -z "$earliest" ]]; then
+        echo "  No months found — nothing to repair."
+        return 0
+    fi
+
+    echo ""
+    echo "Step 1/3: total_expenses from expense rows"
+    recompute_total_expenses
+    echo "Step 2/3: carry chain from $earliest"
+    # recompute_carry_chain seeds from the given month's ending and rewrites
+    # everything AFTER it, so seed from the month before the earliest one to
+    # have the earliest month itself recomputed too.
+    recompute_carry_chain "$(prev_month "$earliest")"
+    echo "Step 3/3: global balance"
+    recalc_balance
+
+    echo ""
+    echo "Repair complete. Re-run 'audit' to confirm."
+}
+
+# audit_ledger — READ-ONLY consistency check across the whole table.
+#
+# Exists because the app's carry-chain repair is blind: `fixchain YYYY-MM`
+# rewrites balances from a month you have to guess, and `recalc` overwrites
+# the balance without telling you it was wrong. Neither reports whether
+# anything is actually broken, and neither validates total_expenses against
+# the expense rows at all.
+#
+# Four invariants, in the order a discrepancy propagates:
+#
+#   1. total_expenses == sum of the month's EXP# rows.
+#   2. starting_balance == previous month's ending_balance (carry-over on
+#      only; with it off every month starts at 0).
+#   3. ending_balance == starting_balance + allowance_added - total_expenses.
+#   4. BALANCE == sum(allowance_added - total_expenses) over every month —
+#      the same formula recalc_balance uses, and the one that holds in both
+#      carry modes.
+#   5. Each MONTHLIST mirror agrees with its canonical row (the months list
+#      is served from the mirror, so drift there shows the user stale figures
+#      in the menu while the month view is correct).
+#
+# Writes nothing. Exits 1 when any check fails so it can gate a cron job.
+audit_ledger() {
+    preflight
+    load_settings
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "  [DRY-RUN] audit is read-only; nothing to simulate." >&2
+        return 0
+    fi
+
+    echo "Auditing ledger for instance '$INSTANCE' (table $TABLE_NAME)"
+    echo "  carry_over_balance=$CARRY_OVER_BALANCE"
+    echo ""
+
+    local scan_json items months problems=0
+    scan_json=$(scan_month_summaries)
+    items=$(echo "$scan_json" | jq '.Items')
+    months=$(echo "$items" | jq -r '[.[] | .month.S] | sort | .[]')
+
+    if [[ -z "$months" ]]; then
+        echo "  No month summaries found — nothing to audit."
+        return 0
+    fi
+
+    # MONTHLIST mirrors, fetched once.
+    local mirror_json
+    mirror_json=$(aws dynamodb query --table-name "$TABLE_NAME" --region "$REGION" \
+        --key-condition-expression "PK = :pk" \
+        --expression-attribute-values '{":pk": {"S": "MONTHLIST"}}' \
+        --output json)
+
+    printf '  %-9s %12s %12s %12s %12s\n' MONTH ALLOWANCE EXPENSES STARTING ENDING
+    printf '  %s\n' "------------------------------------------------------------------"
+
+    local prev_ending="0" first=1 expected_balance="0"
+    local m
+    while IFS= read -r m; do
+        [[ -z "$m" ]] && continue
+        local row allowance stored_exp stored_start stored_end actual_exp
+        row=$(echo "$items" | jq -c --arg mm "$m" '.[] | select(.month.S==$mm)')
+        allowance=$(echo "$row"    | jq -r '.allowance_added.N  // "0"')
+        stored_exp=$(echo "$row"   | jq -r '.total_expenses.N   // "0"')
+        stored_start=$(echo "$row" | jq -r '.starting_balance.N // "0"')
+        stored_end=$(echo "$row"   | jq -r '.ending_balance.N   // "0"')
+
+        actual_exp=$(calc "$(sum_month_expenses "$m")")
+
+        printf '  %-9s %12s %12s %12s %12s\n' "$m" "$allowance" "$stored_exp" "$stored_start" "$stored_end"
+
+        # (1) stored total_expenses vs the rows themselves.
+        if [[ "$(calc "$stored_exp")" != "$actual_exp" ]]; then
+            echo "     DRIFT total_expenses: stored \$$stored_exp, expense rows sum to \$$actual_exp"
+            problems=$((problems + 1))
+        fi
+
+        # (2) carry chain.
+        local expected_start="0"
+        if [[ "$CARRY_OVER_BALANCE" != "false" && "$first" != "1" ]]; then
+            expected_start="$prev_ending"
+        fi
+        if [[ "$(calc "$stored_start")" != "$(calc "$expected_start")" ]]; then
+            echo "     DRIFT starting_balance: stored \$$stored_start, expected \$$expected_start"
+            problems=$((problems + 1))
+        fi
+
+        # (3) the month's own arithmetic, measured against the REAL expenses.
+        local expected_end
+        expected_end=$(calc "$(calc "$expected_start") + $allowance - $actual_exp")
+        if [[ "$(calc "$stored_end")" != "$expected_end" ]]; then
+            echo "     DRIFT ending_balance: stored \$$stored_end, expected \$$expected_end"
+            problems=$((problems + 1))
+        fi
+
+        # (5) mirror vs canonical.
+        local mirror
+        mirror=$(echo "$mirror_json" | jq -c --arg mm "$m" '.Items[]? | select(.SK.S==$mm)')
+        if [[ -z "$mirror" ]]; then
+            echo "     MISSING MONTHLIST mirror (the months list will omit this month)"
+            problems=$((problems + 1))
+        else
+            local mp
+            for mp in starting_balance ending_balance allowance_added total_expenses; do
+                local cv mv
+                cv=$(echo "$row"    | jq -r --arg k "$mp" '.[$k].N // "0"')
+                mv=$(echo "$mirror" | jq -r --arg k "$mp" '.[$k].N // "0"')
+                if [[ "$(calc "$cv")" != "$(calc "$mv")" ]]; then
+                    echo "     DRIFT mirror $mp: canonical \$$cv, MONTHLIST \$$mv"
+                    problems=$((problems + 1))
+                fi
+            done
+        fi
+
+        expected_balance=$(calc "$expected_balance + $allowance - $actual_exp")
+        prev_ending="$expected_end"
+        first=0
+    done <<< "$months"
+
+    # (4) the global balance row.
+    echo ""
+    local stored_balance
+    stored_balance=$(aws dynamodb get-item --table-name "$TABLE_NAME" --region "$REGION" \
+        --key '{"PK": {"S": "BALANCE"}, "SK": {"S": "BALANCE"}}' \
+        --output json | jq -r '.Item.total_balance.N // "0"')
+    printf '  %-24s %12s\n' "BALANCE (stored)"   "$stored_balance"
+    printf '  %-24s %12s\n' "BALANCE (expected)" "$expected_balance"
+    if [[ "$(calc "$stored_balance")" != "$expected_balance" ]]; then
+        echo "     DRIFT total_balance: stored \$$stored_balance, expected \$$expected_balance"
+        problems=$((problems + 1))
+    fi
+
+    # Orphan mirrors: a MONTHLIST row whose canonical month is gone. The
+    # backend skips these during carry propagation, but they still surface as
+    # phantom months in the history menu.
+    local orphan
+    while IFS= read -r orphan; do
+        [[ -z "$orphan" ]] && continue
+        if ! echo "$months" | grep -qx "$orphan"; then
+            echo "     ORPHAN MONTHLIST row for $orphan with no MONTH#$orphan/SUMMARY behind it"
+            problems=$((problems + 1))
+        fi
+    done <<< "$(echo "$mirror_json" | jq -r '.Items[]?.SK.S')"
+
+    echo ""
+    if [[ "$problems" -eq 0 ]]; then
+        echo "  OK — ledger is internally consistent."
+        return 0
+    fi
+
+    echo "  $problems problem(s) found. Nothing was modified."
+    echo ""
+    echo "  Back up first:  $0 --instance $INSTANCE export before-repair.json"
+    echo ""
+    echo "  Then, to fix everything in dependency order:"
+    echo "                  $0 --instance $INSTANCE repair"
+    echo ""
+    echo "  Or step by step (same order — each stage feeds the next):"
+    echo "    1. $0 --instance $INSTANCE fixexpenses      # total_expenses from the rows"
+    echo "    2. $0 --instance $INSTANCE fixchain <YYYY-MM>  # carry chain onward"
+    echo "    3. $0 --instance $INSTANCE recalc           # global balance"
+    echo "    4. $0 --instance $INSTANCE audit            # confirm"
+    return 1
 }
 
 # Recalculate total balance from all months.
@@ -1320,6 +1612,32 @@ case "${1:-}" in
             exit 1
         fi
         import_data "$2"
+        ;;
+    audit)
+        # Read-only. Reports drift and exits non-zero when it finds any, so it
+        # can gate a scheduled check.
+        audit_ledger
+        ;;
+    repair)
+        # Full reconciliation in dependency order. Confirmation-gated.
+        repair_ledger
+        ;;
+    fixexpenses)
+        # Rewrite total_expenses from the actual expense rows, for one month
+        # or (with no argument) all of them.
+        if [ $# -eq 2 ]; then
+            validate_month "$2"
+            preflight
+            recompute_total_expenses "$2"
+        elif [ $# -eq 1 ]; then
+            preflight
+            recompute_total_expenses
+        else
+            echo "Usage: $0 --instance <name> fixexpenses [YYYY-MM]" >&2
+            exit 1
+        fi
+        echo "total_expenses recomputed from expense rows."
+        echo "Now run 'fixchain <earliest-month>' then 'recalc' — both derive from it."
         ;;
     recalc)
         recalc_balance

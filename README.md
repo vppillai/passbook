@@ -514,6 +514,46 @@ For scripting or batch operations:
 ./scripts/add-data.sh --instance kids import mybackup.json
 ```
 
+### Checking ledger consistency
+
+`audit` is read-only and exits non-zero when it finds a problem, so it also
+works as a scheduled check:
+
+```bash
+./scripts/add-data.sh --instance kids audit
+```
+
+It verifies five invariants, in the order a discrepancy propagates:
+
+1. each month's `total_expenses` equals the sum of its actual `EXP#` rows
+2. `starting_balance` equals the previous month's `ending_balance` (when
+   `carry_over_balance` is on; with it off, every month starts at 0)
+3. `ending_balance` equals `starting_balance + allowance_added - total_expenses`
+4. the global `BALANCE` row equals `sum(allowance_added - total_expenses)` —
+   the formula that holds in both carry modes
+5. every `MONTHLIST` mirror agrees with its canonical row, with no missing and
+   no orphaned mirrors
+
+Why it exists: app versions before the carry-propagation fix could move a
+month's balance and the global balance without shifting the later months that
+carry from it, so a table can hold drift that no longer reproduces. `audit`
+tells you whether yours does.
+
+If it reports problems, back up and then repair:
+
+```bash
+./scripts/add-data.sh --instance kids export before-repair.json
+./scripts/add-data.sh --instance kids repair
+./scripts/add-data.sh --instance kids audit     # confirm
+```
+
+`repair` runs three stages in dependency order — `total_expenses` from the
+expense rows, then the carry chain, then the global balance — because each is
+derived from the one before it. The stages are also available individually as
+`fixexpenses`, `fixchain <YYYY-MM>` and `recalc`; run them in that order if you
+prefer to go step by step. `allowance_added` is never recomputed: it is the
+record of money granted and cannot be derived from anything else.
+
 ---
 
 ## Development
