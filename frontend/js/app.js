@@ -487,7 +487,13 @@ export class App {
             const visibleModal = Array.from(document.querySelectorAll('.modal'))
                 .reverse()
                 .find(m => !m.classList.contains('hidden') && m.id !== 'confirm-modal');
-            if (!visibleModal) return;
+            if (!visibleModal) {
+                // No dialog on top, so Escape belongs to the history panel — it
+                // is a modal overlay too, and Escape is how a keyboard user
+                // expects to leave one. A modal always wins, hence this order.
+                if (ui.isMenuOpen()) ui.hideMenu();
+                return;
+            }
             if (visibleModal.id === 'change-pin-modal') {
                 this.closeChangePinModal();
             } else {

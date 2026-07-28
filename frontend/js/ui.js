@@ -196,6 +196,19 @@ function focusableWithin(modal) {
 }
 
 /**
+ * Reports whether `el` can actually take focus: present in the document and not
+ * inside a hidden subtree. Same visibility rule as focusableWithin — and for the
+ * same reason, it is deliberately not a layout test.
+ * @param {HTMLElement|null|undefined} el
+ * @returns {boolean}
+ */
+function isFocusable(el) {
+    if (!el || !document.contains(el)) return false;
+    if (el.hasAttribute('hidden') || el.closest('.hidden')) return false;
+    return true;
+}
+
+/**
  * Confines Tab to the modal and pulls focus back if anything moves it out.
  *
  * role="dialog" + aria-modal="true" only TELL assistive tech the rest of the
@@ -280,9 +293,19 @@ export function hideModal(modalId) {
     releaseFocusTrap();
     // Return focus to whatever opened the modal so keyboard users aren't
     // dumped back at the top of the document.
+    //
+    // document.contains() alone was not enough. The opener is very often a
+    // button inside the history panel, which is display:none by the time the
+    // modal closes — still in the document, but .focus() on it silently does
+    // nothing, so focus fell to <body> and the user was dumped at the top of the
+    // document anyway. Fall back to the control that opens the panel, which is
+    // the nearest thing to where they were.
     const trigger = modalReturnFocus.get(modalId);
-    if (trigger && document.contains(trigger)) {
+    const fallback = document.getElementById('menu-btn');
+    if (isFocusable(trigger)) {
         trigger.focus();
+    } else if (isFocusable(fallback)) {
+        fallback.focus();
     }
     modalReturnFocus.delete(modalId);
 }
@@ -311,19 +334,71 @@ export function closeModal(modalId) {
 // cancel any in-flight hide timer, otherwise a close→quick-reopen leaves the
 // stale timeout running and it hides the freshly-opened menu (review F4).
 let menuHideTimeout;
+// The control focus returns to when the panel closes.
+let menuReturnFocus = null;
+
+/**
+ * True while the history panel is open. Lets app.js route Escape to it.
+ *
+ * Keyed on `.visible`, which is added and removed synchronously, rather than on
+ * `.hidden`, which lags by the 300ms slide-out. During that animation the panel
+ * is closing, and treating it as open would have Escape act on something the user
+ * has already dismissed.
+ */
+export function isMenuOpen() {
+    return document.getElementById('history-menu').classList.contains('visible');
+}
+
+/**
+ * Opens the history panel.
+ *
+ * The panel covers the screen behind a backdrop and visually owns it, exactly
+ * like a modal, but used to get none of a modal's treatment: it only toggled
+ * classes. No focus was moved into it and no Tab trap installed, so a keyboard or
+ * screen-reader user was left with focus on the page BEHIND the backdrop, able to
+ * operate an app they could no longer see, with nothing announcing that a panel
+ * had opened. Every modal here already does this properly; the panel was the one
+ * overlay that did not. (The dialog role and accessible name are static markup.)
+ */
 export function showMenu() {
     clearTimeout(menuHideTimeout);
+    const active = document.activeElement;
+    menuReturnFocus = active && active !== document.body ? active : null;
     document.getElementById('menu-overlay').classList.remove('hidden');
     const menu = document.getElementById('history-menu');
     menu.classList.remove('hidden');
     // Trigger reflow for animation
     menu.offsetHeight;
     menu.classList.add('visible');
+    // Move focus in, then confine Tab to the panel — the same two steps
+    // showModal takes, via the same helpers.
+    const first = focusableWithin(menu)[0];
+    if (first) {
+        first.focus();
+    } else {
+        menu.setAttribute('tabindex', '-1');
+        menu.focus();
+    }
+    trapFocus(menu);
 }
 
 export function hideMenu() {
     const menu = document.getElementById('history-menu');
+    if (!isMenuOpen()) return;
     menu.classList.remove('visible');
+
+    // Released SYNCHRONOUSLY, not on the 300ms timer below. There is a single
+    // trap slot, so deferring would tear down a trap that a modal opened FROM
+    // the panel had since installed — and the modal would silently lose its own
+    // Tab containment 300ms after opening.
+    releaseFocusTrap();
+
+    // Restore focus before the panel is display:none, and only if the target is
+    // still usable.
+    const target = menuReturnFocus;
+    menuReturnFocus = null;
+    if (isFocusable(target)) target.focus();
+
     clearTimeout(menuHideTimeout);
     menuHideTimeout = setTimeout(() => {
         menu.classList.add('hidden');

@@ -51,6 +51,14 @@
     --bar-positive: color-mix(in srgb, var(--success-color) 85%, black);
     --bar-negative: var(--danger);
 
+    /* --danger as TEXT. It cannot be the same token as the fill/background use:
+       --danger sits UNDER white text in .toast.error and .btn-danger, so
+       lightening it for dark mode would make those unreadable. As a foreground
+       the raw value fails WCAG 1.4.3's 4.5:1 in three of the four
+       instance/scheme combinations — worst is eatout's #991B1B on the dark
+       surface at 2.04:1. Measured here: kids 5.06, eatout 9.45. */
+    --danger-ink: color-mix(in srgb, var(--danger) 90%, black);
+
     /* ---- scheme tokens: light ---- */
     --bg: var(--background);
     --surface: #ffffff;
@@ -109,6 +117,8 @@
            globally. Measured vs track — 5.20 pos, 5.90 (kids) / 4.50 (eatout). */
         --bar-positive: color-mix(in srgb, var(--success-color) 72%, #ffffff);
         --bar-negative: color-mix(in srgb, var(--danger) 50%, #ffffff);
+        /* Measured against the dark surface: kids 8.84, eatout 7.00. */
+        --danger-ink: color-mix(in srgb, var(--danger) 45%, #ffffff);
     }
 }
 
@@ -167,7 +177,7 @@ body::before {
 }
 
 .error {
-    color: var(--danger);
+    color: var(--danger-ink);
     font-size: 0.875rem;
     margin-top: var(--spacing-sm);
     text-align: center;
@@ -512,7 +522,7 @@ header h1 {
 }
 
 .hero-amount.balance-negative {
-    color: var(--danger);
+    color: var(--danger-ink);
 }
 
 /* ---- Stat chips ---- */
@@ -557,12 +567,12 @@ header h1 {
 }
 
 .chip-value.balance-negative {
-    color: var(--danger);
+    color: var(--danger-ink);
 }
 
 /* Legacy hook used outside the hero (months list). */
 .amount.balance-negative {
-    color: var(--danger);
+    color: var(--danger-ink);
 }
 
 /* =====================================================================
@@ -731,7 +741,7 @@ header h1 {
 }
 
 .expense-edit svg { color: var(--ink-2); }
-.expense-delete svg { color: var(--danger); }
+.expense-delete svg { color: var(--danger-ink); }
 
 .expense-edit:active {
     opacity: 1;
@@ -1096,8 +1106,13 @@ header h1 {
     border: none;
     background: transparent;
     border-radius: var(--r-sm);
-    color: var(--ink-3);
-    opacity: 0.6;
+    /* The RESTING state is the only affordance on a touch device, where :hover
+       never fires. --ink-3 at 0.6 opacity measured 1.71:1 against the light
+       surface and 2.09:1 against the dark one, against WCAG 1.4.11's 3:1 — for
+       the trigger of a destructive action. --ink-2 at 0.75 stays visibly
+       secondary while measuring 3.55 light / 4.82 dark. */
+    color: var(--ink-2);
+    opacity: 0.75;
     cursor: pointer;
     transition: var(--transition);
 }
@@ -1105,7 +1120,7 @@ header h1 {
 .month-delete:hover,
 .month-delete:focus-visible {
     opacity: 1;
-    color: var(--danger);
+    color: var(--danger-ink);
     background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
@@ -1201,7 +1216,7 @@ header h1 {
 }
 
 .month-item .month-balance.balance-negative {
-    color: var(--danger);
+    color: var(--danger-ink);
     background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
