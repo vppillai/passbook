@@ -70,6 +70,15 @@ export class App {
 
     async init() {
         applyLabels();
+        // Bound BEFORE any network call. bindEvents registers the
+        // 'session-expired' listener, and it used to run after
+        // loadInitialData() — so a 401 on the very first request dispatched the
+        // event with nothing listening. The catch below happened to land the
+        // user on the lock screen anyway, which is why this was easy to miss,
+        // but none of the rest of the handler ran: no toast explaining why, no
+        // modals closed, no disabled submit buttons re-enabled. Binding first
+        // also removes the duplicate call the two branches each made.
+        this.bindEvents();
         try {
             // Skip the checkSetup() round trip when we already hold a session:
             // a valid token implies setup is done, so we go straight to loading
@@ -90,7 +99,6 @@ export class App {
                         ui.showDashboardError(() => this.onAuthSuccess());
                     }
                 }
-                this.bindEvents();
                 this.registerServiceWorker();
                 return;
             }
@@ -99,15 +107,15 @@ export class App {
             const isSetup = await api.checkSetup();
             ui.showScreen(isSetup ? 'auth-screen' : 'setup-screen');
             auth.init(() => this.onAuthSuccess());
-            this.bindEvents();
             this.registerServiceWorker();
         } catch (error) {
             console.error('Failed to initialize:', error);
             ui.showToast(labels.failed_connect_toast, 'error');
-            // Show auth screen anyway
+            // Show auth screen anyway. No bindEvents() here: it already ran
+            // before the try, and calling it again would register every listener
+            // a second time — each click then firing its handler twice.
             ui.showScreen('auth-screen');
             auth.init(() => this.onAuthSuccess());
-            this.bindEvents();
             this.registerServiceWorker();
         }
     }
@@ -154,7 +162,11 @@ export class App {
             ui.showUndoToast({
                 message: labels.app_updated_toast,
                 actionText: labels.reload_action || 'Reload',
-                durationMs: 60_000,   // persistent — 60s before auto-reload
+                // The toast auto-dismisses after 60s. It does NOT auto-reload —
+                // onExpire deliberately only leaves pendingUpdateReload set, so
+                // the reload happens on the next month switch rather than
+                // yanking the page out from under someone mid-entry.
+                durationMs: 60_000,
                 onUndo: () => {
                     pendingUpdateReload = false;
                     window.location.reload();
@@ -898,19 +910,30 @@ export class App {
 
     async selectMonth(month) {
         ui.hideMenu();
-        // Edge (c): a month switch must commit any pending delete first so it
-        // isn't silently abandoned. flushUndoToast() settles the visible undo
-        // toast as an expiry, which runs commitPendingDelete().
-        ui.flushUndoToast();
 
         // Feature 2: if a SW update toast was dismissed without action, reload
         // on the next navigation-equivalent action (month switch) so the user
         // eventually picks up fresh assets without a jarring reload mid-session.
+        //
+        // Checked BEFORE settling the undo toast, because the two ways of
+        // committing a pending delete are not interchangeable here.
+        // flushUndoToast() runs the normal commit, whose plain fetch
+        // window.location.reload() would abort — so a delete made in the last
+        // 5s was silently lost, and the row reappeared after the reload.
+        // flushPendingDelete() sends it with keepalive instead, which survives
+        // the navigation. It also clears this.pendingDelete, so the
+        // flushUndoToast() below has nothing left to commit.
         if (this._pendingUpdateReload && this._pendingUpdateReload()) {
             this._consumeUpdateReload();
+            this.flushPendingDelete();
             window.location.reload();
             return;
         }
+
+        // Edge (c): a month switch must commit any pending delete first so it
+        // isn't silently abandoned. flushUndoToast() settles the visible undo
+        // toast as an expiry, which runs commitPendingDelete().
+        ui.flushUndoToast();
 
         try {
             await this.loadMonthView(month);

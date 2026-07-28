@@ -100,6 +100,22 @@ async function resolveVersion() {
     return 'v0';
 }
 
+/**
+ * A precache request that bypasses the browser's own HTTP cache.
+ *
+ * cache.add()/addAll() fetch with the DEFAULT cache mode, so the browser is free
+ * to satisfy them from its HTTP cache. A new worker version could therefore
+ * populate its fresh cache with the very assets it was installed to replace —
+ * silently defeating the whole point of a version bump, and hardest to notice
+ * precisely when it matters (index.html and styles.css are the likeliest to be
+ * held). `cache: 'reload'` forces a network revalidation for each entry.
+ * @param {string} url
+ * @returns {Request}
+ */
+function freshRequest(url) {
+    return new Request(url, { cache: 'reload' });
+}
+
 self.addEventListener('install', (event) => {
     event.waitUntil((async () => {
         setVersion(await resolveVersion());
@@ -107,15 +123,15 @@ self.addEventListener('install', (event) => {
         // Required shell: addAll is atomic, so wrap so a single 404 (e.g. a
         // renamed asset) doesn't wedge the whole install.
         try {
-            await cache.addAll(PRECACHE_URLS);
+            await cache.addAll(PRECACHE_URLS.map(freshRequest));
         } catch {
             // Fall back to best-effort individual adds.
             await Promise.all(PRECACHE_URLS.map((u) =>
-                cache.add(u).catch(() => {})));
+                cache.add(freshRequest(u)).catch(() => {})));
         }
         // Optional (build-only) shell files: best-effort, ignore failures.
         await Promise.all(OPTIONAL_PRECACHE_URLS.map((u) =>
-            cache.add(u).catch(() => {})));
+            cache.add(freshRequest(u)).catch(() => {})));
         await self.skipWaiting();
     })());
 });

@@ -52,6 +52,30 @@ export function roundCents(amount) {
  * Lock/logout. Best-effort and silent: no SW (or no controller yet) simply
  * means there is no such cache to clear.
  */
+/**
+ * True for an API cache belonging to THIS instance.
+ *
+ * Cache Storage is per-ORIGIN, and both deployments share one
+ * (vppillai.github.io/passbook/kids/ and /eatout/). sw.js is careful about that
+ * — its activate reaper only touches names under its own instance prefix, and so
+ * does its PURGE_API_CACHE handler. This predicate used to be a substring test
+ * (`indexOf('-api-') !== -1 && startsWith('passbook-')`), so locking out of one
+ * instance also wiped the OTHER's cached API responses and the sibling app lost
+ * its offline data until it next reached the network. Not a leak — same user
+ * either way — but the page and the worker disagreed about scope and the page was
+ * wrong.
+ *
+ * Shell and asset caches are deliberately excluded: only API responses hold the
+ * user's figures, and evicting the shell would cost them the offline app for no
+ * privacy gain. The prefix matches sw.js's CACHE_PREFIX, whose instance tag is
+ * derived the same way (last path segment, 'default' when served from the root).
+ * @param {string} name
+ * @returns {boolean}
+ */
+export function isOwnApiCacheName(name) {
+    return typeof name === 'string' && name.startsWith(`passbook-${INSTANCE}-api-`);
+}
+
 function purgeApiCache() {
     // Delete from the PAGE first. Cache Storage is reachable from a normal
     // document, so this works even with no service worker controlling it —
@@ -61,8 +85,7 @@ function purgeApiCache() {
     try {
         if (typeof caches !== 'undefined' && caches.keys) {
             caches.keys().then((names) => Promise.all(
-                names.filter((n) => n.indexOf('-api-') !== -1 && n.startsWith('passbook-'))
-                    .map((n) => caches.delete(n))
+                names.filter(isOwnApiCacheName).map((n) => caches.delete(n))
             )).catch(() => { /* best effort */ });
         }
     } catch { /* Cache Storage unavailable (private mode, http://) */ }
