@@ -3,9 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <!-- The LIGHT theme-color and the description are rewritten per instance
+         at build time from config/instances/<name>.yaml (see
+         deploy-frontend.yaml); the values here are neutral local-development
+         defaults, not any instance's real configuration. They previously held
+         one instance's values, which had drifted from that instance's YAML.
+
+         The DARK theme-color below is NOT rewritten: the build's sed matches
+         `name="theme-color" content="..."` with those attributes adjacent, and
+         the media query sits between them. #0c0e12 is therefore what every
+         instance actually ships, and no instance YAML carries a dark colour
+         key — so unlike the light value, it is live configuration. -->
     <meta name="theme-color" content="#4A90A4">
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0c0e12">
-    <meta name="description" content="Kids Passbook - Track allowance and expenses">
+    <meta name="description" content="Passbook - Track a budget and expenses">
     <!-- base-uri 'none' stops injected markup from re-pointing every relative
          URL (scripts, the manifest, API calls) at another origin; form-action
          'none' is safe because this app never submits a form to the network

@@ -99,3 +99,37 @@ describe('currency formatting', () => {
         expect(ui.formatCurrency(0)).toBe('$0.00');
     });
 });
+
+// Month and day names are rendered right next to formatted amounts, so they
+// have to follow the same locale. formatMonthName used a hardcoded English
+// MONTHS array and formatDayLabel called toLocaleDateString('en-US'), which
+// left a de-DE instance showing "1.234,50 €" beside "February 2026".
+describe('locale-aware month and day names', () => {
+    test('formatMonthName uses the configured locale', () => {
+        expect(ui.formatMonthName('2026-02')).toBe('February 2026');
+        expect(ui.formatMonthName('2026-12')).toBe('December 2026');
+    });
+
+    test('formatMonthName does not go through a hardcoded English table', () => {
+        // Derived from Intl for the active locale, so it must agree with what
+        // Intl says for that locale rather than a literal list in the module.
+        const expected = new Intl.DateTimeFormat(ui.activeLocale(), {
+            month: 'long', year: 'numeric', timeZone: 'UTC',
+        }).format(new Date(Date.UTC(2026, 1, 1)));
+        expect(ui.formatMonthName('2026-02')).toBe(expected);
+    });
+
+    test('a month key is parsed as a calendar month, not shifted by timezone', () => {
+        // "2026-01" must render as January even west of UTC, where naive
+        // Date parsing of "2026-01-01" lands in the previous December.
+        expect(ui.formatMonthName('2026-01')).toContain('2026');
+        expect(ui.formatMonthName('2026-01')).toContain(
+            new Intl.DateTimeFormat(ui.activeLocale(), { month: 'long', timeZone: 'UTC' })
+                .format(new Date(Date.UTC(2026, 0, 1))));
+    });
+
+    test('exposes the resolved locale so callers can stay consistent', () => {
+        expect(typeof ui.activeLocale()).toBe('string');
+        expect(ui.activeLocale().length).toBeGreaterThan(0);
+    });
+});

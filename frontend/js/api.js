@@ -87,7 +87,26 @@ const REQUEST_TIMEOUT_MS = 15000;
 // generic 401→session-expired interception so callers receive the parsed
 // body (attempts_remaining, retry_after_seconds) instead of being bounced
 // to the login screen.
-const AUTH_ENDPOINTS = ['/api/auth/verify', '/api/auth/setup', '/api/auth/change'];
+// Only the biometric LOGIN pair belongs here, not all of /api/auth/webauthn.
+// These are public endpoints where a 401 describes the credential just
+// supplied — a failed assertion — and must surface as "biometric unlock
+// failed" rather than clearing the session and bouncing to the lock screen.
+// The prefix covers both /login and /login/options.
+//
+// The register endpoints and DELETE /api/auth/webauthn are deliberately NOT
+// listed: they are session-gated protected routes whose only source of 401 is
+// the auth middleware rejecting a dead session, and a failed registration
+// verification is a 400, not a 401. Including them (an earlier version of this
+// list said just '/api/auth/webauthn', which prefix-matches all five paths)
+// suppressed session-expiry detection exactly where it is correct — a user
+// whose session had lapsed would tap the biometric toggle and get a bare error
+// instead of being asked to re-authenticate.
+const AUTH_ENDPOINTS = [
+    '/api/auth/verify',
+    '/api/auth/setup',
+    '/api/auth/change',
+    '/api/auth/webauthn/login',
+];
 
 class Api {
     constructor() {
@@ -167,7 +186,11 @@ class Api {
         } catch (err) {
             // AbortSignal.timeout throws a TimeoutError on expiry.
             if (err.name === 'TimeoutError' || err.name === 'AbortError') {
-                throw new Error('Request timed out. Check your connection and try again.');
+                // Keep the original as `cause`: the user-facing message is
+                // deliberately vague, but a devtools trace should still show
+                // whether this was our 15s timeout or a browser abort.
+                throw new Error('Request timed out. Check your connection and try again.',
+                    { cause: err });
             }
             throw err;
         }

@@ -26,10 +26,17 @@ const (
 	// an IP — we still serve the request but with a shared "unknown" bucket.
 	RateLimitPrefix = "RATELIMIT#"
 	SKRateLimit     = "RATELIMIT"
-	MonthPrefix     = "MONTH#"
-	SKSummary       = "SUMMARY"
-	ExpensePrefix   = "EXP#"
-	SessionPrefix   = "SESSION#"
+	// RateLimitScopeGlobal is the pseudo-"source" used for the account-wide
+	// failed-PIN counter, giving it the row PK "RATELIMIT#@global". It reuses
+	// the per-IP machinery unchanged rather than adding a parallel set of
+	// methods. The '@' guarantees it can never collide with a real source: the
+	// value always comes from APIGW's RequestContext.HTTP.SourceIP, which is
+	// an IP literal (digits, dots, colons, hex).
+	RateLimitScopeGlobal = "@global"
+	MonthPrefix          = "MONTH#"
+	SKSummary            = "SUMMARY"
+	ExpensePrefix        = "EXP#"
+	SessionPrefix        = "SESSION#"
 	// PKMonthList is the single partition under which a copy of every
 	// month summary is stored (SK = "<yyyy-mm>"). Querying this one
 	// partition (sorted, paginated by the native sort key) replaces the

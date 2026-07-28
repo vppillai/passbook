@@ -101,6 +101,14 @@ jobs:
         # as plain ES modules with no build step and no runtime dependencies.
         run: bun install --frozen-lockfile
 
+      - name: Lint frontend
+        working-directory: frontend
+        # `node --check` above only catches syntax. This catches the class of
+        # mistake that actually reaches production in a no-build-step codebase:
+        # a typo'd identifier, an unused binding whose use was meant to happen,
+        # an accidental global, a shadowed variable.
+        run: bun run lint
+
       - name: Run frontend tests
         working-directory: frontend
         run: bun test

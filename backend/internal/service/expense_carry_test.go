@@ -401,3 +401,55 @@ func TestListMonths_ReturnsTotalExpenses(t *testing.T) {
 		t.Errorf("2026-02 total_expenses = %v, want 55.5", got["2026-02"])
 	}
 }
+
+// TestEnsureMonthListComplete_BackfillsProductionShape reproduces the exact
+// state found on the live kids table: eight consecutive months, all canonical
+// rows correct and the carry chain intact, but the OLDEST month has no
+// MONTHLIST mirror — so /api/months omits it and the history menu cannot
+// navigate to it.
+//
+// That partition is non-empty, so ListMonths' lazy migration (which only fires
+// on a completely empty MONTHLIST) never repairs it. This pins that an ordinary
+// expense in the CURRENT month is enough: propagateToLaterMonths reaches
+// monthsAfter, which runs ensureMonthListComplete, which back-fills the missing
+// mirror. Without that, the month stays invisible indefinitely.
+func TestEnsureMonthListComplete_BackfillsProductionShape(t *testing.T) {
+	ctx := context.Background()
+	svc, repo := newExpenseService(t, true, true, 100)
+
+	// The live shape: 2025-12 canonical-only, the rest fully mirrored.
+	testutil.SeedLegacyMonth(repo, "2025-12", 0, 100, 52, 48)
+	testutil.SeedMonth(repo, "2026-01", 48, 100, 46, 102)
+	testutil.SeedMonth(repo, "2026-02", 102, 100, 0, 202)
+	repo.Balance = &model.Balance{TotalBalance: 202}
+
+	if _, ok := repo.MonthList["2025-12"]; ok {
+		t.Fatal("fixture is wrong: 2025-12 should start unmirrored")
+	}
+
+	// An ordinary expense in the LATEST month — nothing to propagate to.
+	if _, err := svc.AddExpense(ctx, &model.AddExpenseRequest{
+		Amount: 5, Description: "snack", Month: "2026-02",
+	}); err != nil {
+		t.Fatalf("AddExpense: %v", err)
+	}
+
+	mirror := repo.MonthList["2025-12"]
+	if mirror == nil {
+		t.Fatal("2025-12 mirror was NOT back-filled — the month stays missing " +
+			"from the history menu after deploy")
+	}
+	// The back-fill must copy the canonical values, not fabricate zeroes: the
+	// months list reads monthly_saved from the mirror.
+	if mirror.AllowanceAdded != 100 || mirror.TotalExpenses != 52 {
+		t.Errorf("mirror = allowance %v / expenses %v, want 100 / 52",
+			mirror.AllowanceAdded, mirror.TotalExpenses)
+	}
+	if mirror.StartingBalance != 0 || mirror.EndingBalance != 48 {
+		t.Errorf("mirror = start %v / end %v, want 0 / 48",
+			mirror.StartingBalance, mirror.EndingBalance)
+	}
+
+	// And the untouched months must not have been disturbed by the repair.
+	assertLedgerConsistent(t, repo, "2025-12", "2026-01", "2026-02")
+}

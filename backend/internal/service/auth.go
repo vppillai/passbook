@@ -29,7 +29,29 @@ const (
 	// Rate limiting: 5 failed attempts per sliding 15-minute window
 	// (the RATELIMIT row's TTL), scoped per source IP. Once the cap is
 	// hit, further attempts are refused until the window's TTL expires.
-	maxAttempts     = 5
+	maxAttempts = 5
+
+	// globalMaxAttempts bounds failed PIN attempts across ALL sources in the
+	// same 15-minute window.
+	//
+	// The per-IP cap exists so one attacker cannot lock the family out, but it
+	// is useless against distributed guessing: a 4-digit PIN is 10,000
+	// combinations and 5 free guesses per IP means roughly 2,000 addresses
+	// exhaust the entire keyspace inside a single window, leaving Argon2's cost
+	// as the only obstacle. This bounds total wrong guesses to
+	// globalMaxAttempts per window regardless of how many addresses are used.
+	//
+	// The trade-off is deliberate and unavoidable: to stop a guess being
+	// EVALUATED the counter has to be consulted before the hash comparison, so
+	// while it is tripped the correct PIN is refused too — an attacker can deny
+	// PIN login for up to the window. Two things make that acceptable:
+	//   - 50 is far above any believable legitimate use (a real user mistypes
+	//     two or three times), so it is only ever reached under attack.
+	//   - Biometric unlock is exempt (see WebAuthnService.FinishLogin), because
+	//     a WebAuthn credential is not guessable and so contributes nothing to
+	//     the risk this cap addresses. An enrolled user keeps a way in.
+	globalMaxAttempts = 50
+
 	sessionTTLHours = 24
 )
 
@@ -106,6 +128,19 @@ func (s *AuthService) VerifyPIN(ctx context.Context, pin string, sourceIP string
 		return rateLimitedResponse(rateLimit), nil
 	}
 
+	// Account-wide cap, checked before the hash comparison so a guess past it
+	// is never evaluated — that is the whole point, and it is also why the
+	// correct PIN is refused while this is tripped. See globalMaxAttempts.
+	globalLimit, err := s.repo.GetRateLimitEntry(ctx, repository.RateLimitScopeGlobal)
+	if err != nil {
+		return nil, err
+	}
+	if globalLimit != nil && globalLimit.Attempts >= globalMaxAttempts {
+		log.Printf("warn: global PIN attempt cap reached (%d in window); refusing verify from ip=%s",
+			globalLimit.Attempts, sourceIP)
+		return rateLimitedResponse(globalLimit), nil
+	}
+
 	// Validate PIN format before incurring Argon2 cost. Still increments
 	// the failed-attempt counter so that format-vs-Argon2 timing cannot
 	// be used to enumerate valid PIN shapes.
@@ -153,6 +188,18 @@ func (s *AuthService) VerifyPIN(ctx context.Context, pin string, sourceIP string
 // if the conditional fails the cap was reached concurrently (B6), and we
 // return the rate-limited 429 response derived from the current row.
 func (s *AuthService) failedAttempt(ctx context.Context, sourceIP string) (*model.VerifyPinResponse, error) {
+	// Bump the account-wide counter as well as the per-IP one. Its conditional
+	// increment stops at globalMaxAttempts; hitting that ceiling is not an
+	// error here — VerifyPIN's pre-check is what refuses the NEXT attempt — so
+	// a cap-reached result is simply ignored and the per-IP accounting below
+	// still produces the user-facing response.
+	if _, gerr := s.repo.IncrementFailedAttempts(ctx, repository.RateLimitScopeGlobal, globalMaxAttempts); gerr != nil &&
+		!errors.Is(gerr, repository.ErrRateLimitCapReached) {
+		// A failure to record the global attempt must not hand the caller a
+		// free guess, so it is logged rather than returned.
+		log.Printf("warn: global rate-limit increment failed: %v", gerr)
+	}
+
 	entry, err := s.repo.IncrementFailedAttempts(ctx, sourceIP, maxAttempts)
 	if err != nil {
 		if errors.Is(err, repository.ErrRateLimitCapReached) {
