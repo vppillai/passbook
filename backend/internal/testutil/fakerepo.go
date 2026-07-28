@@ -37,6 +37,18 @@ type FakeRepo struct {
 	Expenses   map[string]*model.Expense
 	RateLimits map[string]*model.RateLimitEntry // keyed by sourceIP
 	Sessions   map[string]*model.Session
+	// ClearRateLimitErr, when non-nil, makes ClearRateLimit fail. Clearing the
+	// counter is bookkeeping on an ALREADY-SUCCESSFUL login, so a transient
+	// failure must not sink the login; the row's TTL expires the window anyway.
+	ClearRateLimitErr error
+	// CreateSessionErr, when non-nil, makes CreateSession fail. The session IS
+	// the login, so unlike the counter above this one must be fatal.
+	CreateSessionErr error
+	// BeforeDeleteMonth, when set, runs inside AtomicDeleteMonth just before its
+	// conditions are evaluated. It stands in for a concurrent write landing
+	// between a caller's pre-read and the transaction — the window in which a
+	// stale allowance figure could be debited.
+	BeforeDeleteMonth func()
 	// WebAuthn state. WAChallenges is keyed by challenge_id; WACredentials
 	// is keyed by the credential's base64url ID (mirroring the WACREDLIST
 	// enumeration partition).
@@ -592,11 +604,19 @@ func (f *FakeRepo) AtomicAddFunds(_ context.Context, month string, amount float6
 }
 
 func (f *FakeRepo) AtomicDeleteMonth(_ context.Context, month string, allowanceAdded float64) error {
+	if f.BeforeDeleteMonth != nil {
+		f.BeforeDeleteMonth()
+	}
 	s, ok := f.Months[month]
 	if !ok {
 		return repository.ErrMonthHasExpenses
 	}
 	if s.TotalExpenses != 0 {
+		return repository.ErrMonthHasExpenses
+	}
+	// The real transaction also pins allowance_added, so the figure being
+	// debited from the global balance cannot have moved since the caller read it.
+	if !AlmostEqual(s.AllowanceAdded, allowanceAdded) {
 		return repository.ErrMonthHasExpenses
 	}
 	delete(f.Months, month)
@@ -613,6 +633,9 @@ func (f *FakeRepo) AtomicDeleteMonth(_ context.Context, month string, allowanceA
 // =====================================================================
 
 func (f *FakeRepo) CreateSession(_ context.Context, token string, _ int) error {
+	if f.CreateSessionErr != nil {
+		return f.CreateSessionErr
+	}
 	f.Sessions[token] = &model.Session{Token: token}
 	return nil
 }
@@ -666,7 +689,13 @@ func (f *FakeRepo) IncrementFailedAttempts(_ context.Context, sourceIP string, m
 	return &out, nil
 }
 
+// ClearRateLimitErr, when set, makes ClearRateLimit fail. Clearing the counter
+// is bookkeeping on an ALREADY-SUCCESSFUL login, so a transient failure must not
+// sink the login — and the row's TTL expires the window regardless.
 func (f *FakeRepo) ClearRateLimit(_ context.Context, sourceIP string) error {
+	if f.ClearRateLimitErr != nil {
+		return f.ClearRateLimitErr
+	}
 	delete(f.RateLimits, sourceIP)
 	return nil
 }

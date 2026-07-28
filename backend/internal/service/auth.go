@@ -150,12 +150,31 @@ func (s *AuthService) VerifyPIN(ctx context.Context, pin string, sourceIP string
 		return s.failedAttempt(ctx, sourceIP)
 	}
 
-	if err := s.repo.ClearRateLimit(ctx, sourceIP); err != nil {
+	return mintSession(ctx, s.repo, sourceIP)
+}
+
+// mintSession is the tail every successful login shares: clear the per-IP
+// failure counter and issue a session token.
+//
+// It exists as one function because the PIN and biometric paths had separate
+// copies that disagreed on the important detail. Clearing the counter is
+// bookkeeping on a login that has ALREADY succeeded, and the RATELIMIT row's
+// 15-minute TTL expires the window on its own, so a transient failure there is
+// worth a log and nothing more. VerifyPIN did that; WebAuthnService.FinishLogin
+// returned the error, so a blip on a counter write turned a valid biometric
+// unlock into a 500 — refusing entry to the user whose authenticator had just
+// verified. With one implementation the two cannot drift apart again.
+//
+// The session write is the opposite case: it IS the login, so a failure there
+// must be surfaced rather than reporting success with a token that was never
+// stored.
+func mintSession(ctx context.Context, repo repository.RepositoryInterface, sourceIP string) (*model.VerifyPinResponse, error) {
+	if err := repo.ClearRateLimit(ctx, sourceIP); err != nil {
 		log.Printf("warn: ClearRateLimit failed for ip=%s: %v", sourceIP, err)
 	}
 
 	token := uuid.New().String()
-	if err := s.repo.CreateSession(ctx, token, sessionTTLHours); err != nil {
+	if err := repo.CreateSession(ctx, token, sessionTTLHours); err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 

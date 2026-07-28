@@ -1857,9 +1857,13 @@ func (r *Repository) CreateMonthSummaryIfAbsent(ctx context.Context, summary *mo
 // AtomicDeleteMonth removes a month: it deletes the canonical summary row
 // and its MONTHLIST copy and debits the global balance by allowanceAdded,
 // all in one transaction. The summary delete is conditioned on
-// total_expenses = :zero (and attribute_exists) so a month that still has
-// expenses cannot be deleted — the caller maps that to a 409. allowanceAdded
-// is formatted as the shortest round-trip of the value read from the summary.
+// attribute_exists(PK), total_expenses = :zero so a month that still has
+// expenses cannot be deleted, AND allowance_added = :allowance so the figure
+// being debited cannot have changed since the caller read it. Any of the three
+// failing surfaces as ErrMonthHasExpenses — DynamoDB reports only WHICH item's
+// condition failed, not which clause — so the caller re-reads to say which.
+// allowanceAdded is formatted as the shortest round-trip of the value read from
+// the summary.
 func (r *Repository) AtomicDeleteMonth(ctx context.Context, month string, allowanceAdded float64) error {
 	pkMonth := MonthPrefix + month
 	nowStr := time.Now().Format(time.RFC3339)
@@ -1873,9 +1877,17 @@ func (r *Repository) AtomicDeleteMonth(ctx context.Context, month string, allowa
 					"PK": &types.AttributeValueMemberS{Value: pkMonth},
 					"SK": &types.AttributeValueMemberS{Value: SKSummary},
 				},
-				ConditionExpression: aws.String("attribute_exists(PK) AND total_expenses = :zero"),
+				// allowance_added is pinned as well as total_expenses. The caller
+				// pre-reads the summary and hands its allowance figure to the
+				// balance debit below; without this guard a top-up landing in
+				// between made that figure stale, so the month row vanished while
+				// the global balance kept the difference — permanent drift, since
+				// nothing recomputes the balance afterwards.
+				ConditionExpression: aws.String(
+					"attribute_exists(PK) AND total_expenses = :zero AND allowance_added = :allowance"),
 				ExpressionAttributeValues: map[string]types.AttributeValue{
-					":zero": &types.AttributeValueMemberN{Value: "0"},
+					":zero":      &types.AttributeValueMemberN{Value: "0"},
+					":allowance": &types.AttributeValueMemberN{Value: allowanceStr},
 				},
 			}},
 			{Delete: &types.Delete{

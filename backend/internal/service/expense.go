@@ -55,6 +55,12 @@ var (
 	// ErrMonthHasExpenses is returned by DeleteMonth when the target month
 	// still has expenses; handler maps to 409 (U2).
 	ErrMonthHasExpenses = errors.New("month has expenses")
+	// ErrMonthModified is returned by DeleteMonth when the month changed
+	// between the pre-read and the conditional delete — specifically when its
+	// allowance_added moved, which would have made the balance debit stale.
+	// Distinct from ErrMonthHasExpenses so the client is told to refresh rather
+	// than being given a reason that is not true. Handler maps to 409.
+	ErrMonthModified = errors.New("month modified")
 	// ErrInvalidCursor is returned when a paginated endpoint receives an
 	// opaque cursor that decodes but doesn't refer to a valid resume
 	// point (e.g. cursorMonth not found in the current month list).
@@ -1526,9 +1532,12 @@ func (s *ExpenseService) DeleteMonth(ctx context.Context, month string) error {
 
 	if err := s.repo.AtomicDeleteMonth(ctx, month, summary.AllowanceAdded); err != nil {
 		if errors.Is(err, repository.ErrMonthHasExpenses) {
-			// Lost a race: an expense landed (or the month vanished)
-			// between our pre-read and the conditional delete.
-			return ErrMonthHasExpenses
+			// Lost a race between the pre-read and the conditional delete. The
+			// transaction pins attribute_exists, total_expenses AND
+			// allowance_added, and DynamoDB reports only which ITEM failed, so
+			// re-read to say which of them it was. The allowance case matters
+			// most: it is the one that would otherwise debit a stale figure.
+			return s.explainFailedMonthDelete(ctx, month, summary)
 		}
 		return err
 	}
@@ -1543,6 +1552,30 @@ func (s *ExpenseService) DeleteMonth(ctx context.Context, month string) error {
 		return err
 	}
 	return nil
+}
+
+// explainFailedMonthDelete turns a cancelled month-delete into the error that
+// describes what actually changed, by re-reading the row. `before` is what the
+// caller saw when it decided to delete.
+func (s *ExpenseService) explainFailedMonthDelete(ctx context.Context, month string, before *model.MonthSummary) error {
+	current, err := s.repo.GetMonthSummary(ctx, month)
+	if err != nil {
+		// Cannot tell; the refusal itself is still correct.
+		return ErrMonthHasExpenses
+	}
+	switch {
+	case current == nil:
+		return ErrMonthNotFound
+	case current.TotalExpenses != 0:
+		return ErrMonthHasExpenses
+	case current.AllowanceAdded != before.AllowanceAdded:
+		return ErrMonthModified
+	default:
+		// Condition failed but the row looks deletable now — something moved and
+		// moved back, or a write landed after the re-read. Refusing is the safe
+		// answer and the client can simply try again.
+		return ErrMonthModified
+	}
 }
 
 // AddFunds tops up an existing month's allowance and credits the global
