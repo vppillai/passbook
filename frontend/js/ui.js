@@ -738,7 +738,11 @@ export function buildMonthRow(month, currentMonth, onSelect, maxExpenses = 0, on
         const track = document.createElement('span');
         track.className = 'month-spend-bar';
         const fill = document.createElement('span');
-        fill.className = 'month-spend-fill';
+        // Same `saved` the pill above is built from, so the bar's colour and the
+        // figure it sits under can never disagree about the sign. The bar used
+        // to be var(--accent) for every month, which made a month that
+        // overspent indistinguishable from one that saved.
+        fill.className = 'month-spend-fill' + (saved < 0 ? ' balance-negative' : '');
         fill.style.setProperty('--w', `${pct}%`);
         track.appendChild(fill);
         btn.appendChild(track);
