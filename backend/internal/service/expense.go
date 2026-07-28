@@ -414,6 +414,124 @@ func (s *ExpenseService) insufficientFunds(ctx context.Context, month string) er
 	return &InsufficientFundsError{Available: roundCents(summary.EndingBalance)}
 }
 
+// monthImpulse is a change to ONE month's ending balance, stated before carry
+// propagation is applied. A mutation is expressed as one or two of these: an
+// add is a single negative impulse, a cross-month move is a refund at the source
+// and a charge at the destination.
+type monthImpulse struct {
+	month string
+	delta float64
+}
+
+// ensureCarryChainAffordable refuses a mutation that would drive ANY month's
+// ending balance below zero, on an instance that disallows overspending.
+//
+// The hard stop was previously a per-month DynamoDB ConditionExpression
+// (`ending_balance >= :amount`) on the single row being written. That is only
+// the right question when months are independent. With carry_over_balance on
+// they are not — a change to any month shifts every later month's ending balance
+// by the same delta — and asking it per-month was wrong in both directions:
+//
+//   - It let a back-dated expense drive a LATER month negative. The target month
+//     had the headroom so the condition passed; propagation then pushed the
+//     months after it below zero, on an instance that disallows overspending at
+//     all. Reachable from the UI, which supports back-dating.
+//   - It refused moves that were affordable. Moving an expense to a later month
+//     checked the destination's balance BEFORE the source's refund propagated
+//     in, so a move that nets to zero across the chain was rejected.
+//
+// Both are the same modelling gap, so both are answered here, over the whole
+// affected span rather than one row.
+//
+// This is a pre-check, so it is not atomic with the write that follows: two
+// concurrent mutations could each pass it. The per-month ConditionExpression is
+// still applied where it is correct, so the ordinary single-month case keeps its
+// atomic guarantee; only the cross-month reach is guarded optimistically. That
+// matches what the surrounding code already accepts — propagation itself is a
+// separate transaction from the mutation it follows — and it is the cheaper side
+// of the trade against a silent overspend or a wrongly refused edit.
+func (s *ExpenseService) ensureCarryChainAffordable(ctx context.Context, impulses ...monthImpulse) error {
+	if s.allowOverspending {
+		return nil
+	}
+
+	// With carry off, months are independent and the per-month
+	// ConditionExpression on each written row already says everything there is
+	// to say. Nothing here can add to it.
+	if !s.carryOverBalance {
+		return nil
+	}
+
+	earliest := ""
+	for _, imp := range impulses {
+		if earliest == "" || imp.month < earliest {
+			earliest = imp.month
+		}
+	}
+	if earliest == "" {
+		return nil
+	}
+
+	// Every month from the earliest impulse onward feels some part of it.
+	span := map[string]bool{}
+	for _, imp := range impulses {
+		span[imp.month] = true
+	}
+	later, err := s.monthsAfter(ctx, earliest)
+	if err != nil {
+		return err
+	}
+	for _, m := range later {
+		span[m] = true
+	}
+
+	months := make([]string, 0, len(span))
+	for m := range span {
+		months = append(months, m)
+	}
+	sort.Strings(months)
+
+	// Walk ascending, accumulating the impulses that have taken effect by each
+	// month — that running total IS the carry propagation. The tightest
+	// resulting balance decides, and the tightest PRE-mutation balance is what
+	// the user can actually spend, so it is what the error reports.
+	carried := 0.0
+	worstShortfall := 0.0
+	available := math.Inf(1)
+	for _, m := range months {
+		for _, imp := range impulses {
+			if imp.month == m {
+				carried += imp.delta
+			}
+		}
+		summary, err := s.repo.GetMonthSummary(ctx, m)
+		if err != nil {
+			return err
+		}
+		if summary == nil {
+			// No canonical row: nothing to drive negative. An orphan MONTHLIST
+			// entry lands here too, and is reported by propagateToLaterMonths.
+			continue
+		}
+		if summary.EndingBalance < available {
+			available = summary.EndingBalance
+		}
+		// Cents, not floats: a 0.005 rounding artifact must not refuse a
+		// legitimate expense.
+		if shortfall := -roundCents(summary.EndingBalance + carried); shortfall > worstShortfall {
+			worstShortfall = shortfall
+		}
+	}
+
+	if worstShortfall <= 0 {
+		return nil
+	}
+	if math.IsInf(available, 1) {
+		return ErrInsufficientFunds
+	}
+	return &InsufficientFundsError{Available: roundCents(available)}
+}
+
 // propagateToLaterMonths shifts every month strictly after `month` by
 // endingDelta on both starting_balance and ending_balance. When carry-over
 // is enabled, editing/deleting an expense in a PAST month must ripple
@@ -687,6 +805,13 @@ func (s *ExpenseService) AddExpense(ctx context.Context, req *model.AddExpenseRe
 		CreatedAt:   expenseTime,
 	}
 
+	// The per-month condition inside AtomicAddExpense only guards THIS month.
+	// With carry on, a back-dated expense also reaches every later month, so the
+	// whole affected span has to be affordable before anything is written.
+	if err := s.ensureCarryChainAffordable(ctx, monthImpulse{month, -req.Amount}); err != nil {
+		return nil, err
+	}
+
 	if err := s.repo.AtomicAddExpense(ctx, month, expense, !s.allowOverspending); err != nil {
 		if errors.Is(err, repository.ErrInsufficientBalance) {
 			return nil, s.insufficientFunds(ctx, month)
@@ -888,7 +1013,22 @@ func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expens
 		if err := s.repo.EnsureMonthListMirror(ctx, targetMonth); err != nil {
 			return nil, err
 		}
-		if err := s.repo.AtomicMoveExpenseAcrossMonths(ctx, month, targetMonth, expenseID, newExpense, currentExpense.Amount, !s.allowOverspending); err != nil {
+		// A move is a refund at the source and a charge at the destination.
+		// Checking them together is what lets an affordable move through: when
+		// the destination is LATER than the source, the refund propagates into
+		// it, so the destination's own balance is not the constraint.
+		if err := s.ensureCarryChainAffordable(ctx,
+			monthImpulse{month, currentExpense.Amount},
+			monthImpulse{targetMonth, -newAmount},
+		); err != nil {
+			return nil, err
+		}
+		// srcRefundReachesDst tells the transaction's destination condition to
+		// account for that refund. Without it the condition asks whether the
+		// destination can afford the charge on its own, which is the wrong
+		// question and refuses moves that net to zero across the chain.
+		srcRefundReachesDst := s.carryOverBalance && month < targetMonth
+		if err := s.repo.AtomicMoveExpenseAcrossMonths(ctx, month, targetMonth, expenseID, newExpense, currentExpense.Amount, !s.allowOverspending, srcRefundReachesDst); err != nil {
 			switch {
 			case errors.Is(err, repository.ErrInsufficientBalance):
 				return nil, s.insufficientFunds(ctx, targetMonth)
@@ -920,6 +1060,10 @@ func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expens
 		if err := s.repo.EnsureMonthListMirror(ctx, month); err != nil {
 			return nil, err
 		}
+		if err := s.ensureCarryChainAffordable(ctx,
+			monthImpulse{month, -(newAmount - currentExpense.Amount)}); err != nil {
+			return nil, err
+		}
 		if err := s.repo.AtomicMoveExpenseSameMonth(ctx, month, expenseID, newExpense, currentExpense.Amount, !s.allowOverspending); err != nil {
 			switch {
 			case errors.Is(err, repository.ErrInsufficientBalance):
@@ -944,6 +1088,12 @@ func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expens
 			// Back-fill the MONTHLIST mirror on legacy tables so the atomic
 			// transaction's monthListUpdate condition can't cancel it (→ 500).
 			if err := s.repo.EnsureMonthListMirror(ctx, month); err != nil {
+				return nil, err
+			}
+			// Raising an amount in a PAST month reaches every later month, same
+			// as back-dating a new expense does.
+			if err := s.ensureCarryChainAffordable(ctx,
+				monthImpulse{month, -amountDelta}); err != nil {
 				return nil, err
 			}
 			// Atomic transaction with optimistic concurrency on amount.

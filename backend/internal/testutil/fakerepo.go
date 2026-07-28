@@ -508,7 +508,7 @@ func (f *FakeRepo) AtomicMoveExpenseSameMonth(_ context.Context, month string, o
 // (oldAmount - newAmount). A missing mirror on either month cancels the whole
 // transaction; an overspend on the destination (checkBalance) returns
 // ErrInsufficientBalance before any write lands.
-func (f *FakeRepo) AtomicMoveExpenseAcrossMonths(_ context.Context, srcMonth, dstMonth, oldExpenseID string, newExpense *model.Expense, oldAmount float64, checkBalance bool) error {
+func (f *FakeRepo) AtomicMoveExpenseAcrossMonths(_ context.Context, srcMonth, dstMonth, oldExpenseID string, newExpense *model.Expense, oldAmount float64, checkBalance bool, srcRefundReachesDst bool) error {
 	e, ok := f.Expenses[ExpenseKey(srcMonth, oldExpenseID)]
 	if !ok {
 		return repository.ErrExpenseStateMismatch
@@ -530,8 +530,16 @@ func (f *FakeRepo) AtomicMoveExpenseAcrossMonths(_ context.Context, srcMonth, ds
 	if _, ok := f.MonthList[dstMonth]; !ok {
 		return errMonthListMirrorMissing
 	}
-	if checkBalance && dst.EndingBalance < newExpense.Amount {
-		return repository.ErrInsufficientBalance
+	if checkBalance {
+		// Same threshold arithmetic as the real transaction: when the source's
+		// refund reaches the destination, the charge that matters is the net one.
+		threshold := newExpense.Amount
+		if srcRefundReachesDst {
+			threshold -= oldAmount
+		}
+		if dst.EndingBalance < threshold {
+			return repository.ErrInsufficientBalance
+		}
 	}
 	delete(f.Expenses, ExpenseKey(srcMonth, oldExpenseID))
 	ne := *newExpense

@@ -1489,7 +1489,15 @@ func (r *Repository) AtomicMoveExpenseSameMonth(ctx context.Context, month strin
 // A failed delete condition (index 0) surfaces as ErrExpenseStateMismatch.
 // Both months' mirror rows must already exist (caller back-fills via
 // EnsureMonthListMirror) — the mirror updates are conditional deltas.
-func (r *Repository) AtomicMoveExpenseAcrossMonths(ctx context.Context, srcMonth, dstMonth, oldExpenseID string, newExpense *model.Expense, oldAmount float64, checkBalance bool) error {
+// srcRefundReachesDst says the source's refund will land in the destination's
+// carried balance — true when carry-over is on and the destination is LATER than
+// the source. The destination's balance condition then has to be measured
+// against the NET charge (newAmount - oldAmount) rather than the gross one:
+// asking whether the destination can afford the full amount out of its current
+// balance is the wrong question when the refund is about to arrive, and it
+// refused moves that net to zero across the chain (e.g. moving an expense
+// forward a month unchanged, which cannot alter any balance).
+func (r *Repository) AtomicMoveExpenseAcrossMonths(ctx context.Context, srcMonth, dstMonth, oldExpenseID string, newExpense *model.Expense, oldAmount float64, checkBalance bool, srcRefundReachesDst bool) error {
 	pkSrc := MonthPrefix + srcMonth
 	pkDst := MonthPrefix + dstMonth
 	newExpense.PK = pkDst
@@ -1513,14 +1521,25 @@ func (r *Repository) AtomicMoveExpenseAcrossMonths(ctx context.Context, srcMonth
 	}
 
 	dstCondition := "attribute_exists(PK)"
-	if checkBalance {
-		dstCondition = "attribute_exists(PK) AND ending_balance >= :newAmount"
-	}
-	dstSummaryExpr := "SET total_expenses = total_expenses + :newAmount, ending_balance = ending_balance - :newAmount, updated_at = :now"
 	dstValues := map[string]types.AttributeValue{
 		":newAmount": &types.AttributeValueMemberN{Value: newAmountStr},
 		":now":       &types.AttributeValueMemberS{Value: nowStr},
 	}
+	if checkBalance {
+		// The threshold is computed here rather than in the expression, because
+		// a ConditionExpression cannot do arithmetic on its right-hand side.
+		// A negative threshold is fine and intended: the refund more than covers
+		// the charge, so any non-negative balance satisfies it.
+		threshold := newExpense.Amount
+		if srcRefundReachesDst {
+			threshold -= oldAmount
+		}
+		dstCondition = "attribute_exists(PK) AND ending_balance >= :minDstEnding"
+		dstValues[":minDstEnding"] = &types.AttributeValueMemberN{
+			Value: fmt.Sprintf("%.2f", threshold),
+		}
+	}
+	dstSummaryExpr := "SET total_expenses = total_expenses + :newAmount, ending_balance = ending_balance - :newAmount, updated_at = :now"
 	dstListValues := map[string]types.AttributeValue{
 		":newAmount": &types.AttributeValueMemberN{Value: newAmountStr},
 		":now":       &types.AttributeValueMemberS{Value: nowStr},
