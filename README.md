@@ -47,7 +47,7 @@ A simple, secure budget-tracker app. One codebase, multiple independent deployme
                        │  AWS_PROXY         │
               ┌────────▼───────┐    ┌───────▼────────┐
               │ Lambda (Go)    │    │ Lambda (Go)    │
-              │ ARM64, 128MB   │    │ ARM64, 128MB   │
+              │ ARM64, 256MB   │    │ ARM64, 256MB   │
               └────────┬───────┘    └───────┬────────┘
                        │                    │
               ┌────────▼───────┐    ┌───────▼────────┐
@@ -71,7 +71,12 @@ A simple, secure budget-tracker app. One codebase, multiple independent deployme
 | `MONTH#2026-02` | `SUMMARY` | Month starting/ending balance, totals |
 | `MONTH#2026-02` | `EXP#<ts>#<id>` | Individual expense |
 | `SESSION#<token>` | `SESSION#<token>` | Auth session (24h TTL) |
-| `RATELIMIT#<ip>` | `RATELIMIT#<ip>` | Failed PIN attempts (15m TTL) |
+| `RATELIMIT#<ip>` | `RATELIMIT` | Failed PIN attempts for one source IP (15m TTL) |
+| `RATELIMIT#@global` | `RATELIMIT` | Account-wide failed-PIN counter (15m TTL). `@` cannot occur in an API Gateway source IP, so it cannot collide with a real one |
+| `MONTHLIST` | `<yyyy-mm>` | Mirror of each month's summary, in one partition. Lets "which months exist / come after this one?" be a sorted Query instead of a full-table Scan |
+| `WACHAL#<challenge_id>` | `WACHAL#<challenge_id>` | In-flight WebAuthn ceremony session (short TTL, single use) |
+| `WACRED#<cred_id>` | `WACRED#<cred_id>` | Enrolled WebAuthn credential (public key + sign count) |
+| `WACREDLIST` | `WACRED#<cred_id>` | Enumeration partition for the credentials above |
 
 ### API Endpoints
 
@@ -81,8 +86,13 @@ A simple, secure budget-tracker app. One codebase, multiple independent deployme
 | GET | `/api/auth/status` | No | Check if PIN is configured |
 | POST | `/api/auth/setup` | No | First-time PIN setup |
 | POST | `/api/auth/verify` | No | Verify PIN, receive session token |
-| POST | `/api/auth/change` | Yes | Change PIN (requires current PIN) |
+| POST | `/api/auth/change` | Yes | Change PIN (requires current PIN; rate limited on the same budget as `/api/auth/verify`, 429 when exhausted) |
 | POST | `/api/auth/logout` | Yes | Invalidate session |
+| POST | `/api/auth/webauthn/login/options` | No | Begin biometric unlock — returns the assertion challenge |
+| POST | `/api/auth/webauthn/login` | No | Finish biometric unlock — verifies the assertion, returns a session token (same body as PIN verify) |
+| POST | `/api/auth/webauthn/register/options` | Yes | Begin biometric enrollment — returns the attestation challenge |
+| POST | `/api/auth/webauthn/register` | Yes | Finish biometric enrollment — stores the credential |
+| DELETE | `/api/auth/webauthn` | Yes | Disable biometric unlock (removes every enrolled credential) |
 | GET | `/api/balance` | Yes | Get total balance |
 | GET | `/api/months?limit=50&cursor=` | Yes | List months with balances (paginated) |
 | GET | `/api/month/{yyyy-mm}?limit=50&cursor=` | Yes | Get month summary + expenses (paginated) |
@@ -92,6 +102,17 @@ A simple, secure budget-tracker app. One codebase, multiple independent deployme
 | POST | `/api/expense` | Yes | Add new expense |
 | PUT | `/api/expense/{month}/{id}` | Yes | Edit expense amount and/or description |
 | DELETE | `/api/expense/{month}/{id}` | Yes | Delete expense (refunds balance) |
+
+The two `webauthn/login*` endpoints answer 401 for a failed assertion, which
+means "biometric unlock failed", not "your session is dead". They are therefore
+listed in `AUTH_ENDPOINTS` in `frontend/js/api.js`, which suppresses the
+automatic session-clear a 401 normally triggers. The three session-gated
+WebAuthn endpoints are deliberately NOT on that list: a 401 from those really
+does mean the session expired.
+
+Deleting a month returns 409 in two distinct cases — it still has expenses, or
+its allowance changed between the read and the delete (the client should refresh
+and retry). The messages differ so the second is not reported as the first.
 
 ---
 
@@ -110,6 +131,8 @@ Each instance's `config/instances/<name>.yaml` drives three layers of customizat
 | `labels:` | Divergent UI strings ("Allowance" vs "Budget") | CI bakes `window.PASSBOOK_LABELS` into `build/<instance>/js/config.js`; `applyLabels()` runs at page init |
 | `format:` | Currency and locale for every rendered amount and time | CI bakes `window.PASSBOOK_FORMAT` into the same `config.js`; `ui.formatCurrency`/`formatTime` read it (default `en-US` / `USD`) |
 | `webauthn_display_name:` | Name the OS shows in the Face ID / Touch ID / Windows Hello prompt | Passed to CloudFormation as `WebAuthnDisplayName` → the Lambda's `WEBAUTHN_RP_DISPLAY_NAME` (falls back to `display_name`, then the instance name) |
+| `allow_overspending:` | Whether a balance may go negative (default `false`) | Passed to CloudFormation as `AllowOverspending` → the Lambda's `ALLOW_OVERSPENDING`. When `false` the server refuses any write that would take a balance below zero — across the whole carry chain, not just the month being written, so a back-dated expense cannot push a later month negative. Also gates whether CI emits `--negative-color` into `theme.css` |
+| `carry_over_balance:` | Whether a month's ending balance becomes the next month's starting balance (default `true`) | Passed to CloudFormation as `CarryOverBalance` → the Lambda's `CARRY_OVER_BALANCE`. With it on, editing any month ripples through every later month's starting/ending balance; with it off each month stands alone and starts from zero |
 
 Every key in `frontend/js/labels.js` can be overridden by listing it under
 `labels:`; anything omitted falls back to the default English string, so a
@@ -142,10 +165,14 @@ To customize the PWA icon for an instance, drop a square SVG at `frontend/assets
    ```
    Optional blocks:
    ```yaml
+   allow_overspending: true       # defaults to false (balances cannot go negative)
+   carry_over_balance: false      # defaults to true (surplus/deficit rolls forward)
    format:                        # defaults to en-US / USD
      locale: en-GB
      currency: GBP
    webauthn_display_name: My App  # defaults to display_name
+   colors:
+     negative: "#991B1B"          # only emitted when allow_overspending is true
    ```
 2. (Optional) Add a custom PWA icon at `frontend/assets/icons/<name>.svg`. If not present, the instance uses the default `frontend/assets/icon.svg`.
 3. Commit and push to `main`.
@@ -598,7 +625,11 @@ Open `frontend/index.html` directly in browser. API calls will fail without back
 |----------|---------|-------------|
 | `TABLE_NAME` | Required | DynamoDB table name |
 | `ALLOWED_ORIGIN` | Required | CORS allowed origin (e.g. `https://vppillai.github.io`) |
-| `MONTHLY_ALLOWANCE` | `100` | Allowance amount |
+| `MONTHLY_ALLOWANCE` | `100` | Allowance granted when a month is created. Non-numeric, non-finite (`NaN`, `Inf`) and negative values are rejected with a warning and fall back to the default |
+| `ALLOW_OVERSPENDING` | `false` | `true` lets balances go negative; otherwise the server refuses any write that would take one below zero |
+| `CARRY_OVER_BALANCE` | `true` | `false` makes each month start from zero instead of the previous month's ending balance |
+| `ENVIRONMENT` | `prod` | Deployment environment name, used in log context |
+| `WEBAUTHN_RP_DISPLAY_NAME` | Instance name | Name shown in the OS biometric prompt |
 
 These are set automatically by the CloudFormation template per instance. See `infrastructure/template.yaml` for the parameter wiring.
 
