@@ -121,10 +121,17 @@ func (rt *Router) handleChangePIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := rt.authService.ChangePIN(r.Context(), req.CurrentPin, req.NewPin); err != nil {
+	if err := rt.authService.ChangePIN(r.Context(), req.CurrentPin, req.NewPin,
+		r.Header.Get(SourceIPHeader)); err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidPIN):
 			httperr.WriteJSON(w, http.StatusUnauthorized, "Current PIN is incorrect")
+		case errors.Is(err, service.ErrRateLimited):
+			// Wrong current-PIN attempts share the lock screen's budget, so
+			// this endpoint can be rate limited too. 429 rather than 401 so
+			// the client stops retrying and says something useful.
+			httperr.WriteJSON(w, http.StatusTooManyRequests,
+				"Too many incorrect attempts. Please wait and try again.")
 		case errors.Is(err, service.ErrPINTooShort):
 			httperr.WriteJSON(w, http.StatusBadRequest, "New PIN must be 4-6 digits")
 		case errors.Is(err, service.ErrPINNotNumeric):

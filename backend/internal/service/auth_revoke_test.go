@@ -30,7 +30,7 @@ func TestChangePIN_RevokesWebAuthnCredentials(t *testing.T) {
 		CredentialID: "cred-b", Credential: `{}`,
 	}
 
-	if err := svc.ChangePIN(ctx, "1234", "5678"); err != nil {
+	if err := svc.ChangePIN(ctx, "1234", "5678", "192.0.2.1"); err != nil {
 		t.Fatalf("ChangePIN: %v", err)
 	}
 
@@ -57,7 +57,7 @@ func TestChangePIN_WrongCurrentPINRevokesNothing(t *testing.T) {
 		CredentialID: "cred-a", Credential: `{}`,
 	}
 
-	if err := svc.ChangePIN(ctx, "9999", "5678"); err != ErrInvalidPIN {
+	if err := svc.ChangePIN(ctx, "9999", "5678", "192.0.2.2"); err != ErrInvalidPIN {
 		t.Fatalf("expected ErrInvalidPIN, got %v", err)
 	}
 

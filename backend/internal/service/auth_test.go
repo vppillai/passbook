@@ -280,9 +280,16 @@ func TestChangePIN(t *testing.T) {
 	seedPIN(t, repo, "1234")
 	oldHash := repo.Config.PinHash
 
+	// One household address across the subtests. A wrong current PIN now spends
+	// from the same per-IP budget as the lock screen, so this stands in for the
+	// real caller; a single fumble is well under the cap and the successful
+	// change below clears the counter. Budget behaviour itself is covered in
+	// auth_changepin_ratelimit_test.go.
+	const changeIP = "192.168.1.77"
+
 	t.Run("wrong current PIN", func(t *testing.T) {
 		repo.Sessions["tok-1"] = &model.Session{Token: "tok-1"}
-		err := svc.ChangePIN(ctx, "0000", "5678")
+		err := svc.ChangePIN(ctx, "0000", "5678", changeIP)
 		if err != ErrInvalidPIN {
 			t.Fatalf("expected ErrInvalidPIN, got %v", err)
 		}
@@ -295,14 +302,14 @@ func TestChangePIN(t *testing.T) {
 	})
 
 	t.Run("invalid new PIN", func(t *testing.T) {
-		if err := svc.ChangePIN(ctx, "1234", "12"); err != ErrPINTooShort {
+		if err := svc.ChangePIN(ctx, "1234", "12", changeIP); err != ErrPINTooShort {
 			t.Errorf("expected ErrPINTooShort, got %v", err)
 		}
 	})
 
 	t.Run("success rotates hash and revokes all sessions", func(t *testing.T) {
 		repo.Sessions["tok-2"] = &model.Session{Token: "tok-2"}
-		if err := svc.ChangePIN(ctx, "1234", "5678"); err != nil {
+		if err := svc.ChangePIN(ctx, "1234", "5678", changeIP); err != nil {
 			t.Fatalf("ChangePIN failed: %v", err)
 		}
 		if repo.Config.PinHash == oldHash {
