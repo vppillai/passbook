@@ -322,20 +322,14 @@ func (s *ExpenseService) ensureMonthExists(ctx context.Context, month string) (*
 		return summary, nil
 	}
 
-	// Carry the previous month's ending balance, mirroring CreateMonth.
+	// Carry the preceding month's ending balance, mirroring CreateMonth.
 	// Without this, an expense filed into a not-yet-created month broke
 	// the carry chain (start=0), and the next CreateMonth would carry
 	// from this orphan's ending instead of the real history. No global
 	// balance credit happens here — carrying moves no money.
-	startingBalance := 0.0
-	if s.carryOverBalance {
-		prevSummary, err := s.repo.GetMonthSummary(ctx, GetPreviousMonth(month))
-		if err != nil {
-			return nil, err
-		}
-		if prevSummary != nil {
-			startingBalance = roundCents(prevSummary.EndingBalance)
-		}
+	startingBalance, err := s.carriedStartingBalance(ctx, month)
+	if err != nil {
+		return nil, err
 	}
 
 	// Create new month summary with $0 allowance using a conditional put
@@ -412,6 +406,82 @@ func (s *ExpenseService) insufficientFunds(ctx context.Context, month string) er
 		return ErrInsufficientFunds
 	}
 	return &InsufficientFundsError{Available: roundCents(summary.EndingBalance)}
+}
+
+// carriedStartingBalance returns the balance a newly-opened `month` should start
+// from: the ending balance of the most recent month that EXISTS before it, or 0
+// when carry-over is off or there is no earlier month.
+//
+// Both places that open a month used to read GetPreviousMonth(month) — the
+// immediately preceding CALENDAR month — and treat a miss as zero. A gap in the
+// sequence therefore dropped whatever the last real month was carrying. Gaps are
+// ordinary: months are created on demand, so a family that does not open the app
+// for a month leaves no row for it, and DeleteMonth / add-data.sh's rmmonth make
+// holes deliberately.
+//
+// The money is not gone — the global BALANCE row still counts it — so the damage
+// is a broken `starting_balance[n] == ending_balance[n-1]` invariant and a
+// BALANCE that disagrees with the month chain, i.e. exactly the drift `audit`
+// reports. It does not self-heal, because nothing recomputes a starting balance
+// once written. It also blocks legitimate spending: the orphaned month starts at
+// 0, so the next expense is refused for insufficient funds.
+func (s *ExpenseService) carriedStartingBalance(ctx context.Context, month string) (float64, error) {
+	if !s.carryOverBalance {
+		return 0, nil
+	}
+
+	// Fast path: the immediately preceding calendar month, which is the anchor
+	// whenever the history is contiguous — overwhelmingly the common case. One
+	// point read, exactly the cost this was before.
+	prev, err := s.repo.GetMonthSummary(ctx, GetPreviousMonth(month))
+	if err != nil {
+		return 0, err
+	}
+	if prev != nil {
+		return roundCents(prev.EndingBalance), nil
+	}
+
+	// There is a hole. Walk back for the newest month that actually exists.
+	anchor, err := s.latestMonthBefore(ctx, month)
+	if err != nil {
+		return 0, err
+	}
+	if anchor == nil {
+		return 0, nil
+	}
+	return roundCents(anchor.EndingBalance), nil
+}
+
+// latestMonthBefore returns the canonical summary of the newest month strictly
+// before `month`, or nil when none exists.
+//
+// ensureMonthListComplete runs first for the same reason monthsAfter needs it: a
+// legacy or partially back-filled MONTHLIST partition would hide the real anchor,
+// which would reintroduce the dropped balance on precisely the tables most likely
+// to have gaps. The month KEY comes from the index but the balance is read from
+// the canonical row, which is the authority.
+func (s *ExpenseService) latestMonthBefore(ctx context.Context, month string) (*model.MonthSummary, error) {
+	if err := s.ensureMonthListComplete(ctx); err != nil {
+		return nil, err
+	}
+	var cursor map[string]types.AttributeValue
+	for {
+		page, lastKey, err := s.repo.ListMonths(ctx, monthsAfterPageSize, cursor)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range page {
+			// ListMonths is descending, so the first entry below the target is
+			// the closest one.
+			if m.Month < month {
+				return s.repo.GetMonthSummary(ctx, m.Month)
+			}
+		}
+		if lastKey == nil {
+			return nil, nil
+		}
+		cursor = lastKey
+	}
 }
 
 // monthImpulse is a change to ONE month's ending balance, stated before carry
@@ -1392,15 +1462,9 @@ func (s *ExpenseService) CreateMonth(ctx context.Context, month string) (*model.
 		}, nil
 	}
 
-	prevMonth := GetPreviousMonth(month)
-	prevSummary, err := s.repo.GetMonthSummary(ctx, prevMonth)
+	startingBalance, err := s.carriedStartingBalance(ctx, month)
 	if err != nil {
 		return nil, err
-	}
-
-	startingBalance := 0.0
-	if s.carryOverBalance && prevSummary != nil {
-		startingBalance = roundCents(prevSummary.EndingBalance)
 	}
 	allowance := s.monthlyAllowance
 	summary := &model.MonthSummary{
