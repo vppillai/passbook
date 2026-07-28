@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test';
-import { removeExpense, insertExpense } from '../js/expense_state.js';
+import { removeExpense, insertExpense, adjustForPendingDelete } from '../js/expense_state.js';
 
 // These helpers back the optimistic delete/undo flow: the row disappears and
 // the totals move before the server is told anything, and Undo has to put
@@ -104,5 +104,78 @@ describe('insertExpense', () => {
         insertExpense(state, { id: 'EXP#9#z', amount: undefined }, 0);
         expect(state.total_balance).toBe(84.65);
         expect(state.summary.total_expenses).toBe(15.35);
+    });
+});
+
+// A deferred delete removes the row and refunds its amount LOCALLY, then holds
+// the DELETE for 5s so Undo can cancel it. During that window the server has no
+// idea the expense is going away — so any response it sends carries absolute
+// figures computed from a world where the expense still exists.
+//
+// applyExpenseUpdate and applyFundsUpdate both assigned those absolutes straight
+// onto the live model (`total_balance = res.total_balance`, and addFunds replaced
+// `summary` wholesale). Editing an expense or topping up during the undo window
+// therefore silently discarded the refund: the balance dropped back by the
+// pending amount and stayed wrong, because when the DELETE finally fires the
+// server applies it to ITS state and the client never re-reads.
+describe('reconciling a server snapshot against a pending delete', () => {
+    test('adds the pending refund back onto an absolute total_balance', () => {
+        const out = adjustForPendingDelete({ total_balance: 70 }, 30);
+        expect(out.total_balance).toBe(100);
+    });
+
+    test('leaves the snapshot alone when nothing is pending', () => {
+        const snapshot = { total_balance: 70, summary: { total_expenses: 30, ending_balance: 70 } };
+        const out = adjustForPendingDelete(snapshot, 0);
+        expect(out.total_balance).toBe(70);
+        expect(out.summary.total_expenses).toBe(30);
+        expect(out.summary.ending_balance).toBe(70);
+    });
+
+    test('adjusts a wholesale summary replacement too', () => {
+        // addFunds returns the whole summary, so every figure in it predates the
+        // pending delete.
+        const out = adjustForPendingDelete(
+            { total_balance: 170, summary: { total_expenses: 30, ending_balance: 170 } }, 30);
+        expect(out.summary.total_expenses).toBe(0);
+        expect(out.summary.ending_balance).toBe(200);
+        expect(out.total_balance).toBe(200);
+    });
+
+    test('does not mutate the response object', () => {
+        const snapshot = { total_balance: 70, summary: { total_expenses: 30, ending_balance: 70 } };
+        adjustForPendingDelete(snapshot, 30);
+        expect(snapshot.total_balance).toBe(70);
+        expect(snapshot.summary.total_expenses).toBe(30);
+    });
+
+    test('rounds to cents rather than accumulating float dust', () => {
+        const out = adjustForPendingDelete({ total_balance: 0.1 }, 0.2);
+        expect(out.total_balance).toBe(0.3);
+    });
+
+    test('tolerates a snapshot with no summary', () => {
+        const out = adjustForPendingDelete({ total_balance: 5 }, 1);
+        expect(out.total_balance).toBe(6);
+        expect(out.summary).toBeUndefined();
+    });
+
+    test('tolerates a snapshot with no total_balance', () => {
+        // An older server, or a response shape that omits it: the field must stay
+        // absent rather than becoming the bare refund.
+        const out = adjustForPendingDelete({ summary: { total_expenses: 30, ending_balance: 70 } }, 30);
+        expect(out.total_balance).toBeUndefined();
+        expect(out.summary.total_expenses).toBe(0);
+    });
+
+    // The round trip is the real invariant: applying a snapshot mid-undo-window
+    // and then committing the delete must land on the same figures as committing
+    // the delete first and then applying the snapshot.
+    test('is equivalent to the server having known about the delete', () => {
+        const pendingAmount = 30;
+        const serverAfterDelete = { total_balance: 200, summary: { total_expenses: 0, ending_balance: 200 } };
+        const serverBeforeDelete = { total_balance: 170, summary: { total_expenses: 30, ending_balance: 170 } };
+        const reconciled = adjustForPendingDelete(serverBeforeDelete, pendingAmount);
+        expect(reconciled).toEqual(serverAfterDelete);
     });
 });

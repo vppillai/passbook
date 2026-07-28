@@ -3,7 +3,7 @@ import { api, roundCents } from './api.js';
 import { auth } from './auth.js';
 import * as ui from './ui.js';
 import { labels, applyLabels } from './labels.js';
-import { removeExpense, insertExpense } from './expense_state.js';
+import { removeExpense, insertExpense, adjustForPendingDelete } from './expense_state.js';
 import * as webauthn from './webauthn.js';
 
 // ---- Haptic feedback via capture-phase event delegation on .pin-pad ----
@@ -39,7 +39,7 @@ function detectInstance() {
 }
 const LAST_MONTH_KEY = `passbook_last_month_${detectInstance()}`;
 
-class App {
+export class App {
     constructor() {
         this.currentMonth = null;
         this.monthData = null;
@@ -382,6 +382,12 @@ class App {
 
         // Logout
         document.getElementById('logout-btn').addEventListener('click', () => {
+            // Order matters: flush the deferred DELETE while the session token is
+            // still valid — auth.logout() clears it, after which the request
+            // would 401 and the user's delete would be silently lost. Then drop
+            // the in-memory month data so the next unlock cannot repaint it.
+            this.flushPendingDelete();
+            this.clearViewState();
             auth.logout();
         });
 
@@ -515,8 +521,12 @@ class App {
             document.querySelectorAll('button[type="submit"]').forEach(btn => {
                 btn.disabled = false;
             });
-            this.editingExpenseId = null;
-            this.editingOriginalDate = null;
+            // The token is already dead, so a deferred DELETE cannot be sent;
+            // dropping the whole cache is what makes that safe, because the
+            // refetch after the next unlock restores the server's truth rather
+            // than the optimistic state that never reached it.
+            this.pendingDelete = null;
+            this.clearViewState();
             ui.showToast(labels.session_expired_toast, 'error');
             ui.showScreen('auth-screen');
         });
@@ -675,6 +685,34 @@ class App {
         this.monthCache.clear();
         this.monthsListDirty = true;
         this.monthsListData = null;
+    }
+
+    /**
+     * Discards every piece of month data held in memory, so an unlock starts
+     * from nothing.
+     *
+     * Locking clears the session token and purges the HTTP cache, but all of
+     * this survived it. loadMonthView serves a monthCache entry verbatim, so the
+     * next unlock repainted the PREVIOUS session's figures without a single
+     * network call — lock the app, come back a day later, and the dashboard
+     * showed yesterday's numbers as current with nothing to indicate otherwise.
+     *
+     * A pending delete makes it worse: the row is already gone locally but its
+     * DELETE was never sent, so the cached month describes a state the server
+     * never reached. `pendingDelete` is deliberately left alone here — the
+     * caller commits it while the session is still valid and then clears;
+     * nulling it here would drop the user's delete on the floor.
+     */
+    clearViewState() {
+        this.monthCache.clear();
+        this.monthsListData = null;
+        this.monthsListDirty = true;
+        this.inflightMonths = null;
+        this.monthData = null;
+        this.allExpenses = [];
+        this.expensesCursor = null;
+        this.editingExpenseId = null;
+        this.editingOriginalDate = null;
     }
 
     async loadMoreExpenses(cursor) {
@@ -1114,11 +1152,32 @@ class App {
                 this.allExpenses.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             }
         }
-        if (typeof res.total_balance === 'number') {
-            this.monthData.total_balance = res.total_balance;
+        // total_balance is ABSOLUTE and was computed by a server that does not
+        // yet know about a deferred delete, so it has to be reconciled before it
+        // can be trusted. The summary above needs no such treatment: it is
+        // patched by delta from the local row, so it already reflects local
+        // state. See adjustForPendingDelete.
+        const reconciled = adjustForPendingDelete(res, this.pendingDeleteRefund(month));
+        if (typeof reconciled.total_balance === 'number') {
+            this.monthData.total_balance = reconciled.total_balance;
         }
         ui.updateDashboard(this.monthData);
         ui.renderExpenses(this.allExpenses, this.expenseCallbacks(), this.expensesCursor);
+    }
+
+    /**
+     * The amount of a delete that has happened locally but whose DELETE has not
+     * been sent yet, for `month`; 0 when nothing is pending for that month.
+     *
+     * Any absolute figure a server response carries during the 5s undo window
+     * predates that delete, so it must be adjusted by this before being applied.
+     * @param {string} month
+     * @returns {number}
+     */
+    pendingDeleteRefund(month) {
+        const pending = this.pendingDelete;
+        if (!pending || pending.month !== month) return 0;
+        return parseFloat(pending.expense?.amount) || 0;
     }
 
     /**
@@ -1334,8 +1393,14 @@ class App {
      */
     applyFundsUpdate(month, res) {
         if (month !== this.currentMonth || !this.monthData) return;
-        if (res.summary) this.monthData.summary = res.summary;
-        if (typeof res.total_balance === 'number') this.monthData.total_balance = res.total_balance;
+        // Every figure here is absolute — the summary is replaced wholesale — so
+        // all of it predates a deferred delete and all of it needs reconciling,
+        // not just total_balance.
+        const reconciled = adjustForPendingDelete(res, this.pendingDeleteRefund(month));
+        if (reconciled.summary) this.monthData.summary = reconciled.summary;
+        if (typeof reconciled.total_balance === 'number') {
+            this.monthData.total_balance = reconciled.total_balance;
+        }
         ui.updateDashboard(this.monthData);
     }
 
