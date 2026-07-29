@@ -59,6 +59,28 @@ jobs:
             exit 1
           fi
 
+  test-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run add-data.sh tests
+        # scripts/add-data.sh is the only code that rewrites production ledger
+        # data, and had no automated test at all. The suite runs against an
+        # in-memory table served by scripts/test/fake-aws, so it needs NO AWS
+        # credentials and touches nothing real. jq and awk are preinstalled on
+        # ubuntu-latest; the fake shadows `aws` on PATH, so the real CLI being
+        # present or absent makes no difference.
+        run: ./scripts/test/add-data.test.sh
+
+      - name: Shell syntax check
+        # Catches a typo in any script that the test suite does not exercise.
+        run: |
+          for f in scripts/*.sh scripts/test/*.sh scripts/test/fake-aws; do
+            bash -n "$f" || { echo "Syntax error in $f"; exit 1; }
+          done
+          echo "Shell syntax check passed"
+
   lint-frontend:
     runs-on: ubuntu-latest
     steps:

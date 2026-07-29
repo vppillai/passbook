@@ -49,6 +49,13 @@ type FakeRepo struct {
 	// between a caller's pre-read and the transaction — the window in which a
 	// stale allowance figure could be debited.
 	BeforeDeleteMonth func()
+	// SaveConfigCalls counts SaveConfig calls, so a test can assert that an
+	// ordinary login does NOT rewrite the config — the transparent PIN-hash
+	// upgrade must fire once, not on every unlock.
+	SaveConfigCalls int
+	// SaveConfigErr, when non-nil, makes SaveConfig fail. Used to prove that a
+	// failed hash upgrade does not cost the user their login.
+	SaveConfigErr error
 	// WebAuthn state. WAChallenges is keyed by challenge_id; WACredentials
 	// is keyed by the credential's base64url ID (mirroring the WACREDLIST
 	// enumeration partition).
@@ -138,6 +145,10 @@ func (f *FakeRepo) GetConfig(_ context.Context) (*model.Config, error) {
 }
 
 func (f *FakeRepo) SaveConfig(_ context.Context, config *model.Config) error {
+	f.SaveConfigCalls++
+	if f.SaveConfigErr != nil {
+		return f.SaveConfigErr
+	}
 	c := *config
 	f.Config = &c
 	return nil
