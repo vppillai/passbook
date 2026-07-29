@@ -55,6 +55,12 @@ var (
 	// ErrMonthHasExpenses is returned by DeleteMonth when the target month
 	// still has expenses; handler maps to 409 (U2).
 	ErrMonthHasExpenses = errors.New("month has expenses")
+	// ErrMonthModified is returned by DeleteMonth when the month changed
+	// between the pre-read and the conditional delete — specifically when its
+	// allowance_added moved, which would have made the balance debit stale.
+	// Distinct from ErrMonthHasExpenses so the client is told to refresh rather
+	// than being given a reason that is not true. Handler maps to 409.
+	ErrMonthModified = errors.New("month modified")
 	// ErrInvalidCursor is returned when a paginated endpoint receives an
 	// opaque cursor that decodes but doesn't refer to a valid resume
 	// point (e.g. cursorMonth not found in the current month list).
@@ -322,20 +328,14 @@ func (s *ExpenseService) ensureMonthExists(ctx context.Context, month string) (*
 		return summary, nil
 	}
 
-	// Carry the previous month's ending balance, mirroring CreateMonth.
+	// Carry the preceding month's ending balance, mirroring CreateMonth.
 	// Without this, an expense filed into a not-yet-created month broke
 	// the carry chain (start=0), and the next CreateMonth would carry
 	// from this orphan's ending instead of the real history. No global
 	// balance credit happens here — carrying moves no money.
-	startingBalance := 0.0
-	if s.carryOverBalance {
-		prevSummary, err := s.repo.GetMonthSummary(ctx, GetPreviousMonth(month))
-		if err != nil {
-			return nil, err
-		}
-		if prevSummary != nil {
-			startingBalance = roundCents(prevSummary.EndingBalance)
-		}
+	startingBalance, err := s.carriedStartingBalance(ctx, month)
+	if err != nil {
+		return nil, err
 	}
 
 	// Create new month summary with $0 allowance using a conditional put
@@ -412,6 +412,200 @@ func (s *ExpenseService) insufficientFunds(ctx context.Context, month string) er
 		return ErrInsufficientFunds
 	}
 	return &InsufficientFundsError{Available: roundCents(summary.EndingBalance)}
+}
+
+// carriedStartingBalance returns the balance a newly-opened `month` should start
+// from: the ending balance of the most recent month that EXISTS before it, or 0
+// when carry-over is off or there is no earlier month.
+//
+// Both places that open a month used to read GetPreviousMonth(month) — the
+// immediately preceding CALENDAR month — and treat a miss as zero. A gap in the
+// sequence therefore dropped whatever the last real month was carrying. Gaps are
+// ordinary: months are created on demand, so a family that does not open the app
+// for a month leaves no row for it, and DeleteMonth / add-data.sh's rmmonth make
+// holes deliberately.
+//
+// The money is not gone — the global BALANCE row still counts it — so the damage
+// is a broken `starting_balance[n] == ending_balance[n-1]` invariant and a
+// BALANCE that disagrees with the month chain, i.e. exactly the drift `audit`
+// reports. It does not self-heal, because nothing recomputes a starting balance
+// once written. It also blocks legitimate spending: the orphaned month starts at
+// 0, so the next expense is refused for insufficient funds.
+func (s *ExpenseService) carriedStartingBalance(ctx context.Context, month string) (float64, error) {
+	if !s.carryOverBalance {
+		return 0, nil
+	}
+
+	// Fast path: the immediately preceding calendar month, which is the anchor
+	// whenever the history is contiguous — overwhelmingly the common case. One
+	// point read, exactly the cost this was before.
+	prev, err := s.repo.GetMonthSummary(ctx, GetPreviousMonth(month))
+	if err != nil {
+		return 0, err
+	}
+	if prev != nil {
+		return roundCents(prev.EndingBalance), nil
+	}
+
+	// There is a hole. Walk back for the newest month that actually exists.
+	anchor, err := s.latestMonthBefore(ctx, month)
+	if err != nil {
+		return 0, err
+	}
+	if anchor == nil {
+		return 0, nil
+	}
+	return roundCents(anchor.EndingBalance), nil
+}
+
+// latestMonthBefore returns the canonical summary of the newest month strictly
+// before `month`, or nil when none exists.
+//
+// ensureMonthListComplete runs first for the same reason monthsAfter needs it: a
+// legacy or partially back-filled MONTHLIST partition would hide the real anchor,
+// which would reintroduce the dropped balance on precisely the tables most likely
+// to have gaps. The month KEY comes from the index but the balance is read from
+// the canonical row, which is the authority.
+func (s *ExpenseService) latestMonthBefore(ctx context.Context, month string) (*model.MonthSummary, error) {
+	if err := s.ensureMonthListComplete(ctx); err != nil {
+		return nil, err
+	}
+	var cursor map[string]types.AttributeValue
+	for {
+		page, lastKey, err := s.repo.ListMonths(ctx, monthsAfterPageSize, cursor)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range page {
+			// ListMonths is descending, so the first entry below the target is
+			// the closest one.
+			if m.Month < month {
+				return s.repo.GetMonthSummary(ctx, m.Month)
+			}
+		}
+		if lastKey == nil {
+			return nil, nil
+		}
+		cursor = lastKey
+	}
+}
+
+// monthImpulse is a change to ONE month's ending balance, stated before carry
+// propagation is applied. A mutation is expressed as one or two of these: an
+// add is a single negative impulse, a cross-month move is a refund at the source
+// and a charge at the destination.
+type monthImpulse struct {
+	month string
+	delta float64
+}
+
+// ensureCarryChainAffordable refuses a mutation that would drive ANY month's
+// ending balance below zero, on an instance that disallows overspending.
+//
+// The hard stop was previously a per-month DynamoDB ConditionExpression
+// (`ending_balance >= :amount`) on the single row being written. That is only
+// the right question when months are independent. With carry_over_balance on
+// they are not — a change to any month shifts every later month's ending balance
+// by the same delta — and asking it per-month was wrong in both directions:
+//
+//   - It let a back-dated expense drive a LATER month negative. The target month
+//     had the headroom so the condition passed; propagation then pushed the
+//     months after it below zero, on an instance that disallows overspending at
+//     all. Reachable from the UI, which supports back-dating.
+//   - It refused moves that were affordable. Moving an expense to a later month
+//     checked the destination's balance BEFORE the source's refund propagated
+//     in, so a move that nets to zero across the chain was rejected.
+//
+// Both are the same modelling gap, so both are answered here, over the whole
+// affected span rather than one row.
+//
+// This is a pre-check, so it is not atomic with the write that follows: two
+// concurrent mutations could each pass it. The per-month ConditionExpression is
+// still applied where it is correct, so the ordinary single-month case keeps its
+// atomic guarantee; only the cross-month reach is guarded optimistically. That
+// matches what the surrounding code already accepts — propagation itself is a
+// separate transaction from the mutation it follows — and it is the cheaper side
+// of the trade against a silent overspend or a wrongly refused edit.
+func (s *ExpenseService) ensureCarryChainAffordable(ctx context.Context, impulses ...monthImpulse) error {
+	if s.allowOverspending {
+		return nil
+	}
+
+	// With carry off, months are independent and the per-month
+	// ConditionExpression on each written row already says everything there is
+	// to say. Nothing here can add to it.
+	if !s.carryOverBalance {
+		return nil
+	}
+
+	earliest := ""
+	for _, imp := range impulses {
+		if earliest == "" || imp.month < earliest {
+			earliest = imp.month
+		}
+	}
+	if earliest == "" {
+		return nil
+	}
+
+	// Every month from the earliest impulse onward feels some part of it.
+	span := map[string]bool{}
+	for _, imp := range impulses {
+		span[imp.month] = true
+	}
+	later, err := s.monthsAfter(ctx, earliest)
+	if err != nil {
+		return err
+	}
+	for _, m := range later {
+		span[m] = true
+	}
+
+	months := make([]string, 0, len(span))
+	for m := range span {
+		months = append(months, m)
+	}
+	sort.Strings(months)
+
+	// Walk ascending, accumulating the impulses that have taken effect by each
+	// month — that running total IS the carry propagation. The tightest
+	// resulting balance decides, and the tightest PRE-mutation balance is what
+	// the user can actually spend, so it is what the error reports.
+	carried := 0.0
+	worstShortfall := 0.0
+	available := math.Inf(1)
+	for _, m := range months {
+		for _, imp := range impulses {
+			if imp.month == m {
+				carried += imp.delta
+			}
+		}
+		summary, err := s.repo.GetMonthSummary(ctx, m)
+		if err != nil {
+			return err
+		}
+		if summary == nil {
+			// No canonical row: nothing to drive negative. An orphan MONTHLIST
+			// entry lands here too, and is reported by propagateToLaterMonths.
+			continue
+		}
+		if summary.EndingBalance < available {
+			available = summary.EndingBalance
+		}
+		// Cents, not floats: a 0.005 rounding artifact must not refuse a
+		// legitimate expense.
+		if shortfall := -roundCents(summary.EndingBalance + carried); shortfall > worstShortfall {
+			worstShortfall = shortfall
+		}
+	}
+
+	if worstShortfall <= 0 {
+		return nil
+	}
+	if math.IsInf(available, 1) {
+		return ErrInsufficientFunds
+	}
+	return &InsufficientFundsError{Available: roundCents(available)}
 }
 
 // propagateToLaterMonths shifts every month strictly after `month` by
@@ -687,6 +881,13 @@ func (s *ExpenseService) AddExpense(ctx context.Context, req *model.AddExpenseRe
 		CreatedAt:   expenseTime,
 	}
 
+	// The per-month condition inside AtomicAddExpense only guards THIS month.
+	// With carry on, a back-dated expense also reaches every later month, so the
+	// whole affected span has to be affordable before anything is written.
+	if err := s.ensureCarryChainAffordable(ctx, monthImpulse{month, -req.Amount}); err != nil {
+		return nil, err
+	}
+
 	if err := s.repo.AtomicAddExpense(ctx, month, expense, !s.allowOverspending); err != nil {
 		if errors.Is(err, repository.ErrInsufficientBalance) {
 			return nil, s.insufficientFunds(ctx, month)
@@ -888,7 +1089,22 @@ func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expens
 		if err := s.repo.EnsureMonthListMirror(ctx, targetMonth); err != nil {
 			return nil, err
 		}
-		if err := s.repo.AtomicMoveExpenseAcrossMonths(ctx, month, targetMonth, expenseID, newExpense, currentExpense.Amount, !s.allowOverspending); err != nil {
+		// A move is a refund at the source and a charge at the destination.
+		// Checking them together is what lets an affordable move through: when
+		// the destination is LATER than the source, the refund propagates into
+		// it, so the destination's own balance is not the constraint.
+		if err := s.ensureCarryChainAffordable(ctx,
+			monthImpulse{month, currentExpense.Amount},
+			monthImpulse{targetMonth, -newAmount},
+		); err != nil {
+			return nil, err
+		}
+		// srcRefundReachesDst tells the transaction's destination condition to
+		// account for that refund. Without it the condition asks whether the
+		// destination can afford the charge on its own, which is the wrong
+		// question and refuses moves that net to zero across the chain.
+		srcRefundReachesDst := s.carryOverBalance && month < targetMonth
+		if err := s.repo.AtomicMoveExpenseAcrossMonths(ctx, month, targetMonth, expenseID, newExpense, currentExpense.Amount, !s.allowOverspending, srcRefundReachesDst); err != nil {
 			switch {
 			case errors.Is(err, repository.ErrInsufficientBalance):
 				return nil, s.insufficientFunds(ctx, targetMonth)
@@ -920,6 +1136,10 @@ func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expens
 		if err := s.repo.EnsureMonthListMirror(ctx, month); err != nil {
 			return nil, err
 		}
+		if err := s.ensureCarryChainAffordable(ctx,
+			monthImpulse{month, -(newAmount - currentExpense.Amount)}); err != nil {
+			return nil, err
+		}
 		if err := s.repo.AtomicMoveExpenseSameMonth(ctx, month, expenseID, newExpense, currentExpense.Amount, !s.allowOverspending); err != nil {
 			switch {
 			case errors.Is(err, repository.ErrInsufficientBalance):
@@ -944,6 +1164,12 @@ func (s *ExpenseService) UpdateExpense(ctx context.Context, month string, expens
 			// Back-fill the MONTHLIST mirror on legacy tables so the atomic
 			// transaction's monthListUpdate condition can't cancel it (→ 500).
 			if err := s.repo.EnsureMonthListMirror(ctx, month); err != nil {
+				return nil, err
+			}
+			// Raising an amount in a PAST month reaches every later month, same
+			// as back-dating a new expense does.
+			if err := s.ensureCarryChainAffordable(ctx,
+				monthImpulse{month, -amountDelta}); err != nil {
 				return nil, err
 			}
 			// Atomic transaction with optimistic concurrency on amount.
@@ -1242,15 +1468,9 @@ func (s *ExpenseService) CreateMonth(ctx context.Context, month string) (*model.
 		}, nil
 	}
 
-	prevMonth := GetPreviousMonth(month)
-	prevSummary, err := s.repo.GetMonthSummary(ctx, prevMonth)
+	startingBalance, err := s.carriedStartingBalance(ctx, month)
 	if err != nil {
 		return nil, err
-	}
-
-	startingBalance := 0.0
-	if s.carryOverBalance && prevSummary != nil {
-		startingBalance = roundCents(prevSummary.EndingBalance)
 	}
 	allowance := s.monthlyAllowance
 	summary := &model.MonthSummary{
@@ -1312,9 +1532,12 @@ func (s *ExpenseService) DeleteMonth(ctx context.Context, month string) error {
 
 	if err := s.repo.AtomicDeleteMonth(ctx, month, summary.AllowanceAdded); err != nil {
 		if errors.Is(err, repository.ErrMonthHasExpenses) {
-			// Lost a race: an expense landed (or the month vanished)
-			// between our pre-read and the conditional delete.
-			return ErrMonthHasExpenses
+			// Lost a race between the pre-read and the conditional delete. The
+			// transaction pins attribute_exists, total_expenses AND
+			// allowance_added, and DynamoDB reports only which ITEM failed, so
+			// re-read to say which of them it was. The allowance case matters
+			// most: it is the one that would otherwise debit a stale figure.
+			return s.explainFailedMonthDelete(ctx, month, summary)
 		}
 		return err
 	}
@@ -1329,6 +1552,30 @@ func (s *ExpenseService) DeleteMonth(ctx context.Context, month string) error {
 		return err
 	}
 	return nil
+}
+
+// explainFailedMonthDelete turns a cancelled month-delete into the error that
+// describes what actually changed, by re-reading the row. `before` is what the
+// caller saw when it decided to delete.
+func (s *ExpenseService) explainFailedMonthDelete(ctx context.Context, month string, before *model.MonthSummary) error {
+	current, err := s.repo.GetMonthSummary(ctx, month)
+	if err != nil {
+		// Cannot tell; the refusal itself is still correct.
+		return ErrMonthHasExpenses
+	}
+	switch {
+	case current == nil:
+		return ErrMonthNotFound
+	case current.TotalExpenses != 0:
+		return ErrMonthHasExpenses
+	case current.AllowanceAdded != before.AllowanceAdded:
+		return ErrMonthModified
+	default:
+		// Condition failed but the row looks deletable now — something moved and
+		// moved back, or a write landed after the re-read. Refusing is the safe
+		// answer and the client can simply try again.
+		return ErrMonthModified
+	}
 }
 
 // AddFunds tops up an existing month's allowance and credits the global

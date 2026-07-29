@@ -1,4 +1,5 @@
 import { test, expect, describe, beforeEach } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import * as ui from '../js/ui.js';
 
 describe('months list', () => {
@@ -38,6 +39,41 @@ describe('months list', () => {
         ui.renderMonthsList([{ month: '2026-01', monthly_saved: 100, total_expenses: 0 }],
             '2026-01', () => {});
         expect(document.querySelectorAll('.month-spend-bar').length).toBe(0);
+    });
+
+    // The spend bar's width encodes spend relative to the biggest month; its
+    // colour encoded nothing at all — `.month-spend-fill` was unconditionally
+    // var(--accent), so a month that overspent and a month that saved drew
+    // identical bars while the pill right above them correctly flipped
+    // red/green. Worst on the eatout instance, whose accent (#E07856) is itself
+    // a warm salmon, so every bar already read as a warning colour.
+    describe('spend bar sign treatment', () => {
+        test('marks the bar of a month that ended negative', () => {
+            ui.renderMonthsList(monthsFixture, '2026-03', () => {});
+            const marked = Array.from(document.querySelectorAll('.month-spend-fill'))
+                .map(f => f.classList.contains('balance-negative'));
+            // Only 2026-02 (monthly_saved: -10) overspent.
+            expect(marked).toEqual([false, true, false]);
+        });
+
+        test('the bar and the pill can never disagree about the sign', () => {
+            ui.renderMonthsList(monthsFixture, '2026-03', () => {});
+            for (const row of rows()) {
+                const pill = row.querySelector('.month-balance');
+                const fill = row.querySelector('.month-spend-fill');
+                expect(fill.classList.contains('balance-negative'))
+                    .toBe(pill.classList.contains('balance-negative'));
+            }
+        });
+
+        test('a month with no savings field is not reported as negative', () => {
+            // parseFloat(undefined) is NaN and NaN < 0 is false, matching how
+            // the pill already treats a payload from an older server.
+            ui.renderMonthsList([{ month: '2026-01', total_expenses: 10 }],
+                '2026-01', () => {});
+            expect(document.querySelector('.month-spend-fill')
+                .classList.contains('balance-negative')).toBe(false);
+        });
     });
 
     test('marks the current month', () => {
@@ -84,6 +120,53 @@ describe('months list', () => {
             document.querySelector('.month-item[data-month="2026-01"]').click();
             expect(selected).toEqual(['2026-01']);
         });
+    });
+});
+
+// The class the tests above assert is inert on its own: without a matching CSS
+// rule the bar still paints identically for a saved and an overspent month,
+// which is precisely the reported defect. happy-dom has no cascade for an
+// external stylesheet, so the wiring is checked against the stylesheet source —
+// the cheapest way to stop the two halves drifting apart.
+describe('spend bar stylesheet wiring', () => {
+    const css = readFileSync(new URL('../css/styles.css', import.meta.url), 'utf8');
+    // Isolate the block so a token mentioned elsewhere in the file can't satisfy
+    // these assertions by accident.
+    const ruleFor = (selector) => {
+        const at = css.indexOf(`${selector} {`);
+        if (at === -1) return null;
+        return css.slice(at, css.indexOf('}', at));
+    };
+
+    test('the two states paint with different tokens, neither the accent', () => {
+        const base = ruleFor('.month-spend-fill');
+        const negative = ruleFor('.month-spend-fill.balance-negative');
+        expect(negative).not.toBeNull();
+        expect(base).toContain('var(--bar-positive)');
+        expect(negative).toContain('var(--bar-negative)');
+        // var(--accent) was the original defect: one colour for both states.
+        expect(base).not.toContain('var(--accent)');
+    });
+
+    test('both fills are re-derived for the dark scheme', () => {
+        // The dark track is --line at white 11%, far lighter than the light
+        // scheme's rail, so the light-scheme fills lose their contrast against
+        // it. With no dark re-derivation the eatout negative bar measures
+        // 1.46:1 against its own track — invisible. Verified numerically at
+        // >= 3:1 (WCAG 1.4.11) for both instances in both schemes.
+        const dark = css.slice(css.indexOf('@media (prefers-color-scheme: dark)'));
+        for (const token of ['--bar-positive', '--bar-negative']) {
+            // Declared exactly twice: once as the default, once for dark.
+            expect(css.split(`${token}:`).length - 1).toBe(2);
+            expect(dark).toContain(`${token}:`);
+        }
+    });
+
+    test('the fills derive from the instance inputs, not fixed hexes', () => {
+        // A hardcoded red would ignore an instance's `colors.negative`, which
+        // deploy-frontend.yaml writes into theme.css as --negative-color.
+        const at = css.indexOf('--bar-negative:');
+        expect(css.slice(at, css.indexOf('\n', at))).toContain('var(--danger)');
     });
 });
 

@@ -38,6 +38,27 @@
     --success-color: #2e9e5b;
     --danger-color: var(--negative-color); /* legacy alias */
 
+    /* Month spend-bar fills. These cannot just be --success-color/--danger: the
+       bar's fill sits against its own track (--line over --surface), and
+       WCAG 1.4.11 wants 3:1 against that adjacent colour for a graphical
+       object. Raw --success-color manages only 2.85:1 on the light track, and a
+       deep instance red (eatout's #991B1B) collapses to 1.46:1 on the dark one
+       — an overspent bar all but invisible against the empty rail. Derived
+       rather than hardcoded so an instance's --negative-color still flows
+       through (var() resolves lazily, so theme.css loading later still wins).
+       The dark block re-derives both for the lighter dark-mode track.
+       Measured vs track — light: 3.80 pos, 3.53 (kids) / 6.94 (eatout) neg. */
+    --bar-positive: color-mix(in srgb, var(--success-color) 85%, black);
+    --bar-negative: var(--danger);
+
+    /* --danger as TEXT. It cannot be the same token as the fill/background use:
+       --danger sits UNDER white text in .toast.error and .btn-danger, so
+       lightening it for dark mode would make those unreadable. As a foreground
+       the raw value fails WCAG 1.4.3's 4.5:1 in three of the four
+       instance/scheme combinations — worst is eatout's #991B1B on the dark
+       surface at 2.04:1. Measured here: kids 5.06, eatout 9.45. */
+    --danger-ink: color-mix(in srgb, var(--danger) 90%, black);
+
     /* ---- scheme tokens: light ---- */
     --bg: var(--background);
     --surface: #ffffff;
@@ -87,6 +108,17 @@
         --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
         --shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.5), 0 18px 48px rgba(0, 0, 0, 0.5);
         --backdrop: rgba(4, 5, 8, 0.6);
+
+        /* Re-derived for the dark track (--line is white 11% here, so the rail
+           is far lighter than the light-scheme one and the light-scheme fills
+           lose their contrast against it). Lifting toward white is why these
+           are separate tokens: --danger itself is used as a BACKGROUND under
+           white text (.toast.error, .btn-danger), so it must not be lightened
+           globally. Measured vs track — 5.20 pos, 5.90 (kids) / 4.50 (eatout). */
+        --bar-positive: color-mix(in srgb, var(--success-color) 72%, #ffffff);
+        --bar-negative: color-mix(in srgb, var(--danger) 50%, #ffffff);
+        /* Measured against the dark surface: kids 8.84, eatout 7.00. */
+        --danger-ink: color-mix(in srgb, var(--danger) 45%, #ffffff);
     }
 }
 
@@ -145,7 +177,7 @@ body::before {
 }
 
 .error {
-    color: var(--danger);
+    color: var(--danger-ink);
     font-size: 0.875rem;
     margin-top: var(--spacing-sm);
     text-align: center;
@@ -490,7 +522,7 @@ header h1 {
 }
 
 .hero-amount.balance-negative {
-    color: var(--danger);
+    color: var(--danger-ink);
 }
 
 /* ---- Stat chips ---- */
@@ -535,12 +567,12 @@ header h1 {
 }
 
 .chip-value.balance-negative {
-    color: var(--danger);
+    color: var(--danger-ink);
 }
 
 /* Legacy hook used outside the hero (months list). */
 .amount.balance-negative {
-    color: var(--danger);
+    color: var(--danger-ink);
 }
 
 /* =====================================================================
@@ -709,7 +741,7 @@ header h1 {
 }
 
 .expense-edit svg { color: var(--ink-2); }
-.expense-delete svg { color: var(--danger); }
+.expense-delete svg { color: var(--danger-ink); }
 
 .expense-edit:active {
     opacity: 1;
@@ -1074,8 +1106,13 @@ header h1 {
     border: none;
     background: transparent;
     border-radius: var(--r-sm);
-    color: var(--ink-3);
-    opacity: 0.6;
+    /* The RESTING state is the only affordance on a touch device, where :hover
+       never fires. --ink-3 at 0.6 opacity measured 1.71:1 against the light
+       surface and 2.09:1 against the dark one, against WCAG 1.4.11's 3:1 — for
+       the trigger of a destructive action. --ink-2 at 0.75 stays visibly
+       secondary while measuring 3.55 light / 4.82 dark. */
+    color: var(--ink-2);
+    opacity: 0.75;
     cursor: pointer;
     transition: var(--transition);
 }
@@ -1083,7 +1120,7 @@ header h1 {
 .month-delete:hover,
 .month-delete:focus-visible {
     opacity: 1;
-    color: var(--danger);
+    color: var(--danger-ink);
     background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
@@ -1126,13 +1163,27 @@ header h1 {
     overflow: hidden;
 }
 
+/* The fill takes the same red/green vocabulary as the savings pill directly
+   above it (.month-balance), not the instance accent. An accent-coloured bar
+   said nothing about whether the month saved or overspent — every bar was
+   var(--accent), so the two states were pixel-identical — and on a warm-accented
+   instance (eatout, #E07856) it read as a warning colour even for a good month.
+   Width still encodes spend; colour now encodes the sign.
+   Colour is not the only channel: the pill immediately above carries the signed
+   figure, whose leading '-' survives both greyscale and colour blindness. That
+   matters because green and red sit at near-equal luminance (1.08:1 on kids),
+   so the bars alone would not separate under a red-green deficiency. */
 .month-spend-fill {
     display: block;
     height: 100%;
     width: var(--w, 0%);
     border-radius: var(--r-pill);
-    background: var(--accent);
-    transition: width var(--transition);
+    background: var(--bar-positive);
+    transition: width var(--transition), background var(--transition);
+}
+
+.month-spend-fill.balance-negative {
+    background: var(--bar-negative);
 }
 
 .month-item:focus-visible {
@@ -1165,7 +1216,7 @@ header h1 {
 }
 
 .month-item .month-balance.balance-negative {
-    color: var(--danger);
+    color: var(--danger-ink);
     background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 

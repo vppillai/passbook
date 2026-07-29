@@ -10,6 +10,16 @@ const defaultLabels = {
     add_funds_modal_title: 'Add Funds',
     add_funds_modal_submit: 'Add Funds',
     expense_buy_label: 'What did you buy?',
+    // Accessible name for the floating add button. It must be an ACTION: it used
+    // to reuse expense_buy_label, which is the description FIELD's label, so
+    // screen readers announced "What did you buy?, button" — a question where a
+    // command was expected.
+    add_expense_action: 'Add expense',
+    // Amount field label. `{currency}` is replaced with the symbol for the
+    // instance's configured currency; the labels used to hardcode "($)" while
+    // every other instance-specific string, including the number formatting
+    // right beside them, was configurable.
+    amount_label: 'Amount ({currency})',
     expense_buy_placeholder: 'e.g., Ice cream',
     monthly_allowance_hint: 'Monthly allowance will be applied automatically.',
     funds_added_toast: 'Funds added!',
@@ -165,5 +175,31 @@ export function applyLabels() {
         const key = el.dataset.i18nTitle;
         if (labels[key] !== undefined) el.title = labels[key];
     });
+    // Amount labels carry the instance's currency symbol rather than a
+    // hardcoded "$". Derived from the same Intl formatter the figures use, so a
+    // euro instance cannot end up with "Amount ($)" above a "1.234,50 €" total.
+    const symbol = currencySymbol();
+    document.querySelectorAll('[data-amount-label]').forEach(el => {
+        el.textContent = labels.amount_label.replace('{currency}', symbol);
+    });
     if (labels.app_title) document.title = labels.app_title;
+}
+
+/**
+ * The currency symbol for the configured locale/currency, e.g. "$", "€".
+ * Falls back to the raw currency code, then to "$", so a bad config leaves a
+ * readable label rather than an empty one.
+ * @returns {string}
+ */
+export function currencySymbol() {
+    const cfg = (typeof window !== 'undefined' && window.PASSBOOK_FORMAT) || {};
+    const currency = cfg.currency || 'USD';
+    try {
+        const part = new Intl.NumberFormat(cfg.locale || 'en-US', {
+            style: 'currency', currency,
+        }).formatToParts(0).find(p => p.type === 'currency');
+        return (part && part.value) || currency;
+    } catch {
+        return currency || '$';
+    }
 }

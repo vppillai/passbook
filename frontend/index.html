@@ -155,7 +155,7 @@
             </div>
         </section>
 
-        <button id="add-expense-btn" class="fab" aria-label="Add expense" data-i18n-aria-label="expense_buy_label">
+        <button id="add-expense-btn" class="fab" aria-label="Add expense" data-i18n-aria-label="add_expense_action">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="12" y1="5" x2="12" y2="19"></line>
                 <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -171,7 +171,7 @@
             <p id="expense-month-hint" class="form-hint hidden"></p>
             <form id="expense-form">
                 <div class="form-group">
-                    <label for="expense-amount">Amount ($)</label>
+                    <label for="expense-amount" data-amount-label>Amount ($)</label>
                     <input type="number" id="expense-amount" placeholder="0.00" step="0.01" min="0.01" max="99999.99" required inputmode="decimal">
                 </div>
                 <div class="form-group">
@@ -193,9 +193,10 @@
 
     <!-- History Menu (Slide-out) -->
     <div id="menu-overlay" class="overlay hidden"></div>
-    <div id="history-menu" class="menu hidden">
+    <div id="history-menu" class="menu hidden" role="dialog" aria-modal="true"
+         aria-labelledby="history-menu-title">
         <div class="menu-header">
-            <h2>History</h2>
+            <h2 id="history-menu-title">History</h2>
             <div class="menu-header-actions">
                 <button id="new-month-btn" class="icon-btn" aria-label="New Month" title="New Month">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -232,7 +233,7 @@
             <p id="edit-expense-month-hint" class="form-hint hidden"></p>
             <form id="edit-expense-form">
                 <div class="form-group">
-                    <label for="edit-expense-amount">Amount ($)</label>
+                    <label for="edit-expense-amount" data-amount-label>Amount ($)</label>
                     <input type="number" id="edit-expense-amount" placeholder="0.00" step="0.01" min="0.01" max="99999.99" required inputmode="decimal">
                 </div>
                 <div class="form-group">
@@ -279,7 +280,7 @@
             <h2 id="add-funds-modal-title" data-i18n="add_funds_modal_title">Add Funds</h2>
             <form id="add-funds-form">
                 <div class="form-group">
-                    <label for="funds-amount">Amount ($)</label>
+                    <label for="funds-amount" data-amount-label>Amount ($)</label>
                     <input type="number" id="funds-amount" placeholder="0.00" step="0.01" min="0.01" max="99999.99" required inputmode="decimal">
                 </div>
                 <div class="modal-actions">

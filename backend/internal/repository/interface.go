@@ -75,9 +75,15 @@ type RepositoryInterface interface {
 	// summary + mirror by oldAmount, put the new expense in dstMonth, credit
 	// the destination summary + mirror by newAmount, and shift BALANCE by
 	// (oldAmount - newAmount). When checkBalance is true the destination
-	// summary update is conditioned on ending_balance >= newAmount →
-	// ErrInsufficientBalance. Both months' mirror rows must already exist.
-	AtomicMoveExpenseAcrossMonths(ctx context.Context, srcMonth, dstMonth, oldExpenseID string, newExpense *model.Expense, oldAmount float64, checkBalance bool) error
+	// summary update is conditioned on the destination's ending_balance
+	// covering the charge → ErrInsufficientBalance. srcRefundReachesDst says
+	// the source's refund will land in the destination's carried balance
+	// (carry-over on and dstMonth after srcMonth), in which case the charge
+	// measured is the NET (newAmount - oldAmount): asking whether the
+	// destination can afford the gross amount out of its current balance
+	// refuses moves that net to zero across the chain. Both months' mirror
+	// rows must already exist.
+	AtomicMoveExpenseAcrossMonths(ctx context.Context, srcMonth, dstMonth, oldExpenseID string, newExpense *model.Expense, oldAmount float64, checkBalance bool, srcRefundReachesDst bool) error
 	AtomicCreateMonth(ctx context.Context, summary *model.MonthSummary, allowance float64) error
 	AtomicAddFunds(ctx context.Context, month string, amount float64) error
 	AtomicDeleteMonth(ctx context.Context, month string, allowanceAdded float64) error

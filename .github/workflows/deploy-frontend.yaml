@@ -79,9 +79,18 @@ jobs:
         run: |
           # Prefer the latest git tag reachable from this commit. This way
           # `git tag vX.Y.Z && git push --tags` is enough to update the
-          # footer — no separate VERSION-file bump required. The file
-          # only gets used as a fallback when there's no tag yet (e.g.
-          # very early in a repo's history).
+          # footer — no separate VERSION-file bump required.
+          #
+          # frontend/VERSION is an OPTIONAL fallback for a repo with no tags
+          # yet, and is deliberately absent here: while it existed it had to be
+          # kept in sync by hand, was never actually read once the first tag
+          # landed, and duly drifted (it still said v2.6.0 at the v2.7.0
+          # release). A fork that prefers a checked-in version file can just
+          # add it back; this branch keeps working.
+          #
+          # NOTE: the tag is resolved at BUILD time, so tagging after a merge
+          # does not reach the deployed artifact on its own — tag first, or
+          # re-run this workflow afterwards.
           VERSION=$(git describe --tags --abbrev=0 2>/dev/null || true)
           if [ -z "$VERSION" ] && [ -f frontend/VERSION ]; then
             VERSION=$(cat frontend/VERSION | tr -d '[:space:]')

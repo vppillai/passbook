@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 )
@@ -67,11 +68,18 @@ func TestBodyReader_DecodeAndMore(t *testing.T) {
 	done := make(chan bool, 1)
 	go func() { done <- dec.More() }()
 
+	// A single-case select would BLOCK if More() hung — which is the very
+	// regression this test exists to catch, so the failure mode was a silent
+	// stall until Go's package-level timeout panicked ten minutes later, with a
+	// goroutine dump instead of a test name. The timeout turns that into a
+	// named failure in a second.
 	select {
 	case more := <-done:
 		if more {
 			t.Errorf("More() = true, want false (no trailing data)")
 		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Decode/More() hung on trailing data — the regression this test guards")
 	}
 }
 

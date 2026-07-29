@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -40,6 +41,45 @@ var (
 	setupErr  error
 )
 
+// defaultMonthlyAllowance is used when MONTHLY_ALLOWANCE is absent or unusable.
+const defaultMonthlyAllowance = 100.0
+
+// parseMonthlyAllowance reads the MONTHLY_ALLOWANCE value, falling back to
+// `fallback` for anything it cannot use.
+//
+// strconv.ParseFloat is more permissive than this config wants: it accepts
+// "NaN", "Inf", "+Inf" and "-Inf" without error. A NaN allowance would be
+// written into every month's allowance_added and ending_balance, and since
+// DynamoDB has no NaN in its number type the marshalled "NaN" is rejected —
+// so every month create and every top-up would fail, from one typo, with the
+// cause nowhere near the symptom. A negative allowance is just as wrong in a
+// quieter way: it silently debits the balance each month.
+//
+// A bad value still does not fail the cold start — the deployment would be
+// wholly unavailable rather than merely misconfigured — but the fallback is
+// logged loudly enough that an operator can find out why.
+func parseMonthlyAllowance(val string, fallback float64) float64 {
+	if val == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseFloat(val, 64)
+	if err != nil {
+		log.Printf("warn: MONTHLY_ALLOWANCE=%q is not a valid number, falling back to %.2f: %v",
+			val, fallback, err)
+		return fallback
+	}
+	if math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+		log.Printf("warn: MONTHLY_ALLOWANCE=%q is not a finite number, falling back to %.2f",
+			val, fallback)
+		return fallback
+	}
+	if parsed < 0 {
+		log.Printf("warn: MONTHLY_ALLOWANCE=%q is negative, falling back to %.2f", val, fallback)
+		return fallback
+	}
+	return parsed
+}
+
 // setupRouter constructs the router on first call. Previously this lived
 // in init(), which called log.Fatal on missing env vars or AWS config
 // failure — that's a process-killing crash on cold start AND makes the
@@ -57,17 +97,7 @@ func setupRouter() error {
 		return errors.New("ALLOWED_ORIGIN environment variable is required")
 	}
 
-	monthlyAllowance := 100.0
-	if val := os.Getenv("MONTHLY_ALLOWANCE"); val != "" {
-		if parsed, err := strconv.ParseFloat(val, 64); err == nil {
-			monthlyAllowance = parsed
-		} else {
-			// Don't fail the cold start over a bad config value, but make
-			// the silent $100 fallback visible in the logs so an operator
-			// who fat-fingered the param can find out why.
-			log.Printf("warn: MONTHLY_ALLOWANCE=%q is not a valid number, falling back to %.2f: %v", val, monthlyAllowance, err)
-		}
-	}
+	monthlyAllowance := parseMonthlyAllowance(os.Getenv("MONTHLY_ALLOWANCE"), defaultMonthlyAllowance)
 
 	allowOverspending := false
 	if val := os.Getenv("ALLOW_OVERSPENDING"); val == "true" {

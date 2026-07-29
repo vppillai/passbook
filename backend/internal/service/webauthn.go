@@ -279,16 +279,10 @@ func (s *WebAuthnService) FinishLogin(ctx context.Context, req *model.WebAuthnVe
 		return nil, err
 	}
 
-	// Success: clear the per-IP rate limit and mint a session identical to
-	// PIN verify (same token shape, TTL, response body).
-	if err := s.repo.ClearRateLimit(ctx, sourceIP); err != nil {
-		return nil, err
-	}
-	token := uuid.New().String()
-	if err := s.repo.CreateSession(ctx, token, sessionTTLHours); err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
-	}
-	return &model.VerifyPinResponse{Success: true, Token: token}, nil
+	// Success: the same tail PIN verify uses, shared rather than copied. The copy
+	// here returned an error when the rate-limit counter could not be cleared,
+	// which turned an already-verified biometric unlock into a 500.
+	return mintSession(ctx, s.repo, sourceIP)
 }
 
 // DisableWebAuthn removes every stored credential so the user can turn off

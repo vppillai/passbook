@@ -30,11 +30,59 @@ func seedExpenseOnDate(t *testing.T, svc *ExpenseService, amount float64, desc, 
 
 // pastMonthDay returns a "YYYY-MM" and "YYYY-MM-DD" for the given day-of-month
 // in a month `monthsAgo` before now, so tests never trip the future-date guard.
+//
+// It anchors on the FIRST of the current month before subtracting. Subtracting
+// from today instead means AddDate normalises the overflow: on the 31st,
+// AddDate(0, -3, 0) asks for a day 31 that the target month may not have, and Go
+// rolls it forward into the following month. For the (3, 2) pair the cross-month
+// move tests below use, that collapsed both to the SAME month on five days of
+// 2026 — 29/30/31 May, 31 July and 31 December — so those tests quietly became
+// same-month tests, exercising the wrong branch and still passing. Day 1 minus N
+// months is always day 1 of a real month, so no normalisation can occur.
 func pastMonthDay(monthsAgo, day int) (string, string) {
-	base := time.Now().UTC().AddDate(0, -monthsAgo, 0)
+	now := time.Now().UTC()
+	base := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).
+		AddDate(0, -monthsAgo, 0)
+	// Clamp into the month so a caller asking for day 30 cannot produce a
+	// February date the service would reject as malformed.
+	lastDay := base.AddDate(0, 1, -1).Day()
+	if day > lastDay {
+		day = lastDay
+	}
+	if day < 1 {
+		day = 1
+	}
 	month := fmt.Sprintf("%04d-%02d", base.Year(), base.Month())
 	date := fmt.Sprintf("%04d-%02d-%02d", base.Year(), base.Month(), day)
 	return month, date
+}
+
+// The helper's whole job is to hand out DISTINCT past months, and it silently
+// stopped doing so on month-end days. Pinned here because a collapse turns a
+// cross-month test into a same-month one without failing anything.
+func TestPastMonthDay_DistinctMonthsAgoGiveDistinctMonths(t *testing.T) {
+	seen := map[string]int{}
+	for monthsAgo := 1; monthsAgo <= 14; monthsAgo++ {
+		month, date := pastMonthDay(monthsAgo, 31)
+		if prev, dup := seen[month]; dup {
+			t.Errorf("monthsAgo=%d and monthsAgo=%d both resolved to %s",
+				prev, monthsAgo, month)
+		}
+		seen[month] = monthsAgo
+
+		// The date must belong to the month it is paired with, and be in the past.
+		if got := date[:7]; got != month {
+			t.Errorf("monthsAgo=%d: date %s is not in month %s", monthsAgo, date, month)
+		}
+		parsed, err := time.Parse("2006-01-02", date)
+		if err != nil {
+			t.Errorf("monthsAgo=%d: %s is not a valid date: %v", monthsAgo, date, err)
+			continue
+		}
+		if !parsed.Before(time.Now().UTC()) {
+			t.Errorf("monthsAgo=%d: %s is not in the past", monthsAgo, date)
+		}
+	}
 }
 
 // TestUpdateExpense_SameMonthDateChange pins that re-dating within the same

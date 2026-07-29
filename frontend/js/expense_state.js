@@ -42,6 +42,48 @@ export function removeExpense(state, expenseId) {
 }
 
 /**
+ * Adjusts an authoritative server snapshot for a delete that has already
+ * happened LOCALLY but has not yet been sent.
+ *
+ * A deferred delete removes the row and refunds its amount immediately, then
+ * holds the DELETE for 5s so Undo can cancel it. Throughout that window the
+ * server knows nothing about it, so every response it sends carries absolute
+ * figures computed from a world where the expense still exists.
+ *
+ * Assigning those absolutes straight onto the live model — which is what
+ * applyExpenseUpdate and applyFundsUpdate did — silently discards the refund.
+ * Editing an expense or topping up during the undo window dropped the balance
+ * back by the pending amount and left it wrong, because when the DELETE finally
+ * fires the server applies it to ITS state and the client never re-reads.
+ *
+ * Returns a NEW object; the response is left untouched. A field the snapshot
+ * does not carry stays absent rather than materialising as the bare refund.
+ *
+ * @param {{summary?: Object, total_balance?: number}} snapshot - server figures
+ * @param {number} pendingRefund - amount of the not-yet-sent delete, 0 if none
+ * @returns {{summary?: Object, total_balance?: number}}
+ */
+export function adjustForPendingDelete(snapshot, pendingRefund) {
+    const refund = parseFloat(pendingRefund) || 0;
+    const out = { ...(snapshot || {}) };
+    if (out.summary) out.summary = { ...out.summary };
+    if (!refund) return out;
+
+    if (typeof out.total_balance === 'number') {
+        out.total_balance = roundCents(out.total_balance + refund);
+    }
+    if (out.summary) {
+        if (out.summary.total_expenses !== undefined) {
+            out.summary.total_expenses = roundCents((out.summary.total_expenses || 0) - refund);
+        }
+        if (out.summary.ending_balance !== undefined) {
+            out.summary.ending_balance = roundCents((out.summary.ending_balance || 0) + refund);
+        }
+    }
+    return out;
+}
+
+/**
  * Re-inserts a previously-removed expense at `index`, undoing the summary /
  * total_balance refund that `removeExpense` applied. Used by Undo and by the
  * "DELETE failed → restore" path. Clamps the index into range so a list that

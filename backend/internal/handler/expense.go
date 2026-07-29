@@ -346,6 +346,11 @@ func (rt *Router) handleDeleteMonth(w http.ResponseWriter, r *http.Request) {
 			httperr.WriteJSON(w, http.StatusNotFound, "Month not found")
 		case errors.Is(err, service.ErrMonthHasExpenses):
 			httperr.WriteJSON(w, http.StatusConflict, "Cannot delete a month that still has expenses. Delete its expenses first.")
+		case errors.Is(err, service.ErrMonthModified):
+			// The month changed between the pre-read and the delete — its
+			// allowance moved, so the balance debit would have been stale.
+			// A distinct message because "it still has expenses" would be untrue.
+			httperr.WriteJSON(w, http.StatusConflict, "This month changed just now. Refresh and try again.")
 		default:
 			log.Printf("month.delete: %v", err)
 			httperr.WriteJSON(w, http.StatusInternalServerError, "Failed to delete month")

@@ -1489,7 +1489,15 @@ func (r *Repository) AtomicMoveExpenseSameMonth(ctx context.Context, month strin
 // A failed delete condition (index 0) surfaces as ErrExpenseStateMismatch.
 // Both months' mirror rows must already exist (caller back-fills via
 // EnsureMonthListMirror) — the mirror updates are conditional deltas.
-func (r *Repository) AtomicMoveExpenseAcrossMonths(ctx context.Context, srcMonth, dstMonth, oldExpenseID string, newExpense *model.Expense, oldAmount float64, checkBalance bool) error {
+// srcRefundReachesDst says the source's refund will land in the destination's
+// carried balance — true when carry-over is on and the destination is LATER than
+// the source. The destination's balance condition then has to be measured
+// against the NET charge (newAmount - oldAmount) rather than the gross one:
+// asking whether the destination can afford the full amount out of its current
+// balance is the wrong question when the refund is about to arrive, and it
+// refused moves that net to zero across the chain (e.g. moving an expense
+// forward a month unchanged, which cannot alter any balance).
+func (r *Repository) AtomicMoveExpenseAcrossMonths(ctx context.Context, srcMonth, dstMonth, oldExpenseID string, newExpense *model.Expense, oldAmount float64, checkBalance bool, srcRefundReachesDst bool) error {
 	pkSrc := MonthPrefix + srcMonth
 	pkDst := MonthPrefix + dstMonth
 	newExpense.PK = pkDst
@@ -1513,14 +1521,25 @@ func (r *Repository) AtomicMoveExpenseAcrossMonths(ctx context.Context, srcMonth
 	}
 
 	dstCondition := "attribute_exists(PK)"
-	if checkBalance {
-		dstCondition = "attribute_exists(PK) AND ending_balance >= :newAmount"
-	}
-	dstSummaryExpr := "SET total_expenses = total_expenses + :newAmount, ending_balance = ending_balance - :newAmount, updated_at = :now"
 	dstValues := map[string]types.AttributeValue{
 		":newAmount": &types.AttributeValueMemberN{Value: newAmountStr},
 		":now":       &types.AttributeValueMemberS{Value: nowStr},
 	}
+	if checkBalance {
+		// The threshold is computed here rather than in the expression, because
+		// a ConditionExpression cannot do arithmetic on its right-hand side.
+		// A negative threshold is fine and intended: the refund more than covers
+		// the charge, so any non-negative balance satisfies it.
+		threshold := newExpense.Amount
+		if srcRefundReachesDst {
+			threshold -= oldAmount
+		}
+		dstCondition = "attribute_exists(PK) AND ending_balance >= :minDstEnding"
+		dstValues[":minDstEnding"] = &types.AttributeValueMemberN{
+			Value: fmt.Sprintf("%.2f", threshold),
+		}
+	}
+	dstSummaryExpr := "SET total_expenses = total_expenses + :newAmount, ending_balance = ending_balance - :newAmount, updated_at = :now"
 	dstListValues := map[string]types.AttributeValue{
 		":newAmount": &types.AttributeValueMemberN{Value: newAmountStr},
 		":now":       &types.AttributeValueMemberS{Value: nowStr},
@@ -1838,9 +1857,13 @@ func (r *Repository) CreateMonthSummaryIfAbsent(ctx context.Context, summary *mo
 // AtomicDeleteMonth removes a month: it deletes the canonical summary row
 // and its MONTHLIST copy and debits the global balance by allowanceAdded,
 // all in one transaction. The summary delete is conditioned on
-// total_expenses = :zero (and attribute_exists) so a month that still has
-// expenses cannot be deleted — the caller maps that to a 409. allowanceAdded
-// is formatted as the shortest round-trip of the value read from the summary.
+// attribute_exists(PK), total_expenses = :zero so a month that still has
+// expenses cannot be deleted, AND allowance_added = :allowance so the figure
+// being debited cannot have changed since the caller read it. Any of the three
+// failing surfaces as ErrMonthHasExpenses — DynamoDB reports only WHICH item's
+// condition failed, not which clause — so the caller re-reads to say which.
+// allowanceAdded is formatted as the shortest round-trip of the value read from
+// the summary.
 func (r *Repository) AtomicDeleteMonth(ctx context.Context, month string, allowanceAdded float64) error {
 	pkMonth := MonthPrefix + month
 	nowStr := time.Now().Format(time.RFC3339)
@@ -1854,9 +1877,17 @@ func (r *Repository) AtomicDeleteMonth(ctx context.Context, month string, allowa
 					"PK": &types.AttributeValueMemberS{Value: pkMonth},
 					"SK": &types.AttributeValueMemberS{Value: SKSummary},
 				},
-				ConditionExpression: aws.String("attribute_exists(PK) AND total_expenses = :zero"),
+				// allowance_added is pinned as well as total_expenses. The caller
+				// pre-reads the summary and hands its allowance figure to the
+				// balance debit below; without this guard a top-up landing in
+				// between made that figure stale, so the month row vanished while
+				// the global balance kept the difference — permanent drift, since
+				// nothing recomputes the balance afterwards.
+				ConditionExpression: aws.String(
+					"attribute_exists(PK) AND total_expenses = :zero AND allowance_added = :allowance"),
 				ExpressionAttributeValues: map[string]types.AttributeValue{
-					":zero": &types.AttributeValueMemberN{Value: "0"},
+					":zero":      &types.AttributeValueMemberN{Value: "0"},
+					":allowance": &types.AttributeValueMemberN{Value: allowanceStr},
 				},
 			}},
 			{Delete: &types.Delete{
