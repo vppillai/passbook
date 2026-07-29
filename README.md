@@ -211,7 +211,7 @@ This app is hosted in a **public GitHub repository**. Below is a comprehensive s
 
 | Control | Implementation | Notes |
 |---------|----------------|-------|
-| PIN Hashing | Argon2id (16MB, 3 iterations, 1 thread) | Memory-hard, resistant to GPU attacks |
+| PIN Hashing | Argon2id (64 MiB, 1 iteration, 1 thread) | Memory-hard, resistant to GPU attacks. Existing hashes carry their own parameters and are upgraded in place on the next successful unlock |
 | Salt | 16 bytes random per PIN | Unique salt prevents rainbow tables |
 | Session Tokens | UUID v4 (122 bits of randomness) | Cryptographically secure |
 | Session Storage | Server-side in DynamoDB; client token in `sessionStorage` | Token is cleared when the tab closes (matches the "Lock" UX) |
@@ -224,7 +224,7 @@ This app is hosted in a **public GitHub repository**. Below is a comprehensive s
 | Per-IP attempt limit | 5 failed attempts per 15-minute window | Scoped per source IP so one attacker cannot lock the household out |
 | Account-wide attempt limit | 50 failed attempts per 15-minute window | Bounds **distributed** guessing, which the per-IP limit does nothing about |
 | Counter storage | DynamoDB row with 15-minute TTL | Auto-expires, no manual cleanup |
-| Argon2id cost | 16 MB / 3 iterations | Each verification is deliberately slow |
+| Argon2id cost | 64 MiB / 1 iteration | Each verification is deliberately slow. Memory is the dimension that resists GPUs — it caps how many guesses fit on a card — so the parameters favour memory over iterations at equal total work |
 | API rate limit | 5 req/sec, 10 burst | API Gateway level |
 
 **Why both limits.** A 4-digit PIN is 10,000 combinations. With only a per-IP

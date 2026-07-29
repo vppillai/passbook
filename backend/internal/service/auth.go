@@ -19,9 +19,41 @@ import (
 )
 
 const (
-	// Argon2 parameters - reduced memory for Lambda compatibility
-	argonTime    = 3
-	argonMemory  = 16 * 1024 // 16MB (fits in 128MB Lambda)
+	// Argon2id parameters.
+	//
+	// These were m=16MiB, t=3 with the comment "fits in 128MB Lambda" — a Lambda
+	// that no longer exists; the template deploys 256MB. 16MiB is below current
+	// guidance, and a 4-digit PIN is only 10,000 candidates, so the hashing cost
+	// is doing much of the work of keeping the PIN secret.
+	//
+	// The change is memory UP and time DOWN, which is not a trade-off in the
+	// wrong direction: total work is m*t, so 64*1 = 64 exceeds the previous
+	// 16*3 = 48, while the memory an attacker needs per guess quadruples. Memory
+	// is the dimension that matters against GPUs and ASICs, since it caps how
+	// many guesses fit on a card; time cost parallelises freely for them.
+	// RFC 9106's primary recommendation likewise uses t=1 with high memory.
+	//
+	// 64MiB is the CEILING here, not a target. It is transient allocation inside
+	// a 256MB function that also holds the Go runtime and the AWS SDK, and an
+	// OOM on the auth path would be a hard outage — far worse than a somewhat
+	// cheaper offline attack on a hash an attacker must first exfiltrate from
+	// DynamoDB. Measured rather than assumed: a process that loads the AWS SDK
+	// and performs one verify at these parameters peaks at ~140MB RSS, and that
+	// figure is from a TEST binary (testing framework plus every test), so the
+	// deployed 22MB bootstrap sits comfortably below it. 96MiB and 128MiB were
+	// measured too and rejected on that basis.
+	//
+	// Cost: ~37ms per derivation locally against ~21ms before. At the 256MB
+	// Lambda's CPU share that is a few hundred milliseconds — unnoticeable for an
+	// unlock, and it is not the primary brute-force control anyway; the per-IP
+	// and account-wide attempt caps are.
+	//
+	// Raising them is safe for existing users because verifyPINHash reads m/t/p
+	// from the STORED hash, not from these constants, so an old PIN keeps
+	// verifying under its original parameters. VerifyPIN then upgrades it in
+	// place on the next successful unlock — see pinHashOutdated.
+	argonTime    = 1
+	argonMemory  = 64 * 1024 // 64MiB
 	argonThreads = 1
 	argonKeyLen  = 32
 	saltLen      = 16
@@ -150,7 +182,37 @@ func (s *AuthService) VerifyPIN(ctx context.Context, pin string, sourceIP string
 		return s.failedAttempt(ctx, sourceIP)
 	}
 
+	// The PIN is correct and in hand, which is the only moment a stronger hash
+	// can be derived. Opportunistic: a failure here costs nothing, because the
+	// stored hash remains perfectly valid and the next unlock will try again.
+	s.upgradePINHash(ctx, pin, config)
+
 	return mintSession(ctx, s.repo, sourceIP)
+}
+
+// upgradePINHash re-derives and stores the PIN hash when the stored one was
+// written with weaker parameters. Called only after a SUCCESSFUL verify, so it
+// never fires on a guess.
+//
+// Every failure is logged and swallowed. The user got their PIN right; refusing
+// the login because a strengthening write failed would turn an improvement into
+// an outage, and the old hash is still valid.
+func (s *AuthService) upgradePINHash(ctx context.Context, pin string, config *model.Config) {
+	if config == nil || !pinHashOutdated(config.PinHash) {
+		return
+	}
+	newHash, err := hashPIN(pin)
+	if err != nil {
+		log.Printf("warn: could not re-hash PIN for parameter upgrade: %v", err)
+		return
+	}
+	updated := *config
+	updated.PinHash = newHash
+	if err := s.repo.SaveConfig(ctx, &updated); err != nil {
+		log.Printf("warn: could not store upgraded PIN hash: %v", err)
+		return
+	}
+	log.Printf("info: PIN hash upgraded to m=%d,t=%d,p=%d", argonMemory, argonTime, argonThreads)
 }
 
 // mintSession is the tail every successful login shares: clear the per-IP
@@ -461,6 +523,36 @@ func hashPIN(pin string) (string, error) {
 // supplied PIN and a PHC-formatted Argon2id hash. Pure function — no rate
 // limit increment, no session minting, no I/O. Called by both VerifyPIN
 // (the public session-minting flow) and ChangePIN.
+// pinHashOutdated reports whether a stored hash was written with weaker
+// parameters than the current ones, and so should be re-derived.
+//
+// It exists because raising the Argon2 constants does nothing for anyone who
+// already has a PIN: verifyPINHash reads m/t/p out of the stored hash — which is
+// what makes raising them safe at all — so an old hash would go on verifying
+// under its old parameters forever. The upgrade has to be driven from the one
+// moment the plaintext PIN is available and known correct, which is a successful
+// verify.
+//
+// Conservative on purpose: anything it cannot parse is reported as NOT outdated.
+// Rewriting a stored credential on the strength of a hash we could not read
+// would be worse than leaving it alone.
+func pinHashOutdated(encodedHash string) bool {
+	parts := strings.Split(encodedHash, "$")
+	if len(parts) != 6 || parts[1] != "argon2id" {
+		return false
+	}
+	var memory, timeCost uint32
+	var threads uint8
+	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &timeCost, &threads); err != nil {
+		return false
+	}
+	// Compare the work done (m*t) rather than each parameter separately, so a
+	// hash written with a different but equivalent-or-stronger mix is left alone.
+	// Memory is also required to be at least current, since that is the property
+	// being raised and a low-memory/high-time hash is not an acceptable substitute.
+	return memory < argonMemory || uint64(memory)*uint64(timeCost) < uint64(argonMemory)*uint64(argonTime)
+}
+
 func verifyPINHash(pin, encodedHash string) (bool, error) {
 	// Parse the encoded hash
 	parts := strings.Split(encodedHash, "$")
