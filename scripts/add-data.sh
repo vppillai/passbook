@@ -243,6 +243,25 @@ load_settings() {
     local params
     if ! params=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" \
         --query "Stacks[0].Parameters" --output json); then
+        # Fail closed for a REAL run: guessing carry/overspend wrong would write
+        # a corrupted chain, which is exactly why this does not default silently.
+        #
+        # A preview is different, and used to abort here anyway. preflight
+        # deliberately skips its credential check under --dry-run so a preview
+        # works "against a fake instance name without AWS", and both repair
+        # primitives carry an early return saying the same — but then this exited
+        # 1, so no preview was possible without live credentials after all. A dry
+        # run writes nothing, so fail-closed has nothing to protect here;
+        # announce the assumption loudly and carry on.
+        if [[ "$DRY_RUN" == "true" ]]; then
+            echo "  [DRY-RUN] could not read stack '$STACK_NAME'; previewing with" \
+                 "carry_over_balance=true, allow_overspending=false." >&2
+            echo "  [DRY-RUN] figures below may differ from a real run if this" \
+                 "instance is configured otherwise." >&2
+            CARRY_OVER_BALANCE="true"
+            ALLOW_OVERSPENDING="false"
+            return 0
+        fi
         echo "ERROR: could not read stack '$STACK_NAME' in $REGION to load instance settings." >&2
         echo "       Check credentials/region/stack name. Refusing to guess carry/overspend defaults." >&2
         exit 1

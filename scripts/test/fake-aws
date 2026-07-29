@@ -1,0 +1,352 @@
+#!/bin/bash
+# A stand-in for the `aws` CLI, so scripts/add-data.sh can be tested against a
+# real in-memory DynamoDB table instead of a live one.
+#
+# WHY A TABLE MODEL AND NOT RECORDED RESPONSES
+#
+# add-data.sh's interesting functions — repair_ledger, recompute_carry_chain,
+# recompute_total_expenses, prune_orphan_mirrors — are all about the STATE they
+# leave behind. Replaying canned responses would only prove which calls were
+# made; modelling the table lets a test assert the resulting ledger, which is
+# the thing that matters when the script is pointed at production data.
+#
+# SCOPE
+#
+# Deliberately only the surface add-data.sh actually uses (checked by grepping
+# the script, not guessed):
+#
+#   sts get-caller-identity          preflight credential check
+#   dynamodb describe-table          preflight table check
+#   cloudformation describe-stacks   carry/overspend stack parameters
+#   dynamodb get-item                point read
+#   dynamodb query                   PK = :pk [AND begins_with(SK, :sk)]
+#   dynamodb scan                    begins_with(PK, :pk) AND SK = :sk
+#   dynamodb put-item                upsert, honouring attribute_not_exists(PK)
+#   dynamodb delete-item             point delete
+#   dynamodb transact-write-items    Put + Update, honouring attribute_exists(PK)
+#
+# Anything outside that exits 64 with a loud message rather than returning
+# something plausible — a fake that silently absorbs an unmodelled call is worse
+# than no fake, because the test still passes.
+#
+# ENVIRONMENT
+#
+#   PASSBOOK_FAKE_TABLE   path to the JSON state file (array of DynamoDB items)
+#   PASSBOOK_FAKE_CALLS   path to append a one-line log of every call
+#   PASSBOOK_FAKE_CARRY   CarryOverBalance stack parameter (default true)
+#   PASSBOOK_FAKE_OVERSPEND  AllowOverspending stack parameter (default false)
+#   PASSBOOK_FAKE_NO_CREDS   set to make the credential preflight fail
+#   PASSBOOK_FAKE_NO_TABLE   set to make the table preflight fail
+#   PASSBOOK_FAKE_NO_STACK   set to make ONLY describe-stacks fail (readable
+#                            table, unreadable stack — a scoped-down role)
+set -uo pipefail
+
+STATE="${PASSBOOK_FAKE_TABLE:?fake-aws: PASSBOOK_FAKE_TABLE not set}"
+[[ -f "$STATE" ]] || echo '[]' > "$STATE"
+
+if [[ -n "${PASSBOOK_FAKE_CALLS:-}" ]]; then
+    echo "$*" >> "$PASSBOOK_FAKE_CALLS"
+fi
+
+die_unmodelled() {
+    echo "fake-aws: unmodelled call: aws $*" >&2
+    echo "fake-aws: add it to scripts/test/fake-aws rather than letting the test pass blind." >&2
+    exit 64
+}
+
+# ---- argument capture -------------------------------------------------------
+# Only the flags this fake honours; anything else is ignored, which is fine
+# because --region/--table-name/--output do not change the modelled behaviour.
+SERVICE="${1:-}"; shift || true
+OPERATION="${1:-}"; shift || true
+
+ARG_KEY=""; ARG_ITEM=""; ARG_KCE=""; ARG_FE=""; ARG_EAV=""; ARG_PE=""
+ARG_CE=""; ARG_TRANSACT=""; ARG_QUERY=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --key)                        ARG_KEY="${2:-}"; shift 2 ;;
+        --item)                       ARG_ITEM="${2:-}"; shift 2 ;;
+        --key-condition-expression)   ARG_KCE="${2:-}"; shift 2 ;;
+        --filter-expression)          ARG_FE="${2:-}"; shift 2 ;;
+        --expression-attribute-values) ARG_EAV="${2:-}"; shift 2 ;;
+        --projection-expression)      ARG_PE="${2:-}"; shift 2 ;;
+        --condition-expression)       ARG_CE="${2:-}"; shift 2 ;;
+        --transact-items)             ARG_TRANSACT="${2:-}"; shift 2 ;;
+        --query)                      ARG_QUERY="${2:-}"; shift 2 ;;
+        --table-name|--region|--output|--stack-name) shift 2 ;;
+        *)                            shift ;;
+    esac
+done
+
+read_state() { cat "$STATE"; }
+write_state() { local tmp; tmp=$(mktemp); cat > "$tmp"; mv "$tmp" "$STATE"; }
+
+# split_set_clauses "a = b + :x, c = if_not_exists(c, :z) - :y, d = :u"
+# Emits one clause per line, splitting only on TOP-LEVEL commas. A naive
+# IFS=',' split tears `if_not_exists(total_balance, :z)` in half at its argument
+# separator, which is not a clause boundary.
+split_set_clauses() {
+    local s="$1" depth=0 cur="" ch
+    local i
+    for ((i = 0; i < ${#s}; i++)); do
+        ch="${s:i:1}"
+        case "$ch" in
+            '(') depth=$((depth + 1)); cur+="$ch" ;;
+            ')') depth=$((depth - 1)); cur+="$ch" ;;
+            ',') if [[ "$depth" -eq 0 ]]; then printf '%s\n' "$cur"; cur=""; else cur+="$ch"; fi ;;
+            *)   cur+="$ch" ;;
+        esac
+    done
+    [[ -n "$cur" ]] && printf '%s\n' "$cur"
+    return 0
+}
+
+# key_of ITEM_JSON -> "PK|SK", the identity used to match rows.
+KEY_JQ='(.PK.S // "") + "|" + (.SK.S // "")'
+
+# ---- sts --------------------------------------------------------------------
+if [[ "$SERVICE" == "sts" ]]; then
+    case "$OPERATION" in
+        get-caller-identity)
+            if [[ -n "${PASSBOOK_FAKE_NO_CREDS:-}" ]]; then
+                echo "An error occurred (ExpiredToken)" >&2
+                exit 255
+            fi
+            echo '{"Account":"000000000000","Arn":"arn:aws:iam::000000000000:user/fake"}'
+            exit 0 ;;
+        *) die_unmodelled "$SERVICE" "$OPERATION" ;;
+    esac
+fi
+
+# Expired credentials fail EVERY call, not just sts. Modelling them as an
+# sts-only failure made PASSBOOK_FAKE_NO_CREDS far too gentle: a code path that
+# skipped preflight would then sail on through its reads as though authenticated,
+# so a test could not tell a guarded path from an unguarded one.
+if [[ -n "${PASSBOOK_FAKE_NO_CREDS:-}" ]]; then
+    echo "An error occurred (ExpiredTokenException) when calling the ${OPERATION} operation" >&2
+    exit 255
+fi
+
+# ---- cloudformation ---------------------------------------------------------
+if [[ "$SERVICE" == "cloudformation" ]]; then
+    case "$OPERATION" in
+        describe-stacks)
+            if [[ -n "${PASSBOOK_FAKE_NO_STACK:-}" ]]; then
+                echo "An error occurred (ValidationError) when calling DescribeStacks" >&2
+                exit 255
+            fi
+            # add-data.sh always asks for Stacks[0].Parameters; refuse anything
+            # else so a changed query cannot silently get the wrong shape.
+            if [[ "$ARG_QUERY" != "Stacks[0].Parameters" ]]; then
+                die_unmodelled "cloudformation describe-stacks --query $ARG_QUERY"
+            fi
+            jq -n --arg carry "${PASSBOOK_FAKE_CARRY:-true}" \
+                  --arg over "${PASSBOOK_FAKE_OVERSPEND:-false}" '[
+                {ParameterKey:"CarryOverBalance", ParameterValue:$carry},
+                {ParameterKey:"AllowOverspending", ParameterValue:$over}
+            ]'
+            exit 0 ;;
+        *) die_unmodelled "$SERVICE" "$OPERATION" ;;
+    esac
+fi
+
+[[ "$SERVICE" == "dynamodb" ]] || die_unmodelled "$SERVICE" "$OPERATION"
+
+# ---- dynamodb ---------------------------------------------------------------
+case "$OPERATION" in
+
+describe-table)
+    if [[ -n "${PASSBOOK_FAKE_NO_TABLE:-}" ]]; then
+        echo "An error occurred (ResourceNotFoundException)" >&2
+        exit 255
+    fi
+    echo '{"Table":{"TableStatus":"ACTIVE"}}'
+    ;;
+
+get-item)
+    read_state | jq --argjson k "$ARG_KEY" --arg kjq "$KEY_JQ" '
+        ($k | (.PK.S // "") + "|" + (.SK.S // "")) as $want
+        | map(select(((.PK.S // "") + "|" + (.SK.S // "")) == $want))
+        | if length > 0 then {Item: .[0]} else {} end'
+    ;;
+
+query)
+    # PK = :pk, optionally AND begins_with(SK, :sk).
+    if [[ "$ARG_KCE" != "PK = :pk" && "$ARG_KCE" != "PK = :pk AND begins_with(SK, :sk)" ]]; then
+        die_unmodelled "dynamodb query --key-condition-expression '$ARG_KCE'"
+    fi
+    read_state | jq \
+        --argjson eav "$ARG_EAV" \
+        --arg kce "$ARG_KCE" \
+        --arg pe "$ARG_PE" '
+        ($eav[":pk"].S) as $pk
+        | ($eav[":sk"].S // null) as $sk
+        | map(select(.PK.S == $pk))
+        | (if ($kce | test("begins_with")) and $sk != null
+           then map(select(.SK.S | startswith($sk))) else . end)
+        # Sorted by SK, as a real Query returns it — several callers rely on
+        # MONTHLIST coming back in month order.
+        | sort_by(.SK.S)
+        | (if $pe == "" then .
+           else ($pe | split(",") | map(gsub("^ +| +$";""))) as $attrs
+                | map(with_entries(select(.key as $k | $attrs | index($k)))) end)
+        | {Items: ., Count: length, ScannedCount: length}'
+    ;;
+
+scan)
+    if [[ -n "$ARG_FE" && "$ARG_FE" != "begins_with(PK, :pk) AND SK = :sk" ]]; then
+        die_unmodelled "dynamodb scan --filter-expression '$ARG_FE'"
+    fi
+    read_state | jq \
+        --argjson eav "${ARG_EAV:-null}" \
+        --arg fe "$ARG_FE" \
+        --arg pe "$ARG_PE" '
+        (if $fe == "" then .
+         else ($eav[":pk"].S) as $pk | ($eav[":sk"].S) as $sk
+              | map(select((.PK.S | startswith($pk)) and .SK.S == $sk)) end)
+        | sort_by(.PK.S, .SK.S)
+        | (if $pe == "" then .
+           else ($pe | split(",") | map(gsub("^ +| +$";""))) as $attrs
+                | map(with_entries(select(.key as $k | $attrs | index($k)))) end)
+        | {Items: ., Count: length, ScannedCount: length}'
+    ;;
+
+put-item)
+    exists=$(read_state | jq --argjson it "$ARG_ITEM" '
+        ($it | (.PK.S // "") + "|" + (.SK.S // "")) as $want
+        | map(select(((.PK.S // "") + "|" + (.SK.S // "")) == $want)) | length')
+    if [[ "$ARG_CE" == "attribute_not_exists(PK)" && "$exists" != "0" ]]; then
+        echo "An error occurred (ConditionalCheckFailedException)" >&2
+        exit 255
+    fi
+    if [[ -n "$ARG_CE" && "$ARG_CE" != "attribute_not_exists(PK)" ]]; then
+        die_unmodelled "dynamodb put-item --condition-expression '$ARG_CE'"
+    fi
+    read_state | jq --argjson it "$ARG_ITEM" '
+        ($it | (.PK.S // "") + "|" + (.SK.S // "")) as $want
+        | map(select(((.PK.S // "") + "|" + (.SK.S // "")) != $want)) + [$it]' | write_state
+    echo '{}'
+    ;;
+
+delete-item)
+    read_state | jq --argjson k "$ARG_KEY" '
+        ($k | (.PK.S // "") + "|" + (.SK.S // "")) as $want
+        | map(select(((.PK.S // "") + "|" + (.SK.S // "")) != $want))' | write_state
+    echo '{}'
+    ;;
+
+transact-write-items)
+    # All-or-nothing, like the real thing: every condition is evaluated against
+    # the PRE-transaction state, and a single failure aborts without applying
+    # anything. Getting that wrong would let a test pass on a partial write that
+    # DynamoDB would never produce.
+    before=$(read_state)
+    n=$(jq 'length' <<<"$ARG_TRANSACT")
+
+    for ((i = 0; i < n; i++)); do
+        entry=$(jq -c ".[$i]" <<<"$ARG_TRANSACT")
+        kind=$(jq -r 'keys[0]' <<<"$entry")
+        body=$(jq -c ".[\"$kind\"]" <<<"$entry")
+        cond=$(jq -r '.ConditionExpression // ""' <<<"$body")
+
+        case "$kind" in
+            Put)  key=$(jq -c '.Item | {PK, SK}' <<<"$body") ;;
+            Update) key=$(jq -c '.Key' <<<"$body") ;;
+            *) die_unmodelled "transact-write-items item kind '$kind'" ;;
+        esac
+
+        present=$(jq --argjson k "$key" '
+            ($k | (.PK.S // "") + "|" + (.SK.S // "")) as $want
+            | map(select(((.PK.S // "") + "|" + (.SK.S // "")) == $want)) | length' <<<"$before")
+
+        case "$cond" in
+            "") ;;
+            "attribute_exists(PK)")
+                if [[ "$present" == "0" ]]; then
+                    echo "An error occurred (TransactionCanceledException) ... [ConditionalCheckFailed]" >&2
+                    exit 255
+                fi ;;
+            "attribute_not_exists(PK)")
+                if [[ "$present" != "0" ]]; then
+                    echo "An error occurred (TransactionCanceledException) ... [ConditionalCheckFailed]" >&2
+                    exit 255
+                fi ;;
+            *) die_unmodelled "transact ConditionExpression '$cond'" ;;
+        esac
+    done
+
+    # Conditions all held — apply.
+    after="$before"
+    for ((i = 0; i < n; i++)); do
+        entry=$(jq -c ".[$i]" <<<"$ARG_TRANSACT")
+        kind=$(jq -r 'keys[0]' <<<"$entry")
+        body=$(jq -c ".[\"$kind\"]" <<<"$entry")
+
+        if [[ "$kind" == "Put" ]]; then
+            after=$(jq --argjson it "$(jq -c '.Item' <<<"$body")" '
+                ($it | (.PK.S // "") + "|" + (.SK.S // "")) as $want
+                | map(select(((.PK.S // "") + "|" + (.SK.S // "")) != $want)) + [$it]' <<<"$after")
+            continue
+        fi
+
+        # Update: apply each "attr = <expr>" clause of a SET expression.
+        # Supported right-hand sides, which is every shape add-data.sh uses:
+        #   :val
+        #   attr +|- :val
+        #   if_not_exists(attr, :val) +|- :val
+        key=$(jq -c '.Key' <<<"$body")
+        expr=$(jq -r '.UpdateExpression' <<<"$body")
+        eav=$(jq -c '.ExpressionAttributeValues' <<<"$body")
+        [[ "$expr" == SET\ * ]] || die_unmodelled "UpdateExpression '$expr' (only SET is modelled)"
+
+        clauses=${expr#SET }
+        while IFS= read -r raw; do
+            [[ -n "$raw" ]] || continue
+            clause=$(sed 's/^ *//; s/ *$//' <<<"$raw")
+            attr=${clause%%=*}; attr=$(sed 's/ *$//' <<<"$attr")
+            rhs=${clause#*=}; rhs=$(sed 's/^ *//' <<<"$rhs")
+
+            # NOTE: each right-hand side is matched with an explicit test BEFORE
+            # capture. jq's capture emits NOTHING on a non-match rather than
+            # null, so `(capture(...)) as $x` binds no value and the enclosing
+            # map(...) drops the row entirely — a failed regex silently DELETING
+            # the row it was meant to update. That is exactly what happened the
+            # first time this ran.
+            after=$(jq \
+                --argjson k "$key" --argjson eav "$eav" \
+                --arg attr "$attr" --arg rhs "$rhs" '
+                def rounded: . * 100 | round | . / 100 | tostring;
+                ($k | (.PK.S // "") + "|" + (.SK.S // "")) as $want
+                | ("^:[A-Za-z_]+$") as $reP
+                | ("^[A-Za-z_]+ *[+-] *:[A-Za-z_]+$") as $reA
+                | ("^if_not_exists\\([A-Za-z_]+, *:[A-Za-z_]+\\) *[+-] *:[A-Za-z_]+$") as $reI
+                | map(
+                    if ((.PK.S // "") + "|" + (.SK.S // "")) == $want then
+                      . as $row
+                      | if ($rhs | test($reP)) then
+                          ($rhs | capture("^:(?<v>[A-Za-z_]+)$")) as $m
+                          | .[$attr] = $eav[":" + $m.v]
+                        elif ($rhs | test($reA)) then
+                          ($rhs | capture("^(?<a>[A-Za-z_]+) *(?<op>[+-]) *:(?<v>[A-Za-z_]+)$")) as $m
+                          | (($row[$m.a].N // "0") | tonumber) as $cur
+                          | (($eav[":" + $m.v].N) | tonumber) as $delta
+                          | .[$attr] = {N: ((if $m.op == "+" then $cur + $delta else $cur - $delta end) | rounded)}
+                        elif ($rhs | test($reI)) then
+                          ($rhs | capture("^if_not_exists\\((?<a>[A-Za-z_]+), *:(?<d>[A-Za-z_]+)\\) *(?<op>[+-]) *:(?<v>[A-Za-z_]+)$")) as $m
+                          | (($row[$m.a].N // $eav[":" + $m.d].N) | tonumber) as $cur
+                          | (($eav[":" + $m.v].N) | tonumber) as $delta
+                          | .[$attr] = {N: ((if $m.op == "+" then $cur + $delta else $cur - $delta end) | rounded)}
+                        else
+                          error("fake-aws: unmodelled SET right-hand side: " + $rhs)
+                        end
+                    else . end)' <<<"$after") || {
+                echo "fake-aws: failed applying '$clause'" >&2; exit 64; }
+        done < <(split_set_clauses "$clauses")
+    done
+
+    write_state <<<"$after"
+    echo '{}'
+    ;;
+
+*) die_unmodelled "$SERVICE" "$OPERATION" ;;
+esac
