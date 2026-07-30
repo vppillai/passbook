@@ -3,6 +3,11 @@ import { api } from './api.js';
 import * as ui from './ui.js';
 import { labels } from './labels.js';
 import * as webauthn from './webauthn.js';
+import {
+    rememberPinLength, recalledPinLength, forgetPinLength,
+    noteFailedAttempt, clearFailedAttempts,
+    rememberBiometricAvailable, recalledBiometricAvailable,
+} from './pin_memory.js';
 
 // Per-instance localStorage flag remembering that the user dismissed (or
 // completed) the one-time "enable biometric unlock" offer, so we don't nag on
@@ -37,6 +42,15 @@ class Auth {
         this.bound = false;
         /** @type {number|null} setInterval id for the lockout countdown */
         this._lockoutInterval = null;
+        /** @type {number|null} PIN length this device has learned; null = unknown.
+         *  When known the screen renders exactly that many dots and submits on
+         *  the last digit; when unknown it falls back to six dots and OK. */
+        this.pinLength = null;
+        /** Consecutive failures needed before a remembered length is dropped.
+         *  Two, not one: a single wrong PIN of the right length is an ordinary
+         *  fumble, but two in a row is the signature of a length that has gone
+         *  stale (PIN changed on another device). */
+        this.staleLengthThreshold = 2;
     }
 
     init(onAuthSuccess) {
@@ -53,7 +67,9 @@ class Auth {
         }
         // Show the lock-screen biometric button when enrolled + available
         // (fire-and-forget; PIN remains the fallback regardless).
+        this.primeBiometricSlot();
         this.refreshBiometricButton();
+        this.prepareAuthScreen();
     }
 
     /**
@@ -131,7 +147,9 @@ class Auth {
                 webauthn.getAuthStatus(),
                 webauthn.isPlatformAuthenticatorAvailable(),
             ]);
-            if (status && status.webauthn_enrolled && available) {
+            const enrolled = !!(status && status.webauthn_enrolled) && available;
+            rememberBiometricAvailable(enrolled);
+            if (enrolled) {
                 this._injectBiometricButton();
             } else {
                 this._removeBiometricButton();
@@ -141,27 +159,45 @@ class Auth {
         }
     }
 
-    /** Injects the lock-screen biometric button above the PIN pad (once). */
+    /** Renders the biometric button into the reserved slot (idempotent). */
     _injectBiometricButton() {
-        if (document.getElementById('webauthn-login-btn')) return;
-        const pad = document.getElementById('auth-pin-pad');
-        if (!pad) return;
+        const slot = document.getElementById('biometric-slot');
+        if (!slot || document.getElementById('webauthn-login-btn')) return;
         const btn = document.createElement('button');
         btn.id = 'webauthn-login-btn';
         btn.type = 'button';
-        // Reuse existing button styling so no CSS changes are needed.
-        btn.className = 'btn btn-outline btn-full';
-        // labels.* may be undefined (labels.js is owned elsewhere); fall back
-        // to an English default so this works regardless of label config.
+        btn.className = 'btn-biometric';
         btn.textContent = labels.auth_use_biometrics || 'Use biometrics';
         btn.addEventListener('click', () => this.loginWithBiometrics());
-        pad.parentNode.insertBefore(btn, pad);
+        slot.appendChild(btn);
+        // CSS keys the slot's height off .filled, so an empty slot costs nothing.
+        slot.classList.add('filled');
     }
 
-    /** Removes the lock-screen biometric button if present. */
+    /** Empties the reserved slot. */
     _removeBiometricButton() {
         const btn = document.getElementById('webauthn-login-btn');
         if (btn) btn.remove();
+        const slot = document.getElementById('biometric-slot');
+        if (slot) slot.classList.remove('filled');
+    }
+
+    /**
+     * Fills the biometric slot from the cached answer, synchronously, before any
+     * network call.
+     *
+     * refreshBiometricButton has to await getAuthStatus() and
+     * isPlatformAuthenticatorAvailable(), so it can only ever act after the pad
+     * has painted — which is what produced the shift. A returning enrolled user
+     * gets the slot on first paint from here; the real check then confirms or
+     * corrects it.
+     *
+     * An unknown cache reserves nothing, which is always right: enrolment needs
+     * a prior successful login, so a device that has never logged in cannot be
+     * enrolled.
+     */
+    primeBiometricSlot() {
+        if (recalledBiometricAvailable() === true) this._injectBiometricButton();
     }
 
     /**
@@ -435,6 +471,29 @@ class Auth {
         }
     }
 
+    /**
+     * Prepares the unlock screen for entry: reads the remembered PIN length,
+     * renders that many dots, and shows OK only when the length is unknown.
+     *
+     * Called on init and after every attempt, so a self-heal that drops the
+     * remembered length immediately restores the OK key.
+     */
+    prepareAuthScreen() {
+        this.pinLength = recalledPinLength();
+        this.pin = '';
+        ui.renderPinDots('auth-pin-display', this.pinLength || 6);
+
+        // Both keys are in the markup; toggling avoids building DOM and keeps
+        // the 3-column grid full either way.
+        const pad = document.getElementById('auth-pin-pad');
+        if (!pad) return;
+        const ok = pad.querySelector('[data-value="submit"]');
+        const clear = pad.querySelector('[data-value="clear"]');
+        const known = this.pinLength !== null;
+        if (ok) ok.classList.toggle('hidden', known);
+        if (clear) clear.classList.toggle('hidden', !known);
+    }
+
     handleAuthInput(value) {
         // Refuse every input while the lockout countdown is showing. Both the
         // on-screen pad and the physical keyboard land here, so one check
@@ -457,15 +516,35 @@ class Auth {
             return;
         }
 
-        // Add digit
-        if (this.pin.length < 6) {
+        if (value === 'clear') {
+            this.pin = '';
+            ui.updatePinDisplay('auth-pin-display', 0);
+            return;
+        }
+
+        // Add digit. The cap is the known length when we have one, else 6.
+        const cap = this.pinLength || 6;
+        if (this.pin.length < cap) {
             this.pin += value;
             ui.updatePinDisplay('auth-pin-display', this.pin.length);
+        }
+
+        // Auto-submit: the whole point of remembering the length. Only fires
+        // when the length is KNOWN, so an unknown-length device never submits a
+        // guess the user did not confirm.
+        if (this.pinLength !== null && this.pin.length === this.pinLength) {
+            this.submitAuth();
         }
     }
 
     async submitAuth() {
         if (this.isLoading) return;
+
+        // Auto-submit fires without the user pressing anything, so the live
+        // region has to say a verify started. The dots container is already
+        // role="status" aria-live="polite", so writing its label announces.
+        const display = document.getElementById('auth-pin-display');
+        if (display) display.setAttribute('aria-label', labels.auth_verifying || 'Verifying');
 
         ui.hideError('auth-error');
         this.setLoading(true, 'auth');
@@ -477,8 +556,11 @@ class Auth {
 
             if (result.success) {
                 this._clearLockout();
+                // The entry was correct, so its length is authoritative.
+                rememberPinLength(this.pin.length);
+                clearFailedAttempts();
                 this.pin = '';
-                ui.updatePinDisplay('auth-pin-display', 0);
+                this.prepareAuthScreen();
                 if (this.onAuthSuccess) {
                     this.onAuthSuccess();
                 }
@@ -486,9 +568,22 @@ class Auth {
                 // never blocks the post-login transition).
                 this.maybeOfferBiometricEnrollment();
             } else {
-                ui.showPinError('auth-pin-display');
+                // Drop a remembered length that has gone stale, so the screen
+                // stops auto-submitting at a count that can never succeed.
+                // Runs BEFORE prepareAuthScreen so the rebuilt dots reflect the
+                // count we just settled on.
+                if (this.pinLength !== null &&
+                    noteFailedAttempt() >= this.staleLengthThreshold) {
+                    forgetPinLength();
+                }
                 this.pin = '';
-                ui.updatePinDisplay('auth-pin-display', 0);
+                this.prepareAuthScreen();
+                // AFTER the rebuild, never before. prepareAuthScreen renders the
+                // dots through renderPinDots, which clears the container — so
+                // marking them first left the .error class on detached nodes and
+                // the 300ms shake never painted. The catch block's 429/401 paths
+                // already ordered it this way; this branch did not.
+                ui.showPinError('auth-pin-display');
 
                 // attempts_remaining is omitted (omitempty) once it hits 0,
                 // so the cap message falls through to result.error.
@@ -502,7 +597,7 @@ class Auth {
         } catch (error) {
             this.setLoading(false, 'auth');
             this.pin = '';
-            ui.updatePinDisplay('auth-pin-display', 0);
+            this.prepareAuthScreen();
 
             // 429 from an auth endpoint: structured lockout with countdown.
             if (error.status === 429 && error.retry_after_seconds) {
