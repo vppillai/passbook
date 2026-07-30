@@ -525,6 +525,31 @@ export function hideError(elementId) {
     document.getElementById(elementId).classList.add('hidden');
 }
 
+/**
+ * Renders exactly `count` empty PIN dots into a display, replacing whatever was
+ * there.
+ *
+ * The dot count used to be six in the markup regardless of the real PIN length,
+ * so a 4-digit PIN left two dots that could never fill and nothing indicated how
+ * many digits were expected. Building them lets the count follow the length the
+ * device has learned.
+ *
+ * @param {string} containerId - screen id or display id (same resolution as updatePinDisplay)
+ * @param {number} count
+ */
+export function renderPinDots(containerId, count) {
+    const container = document.querySelector(`#${containerId} .pin-display`) ||
+                      document.querySelector(`#${containerId}`);
+    if (!container) return;
+    container.textContent = '';
+    for (let i = 0; i < count; i++) {
+        const dot = document.createElement('span');
+        dot.className = 'pin-dot';
+        container.appendChild(dot);
+    }
+    container.setAttribute('aria-label', '0 digits entered');
+}
+
 export function updatePinDisplay(containerId, length) {
     const container = document.querySelector(`#${containerId} .pin-display`) ||
                       document.querySelector(`#${containerId}`);

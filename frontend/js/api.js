@@ -53,6 +53,17 @@ export function roundCents(amount) {
  * means there is no such cache to clear.
  */
 /**
+ * The instance this page belongs to ("kids", "eatout", or "default" when served
+ * from the root). Exported so other modules can scope their own storage keys to
+ * the same value SESSION_KEY uses, instead of re-deriving it — a second copy of
+ * the derivation is exactly how the logout cache purge came to span instances.
+ * @returns {string}
+ */
+export function instanceName() {
+    return INSTANCE;
+}
+
+/**
  * True for an API cache belonging to THIS instance.
  *
  * Cache Storage is per-ORIGIN, and both deployments share one
