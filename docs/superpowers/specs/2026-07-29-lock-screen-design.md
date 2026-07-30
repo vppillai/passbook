@@ -1,7 +1,7 @@
 # Lock Screen — Design
 
 Date: 2026-07-29
-Status: approved, ready for implementation planning
+Status: implemented on branch `feat/lock-screen` (see Deviations)
 
 ## Goal
 
@@ -271,3 +271,64 @@ schemes and both instances before merging.
   instances.
 - **Shared classes mean the setup screen changes appearance** without being the
   target of the work. Intended, but it must be looked at, not assumed.
+
+## Deviations
+
+Recorded because two of these were defects in the plan rather than in its
+execution, and both were invisible to the test suite as designed.
+
+**`.btn-biometric` had no stylesheet rule.** The plan moved the biometric button
+off `btn btn-outline btn-full` — whose comment read "reuse existing button
+styling so no CSS changes are needed" — and then never added a replacement rule.
+The fastest way into the app rendered as an unstyled `<button>`. Nothing could
+have caught it: happy-dom sees no styling, and no test looked at the class. Added
+with the same tinted-wash language as the keys, one step quieter, plus a
+scheme-aware `--biometric-ink` because it sits on a tinted fill rather than on
+the page. Measured — text 4.56–8.35 (needs 4.5), border 4.76–8.76 (needs 3). A
+wiring test now fails if the rule disappears again.
+
+**The wrong-PIN shake was dead code.** `prepareAuthScreen` rebuilds the dots
+through `renderPinDots`, which clears the container, so marking them with
+`showPinError` first left `.error` on detached nodes and the 300 ms shake never
+painted — a rejected PIN gave text feedback but no visual one. The `catch`
+block's 429/401 paths already ordered it the other way, so the file was
+internally inconsistent too. Order is now: self-heal, then rebuild, then mark.
+Two tests cover it; none did before.
+
+**A test in the plan could not pass against its own implementation.** Task 6's
+assertion sat behind `await Promise.resolve()`, one microtask too late: the
+stubbed `verifyPin` resolves immediately, so `submitAuth`'s success continuation
+— which calls `prepareAuthScreen` and resets the label to "0 digits entered" —
+runs first. The announcement only exists synchronously, while the verify is in
+flight. Assertion moved off the await.
+
+**Task 2's fixture lacked an attribute Task 6 asserted.** The inline
+`#auth-pin-display` had no `aria-live`, so the announcement test failed on the
+fixture rather than the code. Fixture corrected to match the real markup instead
+of leaning on `index.html`.
+
+**Added beyond the plan: `frontend/test/index_markup.test.js`.** The plan left
+`index.html` covered by nothing, because every other frontend test builds its own
+inline fixture. That is a silent failure mode — `auth.js` resolves
+`#biometric-slot` and `[data-value="clear"]` by hook, and this rework introduced
+three such hooks at once, so a markup regression would disable a feature while
+every test still passed. Parsed as a document rather than grepped, so it asserts
+structure (the slot is a sibling of the pad, the pad is outside the identity
+band) and not merely presence.
+
+**eslint gained `DOMParser` and `Node` as test-only globals**, deliberately not
+in `browserGlobals` — app code parses no HTML and reads no `Node` constants, so
+declaring them there would have weakened `no-undef`. Verified with a probe that
+app code still errors on a typo'd `Node`.
+
+**Cosmetic prediction misses.** Task 1 Step 2 predicted `Export named … not
+found`; Bun reports `Cannot find module`. Task 1 Step 5 predicted 12 tests; there
+are 13, because the eight-value bad-length loop is a single `test`.
+
+## Still outstanding
+
+The manual device checks (Testing → "Not automatable here") have **not** been
+done: thumb-zone placement, absence of perceived layout shift, landscape, and
+dark-mode key visibility. happy-dom has no layout engine, so none of it is
+assertable in the suite. It needs a real phone, in both schemes, on both
+instances.
