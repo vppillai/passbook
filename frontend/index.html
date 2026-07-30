@@ -45,29 +45,33 @@
     <!-- PIN Setup Screen -->
     <div id="setup-screen" class="screen hidden">
         <div class="pin-container">
-            <h1 data-i18n="app_title">My Passbook</h1>
-            <p id="setup-message">Create your PIN (4-6 digits)</p>
-            <div class="pin-display" role="status" aria-live="polite" aria-label="0 digits entered">
-                <span class="pin-dot"></span>
-                <span class="pin-dot"></span>
-                <span class="pin-dot"></span>
-                <span class="pin-dot"></span>
-                <span class="pin-dot"></span>
-                <span class="pin-dot"></span>
+            <div class="pin-identity">
+                <img src="assets/icon.svg" alt="" class="pin-mark" aria-hidden="true">
+                <h1 data-i18n="app_title">My Passbook</h1>
+                <p id="setup-message">Create your PIN (4-6 digits)</p>
+                <div class="pin-display" role="status" aria-live="polite" aria-label="0 digits entered">
+                    <span class="pin-dot"></span>
+                    <span class="pin-dot"></span>
+                    <span class="pin-dot"></span>
+                    <span class="pin-dot"></span>
+                    <span class="pin-dot"></span>
+                    <span class="pin-dot"></span>
+                </div>
             </div>
             <div class="pin-pad" id="setup-pin-pad">
                 <button class="pin-key" data-value="1"><span class="key-num">1</span></button>
-                <button class="pin-key" data-value="2"><span class="key-num">2</span><span class="key-letters">ABC</span></button>
-                <button class="pin-key" data-value="3"><span class="key-num">3</span><span class="key-letters">DEF</span></button>
-                <button class="pin-key" data-value="4"><span class="key-num">4</span><span class="key-letters">GHI</span></button>
-                <button class="pin-key" data-value="5"><span class="key-num">5</span><span class="key-letters">JKL</span></button>
-                <button class="pin-key" data-value="6"><span class="key-num">6</span><span class="key-letters">MNO</span></button>
-                <button class="pin-key" data-value="7"><span class="key-num">7</span><span class="key-letters">PQRS</span></button>
-                <button class="pin-key" data-value="8"><span class="key-num">8</span><span class="key-letters">TUV</span></button>
-                <button class="pin-key" data-value="9"><span class="key-num">9</span><span class="key-letters">WXYZ</span></button>
+                <button class="pin-key" data-value="2"><span class="key-num">2</span></button>
+                <button class="pin-key" data-value="3"><span class="key-num">3</span></button>
+                <button class="pin-key" data-value="4"><span class="key-num">4</span></button>
+                <button class="pin-key" data-value="5"><span class="key-num">5</span></button>
+                <button class="pin-key" data-value="6"><span class="key-num">6</span></button>
+                <button class="pin-key" data-value="7"><span class="key-num">7</span></button>
+                <button class="pin-key" data-value="8"><span class="key-num">8</span></button>
+                <button class="pin-key" data-value="9"><span class="key-num">9</span></button>
                 <button class="pin-key pin-key-action" data-value="back" aria-label="Delete digit">&larr;</button>
                 <button class="pin-key" data-value="0"><span class="key-num">0</span></button>
                 <button class="pin-key pin-key-submit" data-value="submit">OK</button>
+                <button class="pin-key hidden" data-value="clear" aria-label="Clear entry">&#10005;</button>
             </div>
             <p id="setup-error" class="error hidden"></p>
         </div>
@@ -76,29 +80,37 @@
     <!-- PIN Entry Screen -->
     <div id="auth-screen" class="screen hidden">
         <div class="pin-container">
-            <h1 data-i18n="app_title">My Passbook</h1>
-            <p id="auth-message">Enter your PIN</p>
-            <div class="pin-display" id="auth-pin-display" role="status" aria-live="polite" aria-label="0 digits entered">
-                <span class="pin-dot"></span>
-                <span class="pin-dot"></span>
-                <span class="pin-dot"></span>
-                <span class="pin-dot"></span>
-                <span class="pin-dot"></span>
-                <span class="pin-dot"></span>
+            <div class="pin-identity">
+                <img src="assets/icon.svg" alt="" class="pin-mark" aria-hidden="true">
+                <h1 data-i18n="app_title">My Passbook</h1>
+                <p id="auth-message">Enter your PIN</p>
+                <div class="pin-display" id="auth-pin-display" role="status" aria-live="polite" aria-label="0 digits entered">
+                    <span class="pin-dot"></span>
+                    <span class="pin-dot"></span>
+                    <span class="pin-dot"></span>
+                    <span class="pin-dot"></span>
+                    <span class="pin-dot"></span>
+                    <span class="pin-dot"></span>
+                </div>
             </div>
+            <!-- Reserved slot for the biometric button. Always present so that
+                 filling it later cannot shove the keypad down; CSS gives it a
+                 height only when .filled is set. -->
+            <div id="biometric-slot"></div>
             <div class="pin-pad" id="auth-pin-pad">
                 <button class="pin-key" data-value="1"><span class="key-num">1</span></button>
-                <button class="pin-key" data-value="2"><span class="key-num">2</span><span class="key-letters">ABC</span></button>
-                <button class="pin-key" data-value="3"><span class="key-num">3</span><span class="key-letters">DEF</span></button>
-                <button class="pin-key" data-value="4"><span class="key-num">4</span><span class="key-letters">GHI</span></button>
-                <button class="pin-key" data-value="5"><span class="key-num">5</span><span class="key-letters">JKL</span></button>
-                <button class="pin-key" data-value="6"><span class="key-num">6</span><span class="key-letters">MNO</span></button>
-                <button class="pin-key" data-value="7"><span class="key-num">7</span><span class="key-letters">PQRS</span></button>
-                <button class="pin-key" data-value="8"><span class="key-num">8</span><span class="key-letters">TUV</span></button>
-                <button class="pin-key" data-value="9"><span class="key-num">9</span><span class="key-letters">WXYZ</span></button>
+                <button class="pin-key" data-value="2"><span class="key-num">2</span></button>
+                <button class="pin-key" data-value="3"><span class="key-num">3</span></button>
+                <button class="pin-key" data-value="4"><span class="key-num">4</span></button>
+                <button class="pin-key" data-value="5"><span class="key-num">5</span></button>
+                <button class="pin-key" data-value="6"><span class="key-num">6</span></button>
+                <button class="pin-key" data-value="7"><span class="key-num">7</span></button>
+                <button class="pin-key" data-value="8"><span class="key-num">8</span></button>
+                <button class="pin-key" data-value="9"><span class="key-num">9</span></button>
                 <button class="pin-key pin-key-action" data-value="back" aria-label="Delete digit">&larr;</button>
                 <button class="pin-key" data-value="0"><span class="key-num">0</span></button>
                 <button class="pin-key pin-key-submit" data-value="submit">OK</button>
+                <button class="pin-key hidden" data-value="clear" aria-label="Clear entry">&#10005;</button>
             </div>
             <p id="auth-error" class="error hidden"></p>
         </div>
