@@ -59,6 +59,33 @@
        surface at 2.04:1. Measured here: kids 5.06, eatout 9.45. */
     --danger-ink: color-mix(in srgb, var(--danger) 90%, black);
 
+    /* PIN key face. NOT --surface + shadow, which is what this replaces: in dark
+       mode --surface is within a hair of the page background and the shadow is
+       black-on-near-black, so the keys measured 1.05-1.07:1 (light) and 1.10:1
+       (dark) against the page — defined by almost nothing.
+       A 3:1 key boundary is unreachable with this palette and was not chased:
+       eatout's accent (#E07856) cannot reach 3:1 against its own light
+       background at ANY alpha, and a neutral face that does reach it needs ink
+       at 48%, giving #8b8e92 keys that read as disabled while dropping numeral
+       contrast from ~13:1 to ~5:1. WCAG 1.4.11 asks for contrast on the
+       information REQUIRED to identify a control, and the numeral does that at
+       11.7-14.0:1; the circle is decoration. iOS's keypad works the same way.
+       Measured — numeral-on-face 13.40 (kids) / 13.95 (eatout), key-vs-page
+       1.19 (kids) / 1.17 (eatout). */
+    --key-face: color-mix(in srgb, var(--accent) 16%, transparent);
+    --key-face-pressed: color-mix(in srgb, var(--accent) 28%, transparent);
+
+    /* Focus ring. Unlike the key face this one IS required to reach 3:1 and is
+       achievable, so it gets a token instead of the raw accent — which measured
+       ~2.9:1 on eatout. Same derive-per-scheme pattern as --bar-* / --danger-ink.
+       Measured vs page — 5.72 (kids) / 4.76 (eatout). */
+    --focus-ring: color-mix(in srgb, var(--accent) 75%, black);
+
+    /* Ink for the biometric button, sitting on its own accent-tinted fill rather
+       than on the page, so it needs its own value. Measured on that fill: 5.43
+       (kids) / 4.56 (eatout). */
+    --biometric-ink: color-mix(in srgb, var(--accent-deep) 92%, black);
+
     /* ---- scheme tokens: light ---- */
     --bg: var(--background);
     --surface: #ffffff;
@@ -119,6 +146,15 @@
         --bar-negative: color-mix(in srgb, var(--danger) 50%, #ffffff);
         /* Measured against the dark surface: kids 8.84, eatout 7.00. */
         --danger-ink: color-mix(in srgb, var(--danger) 45%, #ffffff);
+
+        /* Re-derived for the dark page. Measured — numeral-on-face 12.24 (kids)
+           / 11.66 (eatout), key-vs-page 1.28 (kids) / 1.33 (eatout),
+           focus-ring-vs-page 7.69 (kids) / 8.76 (eatout). */
+        --key-face: color-mix(in srgb, var(--accent) 20%, transparent);
+        --key-face-pressed: color-mix(in srgb, var(--accent) 32%, transparent);
+        --focus-ring: color-mix(in srgb, var(--accent) 70%, #ffffff);
+        /* Lifted for the dark fill. Measured — 7.88 (kids) / 8.35 (eatout). */
+        --biometric-ink: color-mix(in srgb, var(--accent) 55%, #ffffff);
     }
 }
 
@@ -166,7 +202,7 @@ body::before {
 
 /* Focus visibility (keyboard users) */
 :focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
     border-radius: var(--r-sm);
 }
@@ -221,17 +257,27 @@ body::before {
    PIN screens
    ===================================================================== */
 
+/* Thumb-first lock screen.
+   Three bands: identity (grows), the reserved biometric slot, then the pad
+   pinned to the bottom so the keys land in the natural thumb arc. .screen
+   already supplies env(safe-area-inset-bottom), so the pad clears the home
+   indicator without extra handling here.
+   Previously this was justify-content:center, which parked the keypad in the
+   middle of a tall phone. */
 .pin-container {
     flex: 1;
     display: flex;
     flex-direction: column;
-    justify-content: center;
     align-items: center;
-    max-width: 320px;
+    width: 100%;
+    max-width: 380px;
     margin: 0 auto;
     padding: var(--spacing);
 }
 
+/* Carried through unchanged from before the rework — listed here because the
+   replacement range spans them, and the short-viewport rule below targets the
+   first two. Dropping them would leave the title and message unstyled. */
 .pin-container h1 {
     font-family: var(--font-display);
     font-weight: 640;
@@ -253,10 +299,29 @@ body::before {
     margin-top: var(--spacing);
 }
 
+/* Identity band: mark, title, sub-message, dots. Takes the slack so the pad
+   stays at the bottom whatever the viewport height. */
+.pin-identity {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    width: 100%;
+}
+
+.pin-mark {
+    width: 56px;
+    height: 56px;
+    margin-bottom: var(--spacing);
+    border-radius: var(--r-md);
+}
+
 .pin-display {
     display: flex;
     gap: 14px;
-    margin-bottom: calc(var(--spacing-lg) + 4px);
+    margin-top: var(--spacing-lg);
 }
 
 .pin-dot {
@@ -286,21 +351,62 @@ body::before {
     75% { transform: translateX(4px); }
 }
 
+/* The slot is always in the DOM so filling it cannot move the pad. Empty it
+   costs nothing; .filled gives it its height and spacing. */
+#biometric-slot {
+    width: 100%;
+}
+
+#biometric-slot.filled {
+    margin-bottom: var(--spacing);
+}
+
+/* Biometric unlock button, the fastest way in for an enrolled user.
+   It used to reuse `btn btn-outline btn-full` on the stated grounds that no CSS
+   change was needed, which made the FASTEST path look like the secondary one —
+   and once auth.js moved to its own class the button had no rule at all and
+   rendered unstyled. It gets the same tinted-wash language as the keys, one step
+   quieter, so it reads as an action without competing with the pad.
+   Measured — text on fill: 5.43 (kids) / 4.56 (eatout) light, 7.88 / 8.35 dark,
+   all clearing 4.5:1; border vs page 5.72 / 4.76 light, 7.69 / 8.76 dark, all
+   clearing 3:1. */
+.btn-biometric {
+    display: block;
+    width: 100%;
+    padding: 13px var(--spacing);
+    border: 1.5px solid var(--focus-ring);
+    border-radius: var(--r-pill);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--biometric-ink);
+    font-family: var(--font-body);
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.btn-biometric:active {
+    transform: scale(0.98);
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+
+/* Pad fills the container width with square keys, so the declared gap is the
+   real gap. Was a 280px cap with fixed 72px keys, which left 36px of slack
+   distributed into the columns and never grew on a larger phone. */
 .pin-pad {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 14px;
     width: 100%;
-    max-width: 280px;
+    max-width: 360px;
 }
 
 .pin-key {
-    width: 72px;
-    height: 72px;
+    aspect-ratio: 1;
     border-radius: 50%;
     border: none;
-    background: var(--surface);
-    box-shadow: var(--shadow);
+    background: var(--key-face);
     font-family: var(--font-body);
     color: var(--ink);
     cursor: pointer;
@@ -329,7 +435,7 @@ body::before {
 
 .pin-key:active {
     transform: scale(0.92);
-    background: var(--surface-2);
+    background: var(--key-face-pressed);
 }
 
 .pin-key[data-value="clear"],
@@ -1431,5 +1537,32 @@ header h1 {
 @media (prefers-color-scheme: dark) {
     .form-group-date input[type="date"]::-webkit-calendar-picker-indicator {
         filter: invert(0.8);
+    }
+}
+
+/* Short viewport (landscape phone, split view). The identity band is the only
+   compressible part, so the mark goes and the rhythm tightens; the pad keeps its
+   size because it is what the user is aiming at. Nothing existed here before, so
+   landscape simply overflowed. */
+@media (max-height: 620px) {
+    .pin-mark {
+        display: none;
+    }
+
+    .pin-container h1 {
+        font-size: 1.35rem;
+        margin-bottom: 2px;
+    }
+
+    .pin-container p {
+        margin-bottom: var(--spacing-sm);
+    }
+
+    .pin-display {
+        margin-top: var(--spacing);
+    }
+
+    .pin-pad {
+        gap: 10px;
     }
 }
