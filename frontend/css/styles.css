@@ -358,7 +358,13 @@ body::before {
 }
 
 #biometric-slot.filled {
-    margin-bottom: var(--spacing);
+    /* Space on BOTH sides. margin-bottom alone left the button butted against
+       the dots — .pin-display carries margin-top only, so nothing separated
+       them, and the result was ~10px where the rest of the screen uses 16-24px.
+       Larger above, to part it from the identity band; standard below, to part
+       it from the pad. Deliberately on .filled and not on the slot itself, so an
+       empty slot still costs no space and filling it moves nothing. */
+    margin: var(--spacing-lg) 0 var(--spacing);
 }
 
 /* Biometric unlock button, the fastest way in for an enrolled user.
@@ -1362,6 +1368,21 @@ header h1 {
 }
 
 .toast.error { background: var(--danger); color: #fff; }
+
+/* On the PIN screens the pad now occupies the bottom of the viewport, where the
+   toast has always sat (bottom: 100px). That was clear of the old centred pad
+   and is not clear of this one — it lands on the bottom key row.
+   It matters beyond occlusion: the service-worker update toast carries a Reload
+   action, so an interactive element over tappable keys risks a mis-tap. Moving
+   it to the top rather than nudging it up the pad, because a nudge only works
+   for one key size and the top of the lock screen is empty by construction.
+   :has() is unsupported only on browsers this PWA does not target; where it is
+   missing the rule is ignored and the previous behaviour returns. */
+body:has(#auth-screen:not(.hidden)) .toast,
+body:has(#setup-screen:not(.hidden)) .toast {
+    bottom: auto;
+    top: calc(var(--spacing) + env(safe-area-inset-top, 0px));
+}
 .toast.success { background: var(--success-color); color: #fff; }
 
 @keyframes fadeInUp {
@@ -1562,7 +1583,29 @@ header h1 {
         margin-top: var(--spacing);
     }
 
+    #biometric-slot.filled {
+        margin: var(--spacing-sm) 0;
+    }
+
     .pin-pad {
         gap: 10px;
+        /* Bound the pad by viewport HEIGHT, not just width. Keys are
+           aspect-ratio:1 in 1fr columns, so their height follows the pad's
+           width — which meant four rows of ~107px keys needed ~458px in a
+           390px-tall landscape window and the bottom two rows were simply
+           clipped. The first version of this rule only compressed the identity
+           band, on the reasoning that the pad should keep its size because it is
+           what the user aims at; that is wrong once the pad alone overflows.
+           The 150px allows for the compressed identity band, the slot and the
+           screen's padding; * 3/4 converts an available height into the width
+           that yields four rows of square keys inside it. */
+        max-width: min(360px, calc((100dvh - 150px) * 3 / 4));
+    }
+
+    /* Backstop: whatever the viewport, nothing may be unreachable. Cheap, and it
+       covers the cases the calc above cannot anticipate (large text settings, a
+       browser chrome height we did not model). */
+    .screen {
+        overflow-y: auto;
     }
 }
