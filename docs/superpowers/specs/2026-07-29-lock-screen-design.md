@@ -325,10 +325,28 @@ app code still errors on a typo'd `Node`.
 found`; Bun reports `Cannot find module`. Task 1 Step 5 predicted 12 tests; there
 are 13, because the eight-value bad-length loop is a single `test`.
 
-## Still outstanding
+## Visual verification
 
-The manual device checks (Testing → "Not automatable here") have **not** been
-done: thumb-zone placement, absence of perceived layout shift, landscape, and
-dark-mode key visibility. happy-dom has no layout engine, so none of it is
-assertable in the suite. It needs a real phone, in both schemes, on both
-instances.
+The checks listed as "not automatable here" were done by rendering the real page
+in headless Chromium (CDP, `Emulation.setEmulatedMedia` for the colour scheme,
+localStorage seeded before boot to reach the interesting states), at four
+viewports across both instances and both schemes.
+
+A first attempt used `--force-prefers-color-scheme=dark` and produced screenshots
+that were **pixel-identical to the light ones** — the flag was silently ignored.
+Worth recording: eyeballing an image one has asked to be dark is a very easy way
+to certify the opposite of what was tested. Confirmed objectively thereafter by
+sampling mean RGB (`page=(18,22,32)` dark vs `(240,243,250)` light).
+
+Confirmed: dark-mode keys clearly visible on both instances, which is the defect
+this rework exists to fix · pad bottom-anchored in the thumb zone · four dots and
+no OK once a length is remembered · `.btn-biometric` rendering correctly and
+taking each instance's accent · landscape and a 320px phone both fitting.
+
+It found three defects the suite could not reach — the toast landing on the
+keypad, the biometric button butted against the dots, and landscape clipping the
+bottom two key rows. All three fixed, with stylesheet-text tests.
+
+Still worth a glance on real hardware, since a renderer is not a phone: thumb
+reach is ergonomic rather than geometric, and no emulation covers actual touch
+targets or the real biometric prompt.
