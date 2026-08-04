@@ -60,15 +60,6 @@ func TestTxConditionFailedIndex(t *testing.T) {
 	})
 }
 
-func TestExtractExpenseID(t *testing.T) {
-	if got := ExtractExpenseID("EXP#123#abc"); got != "123#abc" {
-		t.Errorf("ExtractExpenseID = %q, want \"123#abc\"", got)
-	}
-	if got := ExtractExpenseID("no-prefix"); got != "no-prefix" {
-		t.Errorf("ExtractExpenseID = %q, want passthrough", got)
-	}
-}
-
 func TestRateLimitPK(t *testing.T) {
 	if got := rateLimitPK("203.0.113.7"); got != "RATELIMIT#203.0.113.7" {
 		t.Errorf("rateLimitPK = %q", got)

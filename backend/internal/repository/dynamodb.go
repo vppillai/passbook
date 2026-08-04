@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -893,11 +892,6 @@ func (r *Repository) ClearRateLimit(ctx context.Context, sourceIP string) error 
 		return fmt.Errorf("failed to clear rate limit: %w", err)
 	}
 	return nil
-}
-
-// Helper to extract expense ID from SK
-func ExtractExpenseID(sk string) string {
-	return strings.TrimPrefix(sk, ExpensePrefix)
 }
 
 // =====================================================================
