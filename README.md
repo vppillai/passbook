@@ -606,18 +606,65 @@ record of money granted and cannot be derived from anything else.
 
 ## Development
 
+CI runs three suites — `test-backend`, `test-scripts` and `lint-frontend`. All
+three are runnable locally, and none of them needs AWS credentials.
+
 ### Backend
 
 ```bash
 cd backend
-go mod tidy
 go test ./...
+gofmt -l ./cmd ./internal    # must print nothing; CI fails on drift
+go vet ./...
 go build -o bootstrap cmd/api/main.go
 ```
 
+`internal/repository`'s integration tests need a local DynamoDB and **skip
+themselves silently when one is not reachable** — so a green `go test ./...` does
+not mean they ran. That package holds every `ConditionExpression` and
+`TransactWriteItems` in the app, and everything above it is tested against a
+hand-written fake of DynamoDB's semantics, so these are what confirm the fake and
+the real service agree:
+
+```bash
+docker run -d -p 8000:8000 amazon/dynamodb-local \
+  -jar DynamoDBLocal.jar -inMemory -sharedDb
+cd backend && go test ./internal/repository/ -v      # 15 TestIntegration_* cases
+```
+
+Endpoint overridable with `PASSBOOK_DDB_ENDPOINT`. CI supplies it as a service
+container, so there it always runs. Each test creates and drops its own
+uniquely-named table.
+
+`go mod tidy` belongs here rather than in CI: `go.sum` is committed so CI builds
+in `-mod=readonly` and verifies checksums, and tidy could silently rewrite it.
+
 ### Frontend
 
-Open `frontend/index.html` directly in browser. API calls will fail without backend, but UI can be tested.
+No build step — plain ES modules. Open `frontend/index.html` in a browser to
+poke at the UI (API calls fail without a backend).
+
+```bash
+cd frontend        # REQUIRED: from the repo root, bunfig.toml is skipped,
+bun test           #   happy-dom never loads, and most DOM tests fail confusingly
+bun run lint
+```
+
+happy-dom has **no layout engine**, so nothing geometric can be asserted by
+rendering — that blind spot let a focus-trap bug reach production once. Layout and
+contrast requirements are asserted against the stylesheet text instead (see
+`test/ui_lockscreen_css.test.js`), and anything genuinely visual has to be checked
+in a real browser.
+
+### Operational scripts
+
+`scripts/add-data.sh` is the only code that rewrites production ledger data, so it
+has its own suite. It runs against an in-memory table served by a stubbed `aws`
+binary, needing no credentials and touching nothing real:
+
+```bash
+./scripts/test/add-data.test.sh     # 37 cases
+```
 
 ### Environment Variables (Lambda)
 
