@@ -176,3 +176,17 @@ describe('short viewport fits the whole pad', () => {
         expect(block).toMatch(/overflow-y:\s*auto/);
     });
 });
+
+// The letters sat on a white key face before v2.10.0 and now sit on an accent
+// tint, where --ink-3 measures 2.04-3.01:1 — well under the 4.5:1 that 0.55rem
+// text needs, since it is nowhere near large-text size.
+describe('T9 letter contrast on the tinted key face', () => {
+    test('letters do not use the faintest ink', () => {
+        expect(ruleFor('.key-letters')).not.toContain('var(--ink-3)');
+    });
+
+    test('measured ratios are recorded beside them', () => {
+        const at = css.indexOf('.key-letters {');
+        expect(css.slice(at, css.indexOf('}', at))).toMatch(/4\.90|Measured|measures/);
+    });
+});
