@@ -92,7 +92,6 @@ var (
 	ErrPINNotSetup    = errors.New("PIN not set up")
 	ErrPINAlreadySet  = errors.New("PIN already set up")
 	ErrRateLimited    = errors.New("too many attempts")
-	ErrAccountLocked  = errors.New("account locked")
 	ErrInvalidSession = errors.New("invalid session")
 	ErrPINTooShort    = errors.New("PIN must be 4-6 digits")
 	ErrPINNotNumeric  = errors.New("PIN must contain only digits")
