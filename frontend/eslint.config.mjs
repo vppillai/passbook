@@ -121,7 +121,19 @@ export default [
         languageOptions: {
             ecmaVersion: 2023,
             sourceType: 'module',
-            globals: { ...browserGlobals, Bun: 'readonly', process: 'readonly' },
+            globals: {
+                ...browserGlobals,
+                Bun: 'readonly',
+                process: 'readonly',
+                // Test-only, deliberately NOT added to browserGlobals: the app
+                // itself never parses HTML or reads Node constants, so declaring
+                // them for app code would weaken no-undef — a typo'd `Node`
+                // there should still be caught. index_markup.test.js needs them
+                // to parse index.html as a document, which is the only way to
+                // assert structure (parent/sibling) rather than mere presence.
+                DOMParser: 'readonly',
+                Node: 'readonly',
+            },
         },
         rules: {
             ...correctnessRules,
