@@ -18,6 +18,22 @@ on:
 jobs:
   test-backend:
     runs-on: ubuntu-latest
+    # DynamoDB Local backs internal/repository's integration tests. That package
+    # holds every ConditionExpression and TransactWriteItems in the app, and
+    # everything above it is tested against a hand-written FAKE of DynamoDB's
+    # semantics — a model and the real service can disagree while every unit test
+    # passes. Without this service the integration tests skip themselves, so the
+    # gap would be silent.
+    #
+    # Default args deliberately: a services: block cannot override a container's
+    # command, and the tests were verified to pass against the default entrypoint
+    # (no -inMemory/-sharedDb) as well as against those flags. Each test creates
+    # its own uniquely-named table and deletes it, so no shared state carries.
+    services:
+      dynamodb:
+        image: amazon/dynamodb-local@sha256:ff89bd48ff32cd8d9be5fee8873b65b8854dc408f1afe881be6eb00247bc0dab
+        ports:
+          - 8000:8000
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
