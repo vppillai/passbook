@@ -436,7 +436,12 @@ body::before {
     font-weight: 500;
     letter-spacing: 1.5px;
     margin-top: 3px;
-    color: var(--ink-3);
+    /* --ink-2, not --ink-3. These used to sit on a WHITE key face; the face is
+       now an accent tint, and --ink-3 against it measures 2.04-2.13:1 in light
+       and 2.87-3.01:1 in dark — well under the 4.5:1 that 0.55rem text needs,
+       since it is nowhere near large-text size. --ink-2 measures 4.90 (kids
+       light) / 5.10 (eatout light) / 6.47 (kids dark) / 6.16 (eatout dark). */
+    color: var(--ink-2);
 }
 
 .pin-key:active {

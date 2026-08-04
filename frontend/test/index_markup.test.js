@@ -138,9 +138,34 @@ describe('accessibility contract', () => {
     });
 });
 
-describe('dialler letters are gone', () => {
-    test('no key-letters spans remain', () => {
-        // Phone-dialler affordances, meaningless for a numeric PIN.
-        expect(doc.querySelectorAll('.key-letters').length).toBe(0);
+describe('T9 letters', () => {
+    // Removed in v2.10.0 on the reasoning that letters are meaningless for a
+    // numeric PIN. That was wrong for this app: people remember a PIN as a word,
+    // and the letters are what make the pad read as a familiar phone keypad.
+    // Restored, and pinned so they are not "tidied away" a second time.
+    test('keys 2-9 each carry their letter group', () => {
+        const want = { 2:'ABC', 3:'DEF', 4:'GHI', 5:'JKL',
+                       6:'MNO', 7:'PQRS', 8:'TUV', 9:'WXYZ' };
+        for (const pad of ['auth-pin-pad', 'setup-pin-pad']) {
+            for (const [digit, letters] of Object.entries(want)) {
+                const key = doc.getElementById(pad)
+                    .querySelector(`[data-value="${digit}"] .key-letters`);
+                expect(key, `${pad} key ${digit} has no letters`).not.toBeNull();
+                expect(key.textContent.trim()).toBe(letters);
+            }
+        }
+    });
+
+    test('1 and 0 carry none, as on a real keypad', () => {
+        for (const pad of ['auth-pin-pad', 'setup-pin-pad']) {
+            for (const digit of ['1', '0']) {
+                expect(doc.getElementById(pad)
+                    .querySelector(`[data-value="${digit}"] .key-letters`)).toBeNull();
+            }
+        }
+    });
+
+    test('16 letter groups across the two pads', () => {
+        expect(doc.querySelectorAll('.key-letters').length).toBe(16);
     });
 });
