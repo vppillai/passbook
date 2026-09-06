@@ -91,7 +91,7 @@ jobs:
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags lambda.norpc -o bootstrap ./cmd/api
           zip function.zip bootstrap
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/passbook-github-actions
           aws-region: ${{ env.AWS_REGION }}
@@ -154,7 +154,7 @@ jobs:
           echo "webauthn_display_name=$WEBAUTHN_NAME" >> $GITHUB_OUTPUT
           echo "Instance: ${{ matrix.instance }}, monthly_amount: $MONTHLY, allow_overspend: $ALLOW_OVERSPEND, carry_over: $CARRY_OVER, webauthn_name: $WEBAUTHN_NAME"
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/passbook-github-actions
           aws-region: ${{ env.AWS_REGION }}
@@ -222,7 +222,7 @@ jobs:
     environment: production
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/passbook-github-actions
           aws-region: ${{ env.AWS_REGION }}
